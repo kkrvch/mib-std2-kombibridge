@@ -80,12 +80,16 @@ listener (`DistanceMeters`, `TimeToTurnSeconds`); both came through as 0 in stat
 is not yet confirmed whether they populate while driving, or whether the phone uses a display
 field the handler doesn't forward (which would need a deeper hook).
 
+## Media now-playing (built)
+The same recipe also registers `MediaPlaybackStatusEndpoint`: the shim writes the real track to
+`/dev/shmem/aa_media` (`seq Song\tArtist\tAlbum`) and the jar shows it in the same media widget when
+no route guidance is active (otherwise the maneuver takes precedence).
+
 ## Other endpoints (researched, not built)
 The same library exposes more endpoints the SAL likewise ignores:
 - `PhoneStatusEndpoint` — caller name/number/type/photo, call state, duration, signal strength.
   → a "caller ID from AA on the cluster" feature (inject into the telephone BAP `CallState`/
   `CallInfo`, which the cluster already renders).
-- `MediaPlaybackStatusEndpoint` — real now-playing (Song/Artist/Album, play state, progress).
 - `NotificationEndpoint` — radio/source-focus notifications (not user messages).
 
 ## Version specificity

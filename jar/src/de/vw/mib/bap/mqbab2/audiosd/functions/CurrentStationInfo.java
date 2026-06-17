@@ -110,6 +110,13 @@ ExboxServiceListener {
         }
     }
 
+    // The cluster's CurrentStationInfo BAPString lines hold up to 73 chars; clamp our injected text
+    // so an over-long title/street can never overflow the serializer and blank the widget. Null -> "".
+    private static String clampLine(String s) {
+        if (s == null) return "";
+        return s.length() > 72 ? s.substring(0, 72) : s;
+    }
+
     static {
         try { MIBLogger.getInstance().debug("CurrentStationInfo CLASS LOADED (AAtoKombi shadow)"); } catch (Throwable t) {}
     }
@@ -396,43 +403,52 @@ ExboxServiceListener {
             MIBLogger.getInstance().debug("CurrentStationInfo: LAYOUT PROBE (P1/S2/T3/Q4, types 0)");
             return;
         }
-        // AAtoKombi: while Android Auto (connType==3) is connected AND route guidance is active, show
-        // the live nav text instead of the static "Android Auto" label. The connType==3 check makes
-        // this revert immediately when the phone disconnects (no more stale frozen maneuver).
-        if (connType == 3
-                && de.vw.mib.asl.internal.androidauto.target.NavigationHandler.aaRouteGuidanceActive
-                && navPrimary != null && navPrimary.length() > 0) {
-            // Cluster media widget renders the four lines top->bottom (all centered) as:
-            //   secondary (S2, top, normal), tertiary (T3, normal), PRIMARY (P1, big), quaternary (Q4, small).
-            // ShmemNavReader fills the fields for that layout:
-            //   primary  (P1, big) = arrow + distance   e.g. "→ 300 m"
-            //   secondary(S2, top) = street
-            //   tertiary (T3)      = maneuver words      e.g. "Turn right"
-            //   quaternary(Q4)     = roundabout exit number e.g. "exit 2" (empty otherwise)
-            // (*_Type values don't drive font or icons on this cluster — font is positional — so we
-            //  use 0; the big font comes from the PRIMARY slot itself.)
-            string = navPrimary;
-            n = 72;
-            currentStationInfo_Status.secondaryInformation.setContent(navSecondary != null ? navSecondary : "");
-            currentStationInfo_Status.si_Type = 0;
-            currentStationInfo_Status.tertiaryInformation.setContent(navTertiary != null ? navTertiary : "");
-            currentStationInfo_Status.ti_Type = 0;
-            currentStationInfo_Status.quaternaryInformation.setContent(navQuaternary != null ? navQuaternary : "");
-            currentStationInfo_Status.qi_Type = 0;
-            MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "'");
+        // AAtoKombi: while AA (connType==3) is connected, override the static "Android Auto" label
+        // with live nav (route guidance active) or the now-playing track. The whole injection is
+        // wrapped: if ANY of our code throws — or a string would overflow the BAPString and break the
+        // status serialization — we fall back to the stock label instead of blanking the widget
+        // (a black media menu was seen once on a cold first launch). All our text is length-clamped.
+        try {
+            if (connType == 3
+                    && de.vw.mib.asl.internal.androidauto.target.NavigationHandler.aaRouteGuidanceActive
+                    && navPrimary != null && navPrimary.length() > 0) {
+                // Cluster renders top->bottom: secondary(S2), tertiary(T3), PRIMARY(P1,big), quaternary(Q4).
+                //   P1 = arrow + distance ("► 300 m") ; S2 = street ; T3 = maneuver word ; Q4 = exit #.
+                // (*_Type don't drive font/icons here — positional; the big font is the PRIMARY slot.)
+                string = clampLine(navPrimary);
+                n = 72;
+                currentStationInfo_Status.secondaryInformation.setContent(clampLine(navSecondary));
+                currentStationInfo_Status.si_Type = 0;
+                currentStationInfo_Status.tertiaryInformation.setContent(clampLine(navTertiary));
+                currentStationInfo_Status.ti_Type = 0;
+                currentStationInfo_Status.quaternaryInformation.setContent(clampLine(navQuaternary));
+                currentStationInfo_Status.qi_Type = 0;
+                MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "'");
+            }
+            // otherwise (AA connected, no active route guidance) show the REAL now-playing track.
+            else if (MEDIA_ENABLED && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
+                string = clampLine(mediaTitle);                       // line 1: track title
+                n = 72;
+                currentStationInfo_Status.secondaryInformation.setContent(clampLine(mediaArtist)); // line 2: artist
+                currentStationInfo_Status.si_Type = mediaArtist != null && mediaArtist.length() != 0 ? 73 : 0;
+                currentStationInfo_Status.tertiaryInformation.setContent(clampLine(mediaAlbum));    // line 3: album
+                currentStationInfo_Status.ti_Type = mediaAlbum != null && mediaAlbum.length() != 0 ? 74 : 0;
+                MIBLogger.getInstance().debug("CurrentStationInfo: track-in-media t='" + mediaTitle + "' a='" + mediaArtist + "' al='" + mediaAlbum + "'");
+            }
+        } catch (Throwable t) {
+            // Never let our injection blank the cluster — revert to the plain "Android Auto" label.
+            try {
+                currentStationInfo_Status.secondaryInformation.setContent("");
+                currentStationInfo_Status.si_Type = 0;
+                currentStationInfo_Status.tertiaryInformation.setContent("");
+                currentStationInfo_Status.ti_Type = 0;
+                currentStationInfo_Status.quaternaryInformation.setContent("");
+                currentStationInfo_Status.qi_Type = 0;
+            } catch (Throwable t2) { /* ignore */ }
+            if (connType == 3) { string = "Android Auto"; n = 72; }
+            try { MIBLogger.getInstance().error("CurrentStationInfo: injection failed, fell back to label: " + t); } catch (Throwable t3) {}
         }
-        // AAtoKombi: otherwise (AA connected, no active route guidance) show the REAL now-playing
-        // track from the patched GAL media endpoint instead of the static "Android Auto" label.
-        else if (MEDIA_ENABLED && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
-            string = mediaTitle;                                  // line 1: track title
-            n = 72;                                               // Title slot (prominent)
-            currentStationInfo_Status.secondaryInformation.setContent(mediaArtist != null ? mediaArtist : ""); // line 2: artist
-            currentStationInfo_Status.si_Type = mediaArtist != null && mediaArtist.length() != 0 ? 73 : 0;     // Artist slot
-            currentStationInfo_Status.tertiaryInformation.setContent(mediaAlbum != null ? mediaAlbum : "");    // line 3: album
-            currentStationInfo_Status.ti_Type = mediaAlbum != null && mediaAlbum.length() != 0 ? 74 : 0;       // Album slot
-            MIBLogger.getInstance().debug("CurrentStationInfo: track-in-media t='" + mediaTitle + "' a='" + mediaArtist + "' al='" + mediaAlbum + "'");
-        }
-        currentStationInfo_Status.primaryInformation.setContent(string);
+        currentStationInfo_Status.primaryInformation.setContent(clampLine(string));
         currentStationInfo_Status.pi_Type = n;
     }
 

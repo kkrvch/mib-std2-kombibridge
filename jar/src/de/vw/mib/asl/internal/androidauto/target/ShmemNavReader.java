@@ -10,24 +10,20 @@ import java.io.BufferedReader;
 import java.io.FileReader;
 
 /**
- * Reads Android Auto turn-by-turn from /dev/shmem/aa_nav (written by the patched GAL
- * receiver / navshim, see work/shim/) and drives the existing {@link NavigationHandler}
- * -> navsd -> cluster. This REPLACES the stubbed DSIAndroidAuto2 nav path: instead of
- * the SAL pushing nav over DSI (which answers "Unsupported DSI function"), our patched
- * GAL lib captures the maneuvers and pipes them here.
+ * Reads Android Auto turn-by-turn from /dev/shmem/aa_nav (written by the patched GAL receiver /
+ * navshim, see ../shim/) and renders the maneuver into the cluster's media now-playing widget via
+ * {@link CurrentStationInfo} — the cluster won't take nav in its own slot, so we hijack the media
+ * widget (see docs/ARCHITECTURE.md). {@link NavigationHandler#aaRouteGuidanceActive} is also driven
+ * so that widget knows route guidance is active.
  *
- * Runs as a REPEATING framework timer (TimerManager + TIMER_THREAD_INVOKER) rather than a
- * raw Thread, so the NavigationHandler / navsd BAP calls happen on the same framework-managed
- * thread context the stock TimerHandler timers use (which already call framework APIs) — not
- * on a foreign thread the framework does not know about.
+ * Runs as a REPEATING framework timer (TimerManager + TIMER_THREAD_INVOKER) rather than a raw
+ * Thread, so the CurrentStationInfo refresh happens on the same framework-managed thread the stock
+ * timers use — not on a foreign thread the framework does not know about.
  *
  * IPC line (the shim rewrites the whole line on each event, O_TRUNC):
- *   seq status a b c d e dist time road
- * where a..e are RAW NavigationNextTurnEvent numeric fields (listener-arg order) and
- * status is the GAL NavigationStatus enum (0=UNAVAILABLE,1=ACTIVE,2=INACTIVE).
- *
- * The GAL->DSI field/enum mapping lives ONLY in mapEvent()/mapSide()/... below and is the
- * single place to tune on hardware (raw values are logged at DEBUG).
+ *   seq status event side angle number dist time unit road
+ * where status is the GAL NavigationStatus enum (0=UNAVAILABLE, 1=ACTIVE, 2=INACTIVE) and the rest
+ * are the raw NavigationNextTurnEvent / DistanceEvent fields. Raw values are logged at DEBUG.
  */
 public class ShmemNavReader implements Runnable {
 
@@ -43,8 +39,6 @@ public class ShmemNavReader implements Runnable {
 
     private long lastSeq = -1L;
     private int lastStatus = -1;
-    private String lastTurnKey = "";
-    private int lastDist = Integer.MIN_VALUE;
     private long lastSeqChangeMs = 0L;
 
     public ShmemNavReader(NavigationHandler handler) {
@@ -128,8 +122,8 @@ public class ShmemNavReader implements Runnable {
             return;
         }
 
-        // Maneuver-headline layout into CurrentStationInfo (audiosd LSG 49, which the cluster renders
-        // the "Android Auto" label from): line1 = arrow + maneuver, line2 = street, line3 = distance.
+        // Render the maneuver into CurrentStationInfo (audiosd LSG 49 — the widget the cluster draws
+        // the "Android Auto" label in). Field -> line mapping is described just below.
         int event = mapEventEnum(protoEvent);
         int side = mapSideEnum(protoSide);
         // Cluster layout (top->bottom): secondary, tertiary, PRIMARY(big), quaternary.
@@ -147,25 +141,27 @@ public class ShmemNavReader implements Runnable {
         CurrentStationInfo.pokeNav();
     }
 
-    private static final String ARROW_LEFT = "←";   // <-
-    private static final String ARROW_RIGHT = "→";  // ->
-    private static final String ARROW_UP = "↑";     // ^ (straight / unspecified)
-    private static final String ARROW_UTURN = "↺";  // u-turn
-    private static final String ARROW_ROUND = "↻";  // roundabout
-    private static final String ARROW_ARRIVE = "⚑"; // destination
+    // Glyphs the cluster font actually renders
+    private static final String A_LEFT   = "◄";  // U+25C4 left pointer
+    private static final String A_RIGHT  = "►";  // U+25BA right pointer
+    private static final String A_UP     = "▲";  // U+25B2 up triangle (straight / depart / continue)
+    private static final String A_DOWN   = "▼";  // U+25BC down triangle (u-turn)
+    private static final String A_ROUND  = "○";  // U+25CB ring (roundabout)
+    private static final String A_ARRIVE = "★";  // U+2605 star (destination)
 
-    /** Direction arrow for the big PRIMARY line, from AA NextTurnEnum (event) + TurnSide (side). */
+    /** Glyph for the big PRIMARY line, from AA NextTurnEnum (event) + TurnSide (side). Uses only
+     *  glyphs the cluster font renders: bold ◄ ► ▲ ▼, ring ○ for roundabout, ★ for arrive. */
     private String arrowForManeuver(int event, int side) {
         switch (event) {
-            case 6:  return ARROW_UTURN;   // U-turn
+            case 6:  return A_DOWN;    // U-turn -> ▼
             case 11:
             case 12:
-            case 13: return ARROW_ROUND;   // roundabout
-            case 17: return ARROW_ARRIVE;  // destination
+            case 13: return A_ROUND;   // roundabout -> ○
+            case 17: return A_ARRIVE;  // destination -> ★
             default:
-                if (side == 1) return ARROW_LEFT;
-                if (side == 2) return ARROW_RIGHT;
-                return ARROW_UP;
+                if (side == 1) return A_LEFT;
+                if (side == 2) return A_RIGHT;
+                return A_UP;
         }
     }
 

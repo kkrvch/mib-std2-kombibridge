@@ -18,19 +18,18 @@ typedef unsigned long  usize;
 
 // ===== .galrefs: absolute VAs in libgal; the injector relativizes them (R_ARM_RELATIVE) =====
 // At runtime g_ref[i] = libbase + value. All target functions are ARM (bit0 = 0).
-enum { R_REGISTER=0, R_EP_START=1, R_NAV_VTABLE=2, R_GOT_MEMSET=3, R_ONCHOPEN=4,
-       R_MEDIA_VTABLE=5, N_REFS };
+enum { R_REGISTER=0, R_NAV_VTABLE=1, R_GOT_MEMSET=2, R_ONCHOPEN=3, R_MEDIA_VTABLE=4, N_REFS };
 // These slots are PLACEHOLDERS (0). The injector (inject.py) resolves the per-firmware absolute
 // VAs from the TARGET libgal's own .dynsym / relocations / .plt and writes them into these slots
 // before relativizing them. So the shim is no longer locked to one libgal build — see shim/README.md.
+// Order MUST match inject.py's resolved[] list.
 //   R_REGISTER     = GalReceiver::registerService            (.dynsym symbol)
-//   R_EP_START     = NavigationStatusEndpoint::start         (.dynsym symbol)
 //   R_NAV_VTABLE   = _ZTV24NavigationStatusEndpoint          (.dynsym symbol; vptr = +8 below)
 //   R_GOT_MEMSET   = memset GOT slot                         (R_ARM_JUMP_SLOT reloc)
 //   R_ONCHOPEN     = onChannelOpened PLT stub                (the call displaced from init's tail)
 //   R_MEDIA_VTABLE = _ZTV27MediaPlaybackStatusEndpoint       (.dynsym symbol; vptr = +8 below)
 __attribute__((section(".galrefs"), used))
-volatile u32 g_ref[N_REFS] = { 0, 0, 0, 0, 0, 0 };
+volatile u32 g_ref[N_REFS] = { 0, 0, 0, 0, 0 };
 static inline u32 ref(int i){ return g_ref[i]; }            // = libbase + VA
 
 // ===== minimal freestanding libc =====
@@ -218,10 +217,12 @@ static MediaListener g_mediaListener = { &g_mediaVT };
 // ===== endpoint objects (layout from RE, sizeof ~0x30 → reserve 0x40) =====
 static u8 g_navEp[0x40]   __attribute__((aligned(8)));
 static u8 g_mediaEp[0x40] __attribute__((aligned(8)));
-static int g_done = 0;
+// Track the receiver we armed. GalReceiver::init runs again on an AA reconnect (new receiver), so we
+// must RE-register the endpoints each time — a process-once latch left us silent until a reboot.
+// Keyed on the receiver pointer so we don't double-register for the same one.
+static void* g_inited_receiver = 0;
 
 typedef void (*reg_t)(void*,void*);
-typedef void (*start_t)(void*);
 
 // Native stage log → /dev/shmem/aa_nav.dbg (read on the first hardware test).
 // No file at all → resolve_libc (dlsym) failed OR gal_nav_inject was never called.
@@ -241,7 +242,8 @@ static u8 pick_free_id(u32 router){
 }
 
 extern "C" __attribute__((used)) void gal_nav_inject(void* receiver){
-  if(g_done) return; g_done=1;
+  if(receiver == g_inited_receiver) return;   // already armed for THIS receiver
+  g_inited_receiver = receiver;               // re-arm on each new receiver (AA reconnect)
   resolve_libc();
   g_dbgp=g_dbg; dbg_add("inject recv="); dbg_hex((u32)receiver);
   dbg_add(" libc="); dbg_add(p_fopen? "ok":"FAIL"); dbg_flush();
@@ -265,10 +267,8 @@ extern "C" __attribute__((used)) void gal_nav_inject(void* receiver){
 
   ((reg_t)ref(R_REGISTER))(receiver, g_navEp);    // register with the router
   dbg_add(" registered (NO start at init)"); dbg_flush();
-  // Do NOT call start() at init: the connection/SSL isn't up yet, and a prematurely queued
-  // message breaks auth. After auth, the phone sees the service in discovery and opens the nav
-  // channel itself. (start can be called later from our endpoint's onChannelOpened if needed.)
-  (void)R_EP_START;
+  // We never call NavigationStatusEndpoint::start() — after auth the phone sees the service in
+  // discovery and opens the nav channel itself; a prematurely queued start message breaks auth.
 
   // --- MediaPlaybackStatusEndpoint (now-playing). Register AFTER nav so pick_free_id picks a
   //     different free slot. Listener pointer is at +0x18 (NOT +0x2c); no clusterType. ---

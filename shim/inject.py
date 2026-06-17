@@ -14,14 +14,12 @@ TRAMPOLINE_SYM='init_trampoline'
 
 # --- per-firmware addresses are AUTO-RESOLVED from the target libgal (no hardcoding) ---
 # The blob's .galrefs slots (see navshim_fs.cpp g_ref[]) are filled here, in this exact order.
-#   0 R_REGISTER    GalReceiver::registerService           (.dynsym)
-#   1 R_EP_START    NavigationStatusEndpoint::start        (.dynsym)
-#   2 R_NAV_VTABLE  _ZTV24NavigationStatusEndpoint         (.dynsym; navshim adds +8 at runtime)
-#   3 R_GOT_MEMSET  memset GOT slot                        (R_ARM_JUMP_SLOT reloc)
-#   4 R_ONCHOPEN     onChannelOpened PLT stub              (derived via the BL auto-locator)
-#   5 R_MEDIA_VTABLE _ZTV27MediaPlaybackStatusEndpoint     (.dynsym; navshim adds +8 at runtime)
+#   0 R_REGISTER     GalReceiver::registerService          (.dynsym)
+#   1 R_NAV_VTABLE   _ZTV24NavigationStatusEndpoint        (.dynsym; navshim adds +8 at runtime)
+#   2 R_GOT_MEMSET   memset GOT slot                       (R_ARM_JUMP_SLOT reloc)
+#   3 R_ONCHOPEN     onChannelOpened PLT stub              (derived via the BL auto-locator)
+#   4 R_MEDIA_VTABLE _ZTV27MediaPlaybackStatusEndpoint     (.dynsym; navshim adds +8 at runtime)
 SYM_REGISTER='_ZN11GalReceiver15registerServiceEP20ProtocolEndpointBase'
-SYM_EP_START='_ZN24NavigationStatusEndpoint5startEv'
 SYM_NAV_VTABLE='_ZTV24NavigationStatusEndpoint'
 SYM_ONCHOPEN='_ZN20ProtocolEndpointBase15onChannelOpenedEh'  # the call displaced from init's tail
 SYM_MEDIA_VTABLE='_ZTV27MediaPlaybackStatusEndpoint'
@@ -106,8 +104,7 @@ def resolve_galrefs(e,raw,n_slots):
     if SYM_ONCHOPEN not in js: sys.exit("ERROR: no onChannelOpened JUMP_SLOT relocation in libgal")
     onch_stub=plt_stub_for_got(e,raw,v2f,js[SYM_ONCHOPEN])
     if onch_stub is None: sys.exit("ERROR: could not locate onChannelOpened PLT stub")
-    resolved=[sym(SYM_REGISTER), sym(SYM_EP_START), sym(SYM_NAV_VTABLE), js['memset'], onch_stub,
-              sym(SYM_MEDIA_VTABLE)]
+    resolved=[sym(SYM_REGISTER), sym(SYM_NAV_VTABLE), js['memset'], onch_stub, sym(SYM_MEDIA_VTABLE)]
     if len(resolved)!=n_slots:
         sys.exit("ERROR: g_ref slot count mismatch: navshim has %d, inject.py resolves %d"
                  %(n_slots,len(resolved)))
@@ -166,7 +163,7 @@ def main():
 
     # --- AUTO-RESOLVE the per-firmware addresses from THIS libgal and bake them into .galrefs ---
     resolved,bl_auto,bl_va=resolve_galrefs(e,raw,len(galrefs))
-    names=['R_REGISTER','R_EP_START','R_NAV_VTABLE','R_GOT_MEMSET','R_ONCHOPEN','R_MEDIA_VTABLE']
+    names=['R_REGISTER','R_NAV_VTABLE','R_GOT_MEMSET','R_ONCHOPEN','R_MEDIA_VTABLE']
     print("resolved galrefs from libgal:")
     for nm,val in zip(names,resolved): print("    %-12s = 0x%x"%(nm,val))
     for off,val in zip(galrefs,resolved):     # write resolved VAs into the blob's .galrefs slots
