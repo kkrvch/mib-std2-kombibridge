@@ -1,0 +1,4 @@
+# The toolchain image bakes in NO project files (everything is bind-mounted at run time), so the
+# build context can be empty — this keeps `docker build` instant and avoids shipping the
+# inputs in jar/lib and shim/lib into any image layer.
+*

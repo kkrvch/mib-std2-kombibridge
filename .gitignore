@@ -1,0 +1,26 @@
+# build outputs
+**/build/
+*.o
+*.class
+
+# firmware-derived inputs
+jar/lib/*.jar
+jar/lib/*.jxe.sha256
+jar/lib/*.jxe
+shim/lib/*.so
+*.patched.so
+
+# distribution outputs — patched firmware binary must never be published; built locally
+dist/
+
+# extracted/decompiled stock classes from MIBHMI.jar
+jar/reference/
+
+# macOS stuff
+.DS_Store
+
+# some logs
+*.log
+
+# some trash
+**__pycache__
