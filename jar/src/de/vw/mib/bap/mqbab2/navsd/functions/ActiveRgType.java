@@ -37,14 +37,25 @@ ConfigurationServiceListener {
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
-        // navsd-shadow delta: drop getNavigationService()/getConfigurationService()
-        // (the NavigationASLDataAdapter / map-switch landmine on a non-routing engine);
-        // rgtype is forced from NavState in setCurrentRGType below.
+        // navsd-shadow delta: by default skip getNavigationService()/getConfigurationService()
+        // (the NavigationASLDataAdapter / map-switch landmine on a non-routing engine); rgtype is
+        // forced from NavState in setCurrentRGType. On a nav-capable cluster (NAV_CAPABLE) we DO
+        // register, so the stock map-switch logic still runs when AA is inactive.
         INSTANCE = this;
         // Start the /dev/shmem/aa_nav -> NavState poll on the framework timer (once). The shim
         // (patched libgal) writes real AA turn-by-turn there; the reader fills NavState and pokes
         // the navsd functions. Must never break navsd startup.
         try { NavShmemReader.ensureStarted(); } catch (Throwable t) {}
+        if (NavState.NAV_CAPABLE) {
+            try {
+                this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
+                this.getConfigurationService().addConfigurationListener(this, new int[]{-2147459647});
+                if (this.getConfigurationService().isMapSwitchingFeatureSelected()) {
+                    this.setCurrentRgType(0);
+                }
+                this.determineInternalSwitchState();
+            } catch (Throwable t) {}
+        }
         return this.computeActiveRgType();
     }
 
@@ -86,7 +97,10 @@ ConfigurationServiceListener {
     }
 
     public void uninitialize() {
-        // navsd-shadow delta: no listener was registered, nothing to remove.
+        // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
+        if (NavState.NAV_CAPABLE) {
+            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+        }
     }
 
     public void indicationError(int n, BAPFunctionListener bAPFunctionListener) {
@@ -139,12 +153,23 @@ ConfigurationServiceListener {
     }
 
     private void setCurrentRGType(ActiveRgType_Status activeRgType_Status) {
-        // navsd-shadow delta: force RG_TYPE_RGI_FROM_BAP_FUNCTION_MANEUVER_DESCRIPTIOR (0)
-        // so the cluster draws OUR ManeuverDescriptor; 3 (MOST_MAP) waits for a map video.
-        try {
-            activeRgType_Status.rgtype = NavState.ACTIVE ? 0 : 3;
-        } catch (Throwable t) {
+        // navsd-shadow delta: while AA guides, force RG_TYPE_RGI_FROM_BAP_FUNCTION_MANEUVER_DESCRIPTIOR
+        // (0) so the cluster draws OUR ManeuverDescriptor; 3 (MOST_MAP) waits for a map video.
+        if (NavState.ACTIVE) {
+            activeRgType_Status.rgtype = 0;
+            return;
+        }
+        if (!NavState.NAV_CAPABLE) {
             activeRgType_Status.rgtype = 3;
+            return;
+        }
+        // nav-capable cluster, AA inactive: stock map-switch logic so the unit's own nav keeps its gate.
+        try {
+            activeRgType_Status.rgtype = !this.getConfigurationService().isMapSwitchingFeatureSelected()
+                    ? (this.getNavigationService().getKombiMapStatus() != 0 ? 3 : this.getCurrentRgType())
+                    : this.getCurrentRgType();
+        } catch (Throwable t) {
+            activeRgType_Status.rgtype = this.getCurrentRgType();
         }
     }
 
