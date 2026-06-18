@@ -7,7 +7,7 @@ import org.dsi.ifc.androidauto2.Constants;
  * AAtoKombi (track-text experiment build).
  *
  * The nav-BAP path (navsd LSG 50) is intentionally NOT used here: the cluster never subscribes to
- * it on this no-nav STD2. Instead {@link ShmemNavReader} routes the AA navigation text into the
+ * it on this no-nav STD2. Instead AANavReader routes the AA navigation text into the
  * audio now-playing widget (via {@link de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo}),
  * a BAP group the cluster already renders.
  *

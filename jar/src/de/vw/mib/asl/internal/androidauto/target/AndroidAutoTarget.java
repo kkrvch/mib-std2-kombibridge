@@ -122,9 +122,13 @@ public class AndroidAutoTarget
         ExboxGuidanceManager exboxGuidanceManager = ASLExboxmFactory.getExboxmApi().getExboxGuidanceManager();
         this.exboxGuidanceListenerImpl = new ExboxGuidanceListenerImpl(this.navigationListener, exboxGuidanceManager);
         this.navigationHandler = new NavigationHandler();
-        // AAtoKombi: feed AA nav from the patched GAL lib via /dev/shmem/aa_nav (replaces the
-        // stubbed DSIAndroidAuto2 nav path). Defensive: must never break target construction.
-        try { new ShmemNavReader(this.navigationHandler).start(); } catch (Throwable t) {}
+        // AAtoKombi: feed AA nav from the patched GAL lib via /dev/shmem/aa_nav (replaces the stubbed
+        // DSIAndroidAuto2 nav path). A single AANavReader parses the file once and routes the maneuver
+        // by runtime cluster type (ClusterCaps): the navsd Navigation menu on a nav-capable cluster,
+        // the media now-playing widget on a non-nav one. Defensive: must never break target construction.
+        try {
+            de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
+        } catch (Throwable t) {}
         // AAtoKombi: feed the real AA now-playing track via /dev/shmem/aa_media (patched GAL media
         // endpoint), shown in the cluster media widget when no route guidance is active.
         // Gated by CurrentStationInfo.MEDIA_ENABLED so now-playing can be turned off independently.

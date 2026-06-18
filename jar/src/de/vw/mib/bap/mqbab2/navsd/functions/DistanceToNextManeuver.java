@@ -46,7 +46,7 @@ NavigationServiceListener {
         // so the distance is sent at navsd startup (stock returned null here). On a nav-capable cluster
         // register them so the unit's own nav re-sends when AA is inactive.
         INSTANCE = this;
-        if (NavState.NAV_CAPABLE) {
+        if (ClusterCaps.isNavCapable()) {
             try {
                 this.getSystemService().addSystemServiceListener(this, SYSTEM_LISTENER_IDS);
                 this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
@@ -140,7 +140,7 @@ NavigationServiceListener {
         // STOCK formatter so the cluster shows the correct figure. Writing raw metres into the field
         // displayed as 1/10 (the cluster expects the formatter's value+unit pair, not raw metres).
         try {
-            if (NavState.ACTIVE) {
+            if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
                 if (NavState.distanceMeters > 0) {
                     int[] nArray = new int[2];
                     try {
@@ -165,7 +165,7 @@ NavigationServiceListener {
                     distanceToNextManeuver_Status.bargraphInfo.bargraphOnOff = 0;
                     distanceToNextManeuver_Status.validityInformation.distanceToNextManeuverValid = false;
                 }
-            } else if (NavState.NAV_CAPABLE) {
+            } else if (ClusterCaps.isNavCapable()) {
                 // nav-capable cluster, AA inactive: the unit's own next-maneuver distance (stock path,
                 // reusing verifiedBapBargraphSetting/computeDistanceAndDistanceUnit/showDistanceToNextManeuver).
                 NavigationService navigationService = this.getNavigationService();
@@ -214,7 +214,7 @@ NavigationServiceListener {
 
     public void uninitialize() {
         // navsd-shadow delta: listeners were only registered on a nav-capable cluster (see init).
-        if (NavState.NAV_CAPABLE) {
+        if (ClusterCaps.isNavCapable()) {
             try {
                 this.getSystemService().removeSystemServiceListener(this, SYSTEM_LISTENER_IDS);
                 this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);

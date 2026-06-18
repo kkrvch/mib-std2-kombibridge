@@ -80,7 +80,7 @@ ExboxServiceListener {
     protected static final int[] EXBOX_LISTENER_IDS;
     static /* synthetic */ Class class$de$vw$mib$bap$mqbab2$generated$audiosd$serializer$CurrentStationInfo_Status;
 
-    // AAtoKombi nav-in-media injection. ShmemNavReader sets these (road + distance) while AA route
+    // AAtoKombi nav-in-media injection. AANavReader sets these (road + distance) while AA route
     // guidance is active, then calls pokeNav() to refresh. setStationInfoForMirrorLink() shows them
     // in place of the static "Android Auto" label -> the cluster Media widget displays the nav text.
     public static volatile String navPrimary = null;
@@ -410,6 +410,7 @@ ExboxServiceListener {
         // (a black media menu was seen once on a cold first launch). All our text is length-clamped.
         try {
             if (connType == 3
+                    && !de.vw.mib.bap.mqbab2.navsd.functions.ClusterCaps.isNavCapable()
                     && de.vw.mib.asl.internal.androidauto.target.NavigationHandler.aaRouteGuidanceActive
                     && navPrimary != null && navPrimary.length() > 0) {
                 // Cluster renders top->bottom: secondary(S2), tertiary(T3), PRIMARY(P1,big), quaternary(Q4).

@@ -29,7 +29,7 @@ NavigationServiceListener {
     protected static final int[] NAVIGATION_LISTENER_IDS = new int[]{732, 751};
     static Class class$de$vw$mib$bap$mqbab2$generated$navsd$serializer$ManeuverDescriptor_Status;
 
-    // navsd-shadow delta: live re-send hook. NavShmemReader updates NavState then calls poke()
+    // navsd-shadow delta: live re-send hook. AANavReader updates NavState then calls poke()
     // (on the framework timer thread) to push the new maneuver as a BAP status.
     private static volatile ManeuverDescriptor INSTANCE = null;
     public static void poke() {
@@ -41,7 +41,7 @@ NavigationServiceListener {
         // navsd-shadow delta: by default drop the nav-service listener (we drive from NavState).
         // On a nav-capable cluster register it so the unit's own nav re-sends when AA is inactive.
         INSTANCE = this;
-        if (NavState.NAV_CAPABLE) {
+        if (ClusterCaps.isNavCapable()) {
             try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
         }
         return this.computeManeuverDescriptorStatus();
@@ -180,7 +180,7 @@ NavigationServiceListener {
 
     public void uninitialize() {
         // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
-        if (NavState.NAV_CAPABLE) {
+        if (ClusterCaps.isNavCapable()) {
             try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
         }
     }
@@ -202,7 +202,7 @@ NavigationServiceListener {
         // own nav engine isn't routing); fill from NavState instead of the nav service.
         // The stock cleanup switch in validateManeuverData is reused verbatim.
         try {
-            if (NavState.ACTIVE) {
+            if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
                 // sidestreets ("" here): that field is the JUNCTION side-road geometry, not a label.
                 // Feeding the road name made the cluster draw a spurious unfilled approach road before
                 // the turn. The street name lives in TurnToInfo; AA gives no side-road geometry -> empty.
@@ -212,7 +212,7 @@ NavigationServiceListener {
                 maneuverDescriptor_Status.maneuver_1.mainElement = m.mainElement;
                 maneuverDescriptor_Status.maneuver_1.sidestreets.setContent(m.sidestreets);
                 maneuverDescriptor_Status.maneuver_1.zLevelGuidance = m.zLevelGuidance;
-            } else if (NavState.NAV_CAPABLE && this.getNavigationService().getRouteGuidanceState() != 0) {
+            } else if (ClusterCaps.isNavCapable() && this.getNavigationService().getRouteGuidanceState() != 0) {
                 // nav-capable cluster, AA inactive: fall back to the unit's own nav engine (the stock
                 // path; reuses validateManeuverData), so the built-in navigation still draws.
                 this.fillManeuverDescriptor(maneuverDescriptor_Status);

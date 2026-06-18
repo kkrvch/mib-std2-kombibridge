@@ -24,7 +24,14 @@ implements Property,
 ASLNavSDConstants,
 NavigationServiceListener,
 ConfigurationServiceListener {
+    // FIRMWARE-SPECIFIC. These attribute IDs are MHI2-derived (from adi961's High sources) and do
+    // NOT match this STD2 stock (P0480 stock uses {485494784, 0x5000080, 128} / config -1050869632).
+    // The dispatcher (ASLDataPoolAdapter._registeredDelegates) matches by EXACT id with no wildcard,
+    // so with wrong ids the unit's own-navigation push updates never arrive. Regenerate these from
+    // the TARGET firmware's MIBHMI.jar stock at build time (see build.sh shadow regen step). Until
+    // then nav-capable fall-back works only by the cluster's pull/GET, not by push. [FW-REGEN]
     protected static final int[] NAVIGATION_LISTENER_IDS = new int[]{1110044, -2147483643, Integer.MIN_VALUE};
+    private static final int[] CONFIG_LISTENER_IDS = new int[]{-2147459647}; // [FW-REGEN] stock P0480 = -1050869632
     private int _currentBapRgType = 3;
     private boolean isWaitingForDsiAck = false;
     static Class class$de$vw$mib$bap$mqbab2$generated$navsd$serializer$ActiveRgType_Status;
@@ -37,19 +44,23 @@ ConfigurationServiceListener {
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
-        // navsd-shadow delta: by default skip getNavigationService()/getConfigurationService()
-        // (the NavigationASLDataAdapter / map-switch landmine on a non-routing engine); rgtype is
-        // forced from NavState in setCurrentRGType. On a nav-capable cluster (NAV_CAPABLE) we DO
-        // register, so the stock map-switch logic still runs when AA is inactive.
+        // navsd-shadow delta: detect the cluster at runtime (ClusterCaps) instead of a static
+        // per-build NAV_CAPABLE flag. On a nav-capable cluster we register the stock nav/config
+        // listeners and run the stock map-switch logic so the unit's own navigation still draws when
+        // AA is inactive; on a non-nav cluster we skip registration (media path owns the output) and
+        // never touch the nav service -- avoiding the NavigationASLDataAdapter / phone-audio-BAP
+        // landmine (Blocker 2).
         INSTANCE = this;
-        // Start the /dev/shmem/aa_nav -> NavState poll on the framework timer (once). The shim
-        // (patched libgal) writes real AA turn-by-turn there; the reader fills NavState and pokes
-        // the navsd functions. Must never break navsd startup.
-        try { NavShmemReader.ensureStarted(); } catch (Throwable t) {}
-        if (NavState.NAV_CAPABLE) {
+        if (ClusterCaps.isNavCapable()) {
+            // navsd is this cluster's output: register the stock nav/config listeners so the unit's
+            // own navigation still draws when AA is inactive. The AA feed itself is pumped by the
+            // single AANavReader (started once from AndroidAutoTarget), which fills NavState and pokes
+            // these functions. On a non-nav cluster we register nothing -- the media path owns the
+            // output and the nav service is left untouched (avoids the phone/audio-BAP landmine,
+            // Blocker 2).
             try {
                 this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
-                this.getConfigurationService().addConfigurationListener(this, new int[]{-2147459647});
+                this.getConfigurationService().addConfigurationListener(this, CONFIG_LISTENER_IDS);
                 if (this.getConfigurationService().isMapSwitchingFeatureSelected()) {
                     this.setCurrentRgType(0);
                 }
@@ -98,7 +109,7 @@ ConfigurationServiceListener {
 
     public void uninitialize() {
         // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
-        if (NavState.NAV_CAPABLE) {
+        if (ClusterCaps.isNavCapable()) {
             try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
         }
     }
@@ -153,17 +164,16 @@ ConfigurationServiceListener {
     }
 
     private void setCurrentRGType(ActiveRgType_Status activeRgType_Status) {
-        // navsd-shadow delta: while AA guides, force RG_TYPE_RGI_FROM_BAP_FUNCTION_MANEUVER_DESCRIPTIOR
-        // (0) so the cluster draws OUR ManeuverDescriptor; 3 (MOST_MAP) waits for a map video.
-        if (NavState.ACTIVE) {
+        // navsd-shadow delta: overlay AA ONLY on a nav-capable cluster. While AA guides there, force
+        // RG_TYPE_RGI_FROM_BAP_FUNCTION_MANEUVER_DESCRIPTIOR (0) so the cluster draws OUR
+        // ManeuverDescriptor (3 = MOST_MAP waits for a map video we cannot supply).
+        if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
             activeRgType_Status.rgtype = 0;
             return;
         }
-        if (!NavState.NAV_CAPABLE) {
-            activeRgType_Status.rgtype = 3;
-            return;
-        }
-        // nav-capable cluster, AA inactive: stock map-switch logic so the unit's own nav keeps its gate.
+        // Otherwise behave exactly like stock: AA-inactive on a nav cluster (own nav keeps its gate),
+        // AND the whole non-nav case -- where the media path owns the output and we must not hijack
+        // navsd. Wrapped so a non-routing engine can never crash navsd.
         try {
             activeRgType_Status.rgtype = !this.getConfigurationService().isMapSwitchingFeatureSelected()
                     ? (this.getNavigationService().getKombiMapStatus() != 0 ? 3 : this.getCurrentRgType())

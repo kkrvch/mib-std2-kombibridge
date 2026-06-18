@@ -35,7 +35,7 @@ NavigationServiceListener {
         // navsd-shadow delta: by default drop the nav-service listener (we drive from NavState).
         // On a nav-capable cluster register it so the unit's own nav re-sends when AA is inactive.
         INSTANCE = this;
-        if (NavState.NAV_CAPABLE) {
+        if (ClusterCaps.isNavCapable()) {
             try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
         }
         return this.computeRGStatusStatus();
@@ -61,11 +61,11 @@ NavigationServiceListener {
     private void setRouteGuidanceStatus(RG_Status_Status rG_Status_Status) {
         // navsd-shadow delta: while AA guides, route guidance is active. On a nav-capable cluster,
         // when AA is inactive, derive it from the unit's own nav engine; elsewhere report inactive.
-        if (NavState.ACTIVE) {
+        if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
             rG_Status_Status.rg_Status = 1;
             return;
         }
-        if (!NavState.NAV_CAPABLE) {
+        if (!ClusterCaps.isNavCapable()) {
             rG_Status_Status.rg_Status = 0;
             return;
         }
@@ -97,7 +97,7 @@ NavigationServiceListener {
 
     public void uninitialize() {
         // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
-        if (NavState.NAV_CAPABLE) {
+        if (ClusterCaps.isNavCapable()) {
             try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
         }
     }

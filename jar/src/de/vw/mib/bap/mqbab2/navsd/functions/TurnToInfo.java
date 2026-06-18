@@ -36,7 +36,7 @@ NavigationServiceListener {
         // navsd-shadow delta: by default drop the nav-service listener (we drive from NavState).
         // On a nav-capable cluster register it so the unit's own nav re-sends when AA is inactive.
         INSTANCE = this;
-        if (NavState.NAV_CAPABLE) {
+        if (ClusterCaps.isNavCapable()) {
             try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
         }
         return this.computeTurnToInfoStatus();
@@ -62,10 +62,10 @@ NavigationServiceListener {
         // navsd-shadow delta: street straight from NavState (the AA next-turn road); on a nav-capable
         // cluster, when AA is inactive, the unit's own next-turn street + signpost instead.
         try {
-            if (NavState.ACTIVE) {
+            if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
                 turnToInfo_Status.turnToInfo.setContent(NavState.street != null ? NavState.street : "");
                 turnToInfo_Status.signPost.setContent("");
-            } else if (NavState.NAV_CAPABLE) {
+            } else if (ClusterCaps.isNavCapable()) {
                 NavigationTurnToInfo n = this.getNavigationService().getTurnToInfo();
                 turnToInfo_Status.turnToInfo.setContent(n.getTurnToInfoStreet());
                 turnToInfo_Status.signPost.setContent(n.getTurnToInfoSignPost());
@@ -94,7 +94,7 @@ NavigationServiceListener {
 
     public void uninitialize() {
         // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
-        if (NavState.NAV_CAPABLE) {
+        if (ClusterCaps.isNavCapable()) {
             try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
         }
     }
