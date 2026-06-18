@@ -16,6 +16,12 @@ missing pieces — without reflashing the firmware and **fully reversible**.
 > **Status:** working (navigation + real now-playing track in the cluster's media widget).
 > Personal/educational modding project. Use COMPLETELY at your own risk.
 
+## Demo
+
+[![Watch the demo on YouTube](docs/img/demo.jpg)](https://www.youtube.com/watch?v=Qn0900pUQZw)
+
+▶ **[Watch the demo on YouTube](https://www.youtube.com/watch?v=Qn0900pUQZw)**
+
 ---
 
 ## How it works (in one picture)
