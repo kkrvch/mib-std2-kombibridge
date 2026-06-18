@@ -32,8 +32,12 @@ NavigationServiceListener {
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
-        // navsd-shadow delta: drop the nav-service listener (we drive from NavState).
+        // navsd-shadow delta: by default drop the nav-service listener (we drive from NavState).
+        // On a nav-capable cluster register it so the unit's own nav re-sends when AA is inactive.
         INSTANCE = this;
+        if (NavState.NAV_CAPABLE) {
+            try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+        }
         return this.computeRGStatusStatus();
     }
 
@@ -55,10 +59,19 @@ NavigationServiceListener {
     }
 
     private void setRouteGuidanceStatus(RG_Status_Status rG_Status_Status) {
-        // navsd-shadow delta: route-guidance active flag straight from NavState
-        // instead of deriving it from the absent/non-routing nav engine.
+        // navsd-shadow delta: while AA guides, route guidance is active. On a nav-capable cluster,
+        // when AA is inactive, derive it from the unit's own nav engine; elsewhere report inactive.
+        if (NavState.ACTIVE) {
+            rG_Status_Status.rg_Status = 1;
+            return;
+        }
+        if (!NavState.NAV_CAPABLE) {
+            rG_Status_Status.rg_Status = 0;
+            return;
+        }
         try {
-            rG_Status_Status.rg_Status = NavState.ACTIVE ? 1 : 0;
+            NavigationService navigationService = this.getNavigationService();
+            rG_Status_Status.rg_Status = navigationService.getNavigationStatus() != 0 ? 0 : (this.instrumentClusterActionStatus != null ? (this.instrumentClusterActionStatus.booleanValue() ? 1 : 0) : (navigationService.getRouteGuidanceState() == 0 ? 0 : 1));
         } catch (Throwable t) {
             rG_Status_Status.rg_Status = 0;
         }
@@ -83,7 +96,10 @@ NavigationServiceListener {
     }
 
     public void uninitialize() {
-        // navsd-shadow delta: no listener was registered, nothing to remove.
+        // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
+        if (NavState.NAV_CAPABLE) {
+            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+        }
     }
 
     public void indicationError(int n, BAPFunctionListener bAPFunctionListener) {

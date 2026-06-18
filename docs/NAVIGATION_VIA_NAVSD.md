@@ -22,9 +22,10 @@ belongs: arrow + distance + street, with the cluster's own approach-segment anim
 The navsd functions are constructed by `NavSDBindingFactoryAll` via plain `new Xxx()`. Loading
 faithful **shadows** of those classes ahead of the stock ones (`-Xbootclasspath/p`, the same
 mechanism the rest of this project uses) makes the factory build ours instead. Each shadow is a
-verbatim copy of the stock class with a small delta: it fills its status from the shared
-`NavState` instead of the (absent) nav engine, and drops the nav-service listeners that assume a
-routing engine.
+verbatim copy of the stock class with a small delta: while AA is guiding it fills its status from the
+shared `NavState` instead of the nav engine. By default it also drops the nav-service listeners that
+assume a routing engine; set `NAV_CAPABLE` (below) to keep them on a nav-capable cluster so the
+unit's own navigation still works when AA is inactive.
 
 `NavShmemReader` polls `/dev/shmem/aa_nav` on the framework timer, maps the GAL fields to the VW
 navsd constants (`ASLNavSDConstants`), writes them into `NavState`, and pokes each function
@@ -38,6 +39,20 @@ phone (AA) -> patched GAL (shim) -> /dev/shmem/aa_nav -> NavShmemReader -> NavSt
                                                                               |
                                                               cluster Navigation menu
 ```
+
+## Falling back to the unit's own navigation (`NAV_CAPABLE`)
+
+By default the shadows speak only for Android Auto: when AA is inactive they report idle and never
+touch the stock nav-service. That is correct for a non-routing cluster (e.g. Bolero) and is the safe
+default, since those `getNavigationService()` / `getConfigurationService()` calls are skipped
+entirely.
+
+Set `NavState.NAV_CAPABLE = true` on a routing-capable cluster (e.g. Amundsen). The shadows then
+register the stock nav-service listeners and, while AA is inactive, fall back to the unit's own nav
+engine for the maneuver / distance / turn-to-street / RG-status / rgtype — so the built-in
+navigation keeps drawing on the cluster instead of being blanked by an idle override. When AA is
+guiding, `NavState.ACTIVE` takes priority regardless of the flag, and every stock-service call is
+wrapped so a non-routing engine can never crash navsd.
 
 ## Functions driven
 

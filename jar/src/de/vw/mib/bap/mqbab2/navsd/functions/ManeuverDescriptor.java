@@ -38,8 +38,12 @@ NavigationServiceListener {
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
-        // navsd-shadow delta: drop the nav-service listener (we drive from NavState).
+        // navsd-shadow delta: by default drop the nav-service listener (we drive from NavState).
+        // On a nav-capable cluster register it so the unit's own nav re-sends when AA is inactive.
         INSTANCE = this;
+        if (NavState.NAV_CAPABLE) {
+            try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+        }
         return this.computeManeuverDescriptorStatus();
     }
 
@@ -175,7 +179,10 @@ NavigationServiceListener {
     }
 
     public void uninitialize() {
-        // navsd-shadow delta: no listener was registered, nothing to remove.
+        // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
+        if (NavState.NAV_CAPABLE) {
+            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+        }
     }
 
     public void indicationError(int n, BAPFunctionListener bAPFunctionListener) {
@@ -205,6 +212,10 @@ NavigationServiceListener {
                 maneuverDescriptor_Status.maneuver_1.mainElement = m.mainElement;
                 maneuverDescriptor_Status.maneuver_1.sidestreets.setContent(m.sidestreets);
                 maneuverDescriptor_Status.maneuver_1.zLevelGuidance = m.zLevelGuidance;
+            } else if (NavState.NAV_CAPABLE && this.getNavigationService().getRouteGuidanceState() != 0) {
+                // nav-capable cluster, AA inactive: fall back to the unit's own nav engine (the stock
+                // path; reuses validateManeuverData), so the built-in navigation still draws.
+                this.fillManeuverDescriptor(maneuverDescriptor_Status);
             }
         } catch (Throwable t) {
             // leave status empty (== stock no-route); a throw here crashes navsd startup

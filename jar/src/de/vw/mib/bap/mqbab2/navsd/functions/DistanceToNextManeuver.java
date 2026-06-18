@@ -42,9 +42,16 @@ NavigationServiceListener {
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
-        // navsd-shadow delta: drop system/nav listeners; return the NavState-filled status
-        // so the distance is sent at navsd startup (stock returned null here).
+        // navsd-shadow delta: by default drop system/nav listeners; return the NavState-filled status
+        // so the distance is sent at navsd startup (stock returned null here). On a nav-capable cluster
+        // register them so the unit's own nav re-sends when AA is inactive.
         INSTANCE = this;
+        if (NavState.NAV_CAPABLE) {
+            try {
+                this.getSystemService().addSystemServiceListener(this, SYSTEM_LISTENER_IDS);
+                this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
+            } catch (Throwable t) {}
+        }
         DistanceToNextManeuver_Status s = this.dequeueBAPEntity();
         this.setDistanceToNextManeuverStatusData(s);
         return s;
@@ -133,24 +140,44 @@ NavigationServiceListener {
         // STOCK formatter so the cluster shows the correct figure. Writing raw metres into the field
         // displayed as 1/10 (the cluster expects the formatter's value+unit pair, not raw metres).
         try {
-            if (NavState.ACTIVE && NavState.distanceMeters > 0) {
-                int[] nArray = new int[2];
-                try {
-                    if (this.getSystemService().getCurrentDistanceUnit() == 1) {
-                        this.getFixFormatter().cnv2Distance2withMinDistanceMiles(NavState.distanceMeters, nArray);
-                    } else {
-                        this.getFixFormatter().cnvDistance2KilometersExt(NavState.distanceMeters, nArray);
+            if (NavState.ACTIVE) {
+                if (NavState.distanceMeters > 0) {
+                    int[] nArray = new int[2];
+                    try {
+                        if (this.getSystemService().getCurrentDistanceUnit() == 1) {
+                            this.getFixFormatter().cnv2Distance2withMinDistanceMiles(NavState.distanceMeters, nArray);
+                        } else {
+                            this.getFixFormatter().cnvDistance2KilometersExt(NavState.distanceMeters, nArray);
+                        }
+                        distanceToNextManeuver_Status.distanceToNextManeuver.distance = nArray[0];
+                        distanceToNextManeuver_Status.distanceToNextManeuver.unit = nArray[1];
+                    } catch (Throwable tf) {
+                        // formatter/system service unavailable -> raw metres (better than nothing)
+                        distanceToNextManeuver_Status.distanceToNextManeuver.distance = NavState.distanceMeters;
+                        distanceToNextManeuver_Status.distanceToNextManeuver.unit = 0;
                     }
-                    distanceToNextManeuver_Status.distanceToNextManeuver.distance = nArray[0];
-                    distanceToNextManeuver_Status.distanceToNextManeuver.unit = nArray[1];
-                } catch (Throwable tf) {
-                    // formatter/system service unavailable -> raw metres (better than nothing)
-                    distanceToNextManeuver_Status.distanceToNextManeuver.distance = NavState.distanceMeters;
-                    distanceToNextManeuver_Status.distanceToNextManeuver.unit = 0;
+                    distanceToNextManeuver_Status.bargraphInfo.bargraphOnOff = 1;
+                    distanceToNextManeuver_Status.bargraphInfo.bargraph = Math.min(100, NavState.distanceMeters * 100 / 300);
+                    distanceToNextManeuver_Status.validityInformation.distanceToNextManeuverValid = true;
+                } else {
+                    distanceToNextManeuver_Status.distanceToNextManeuver.distance = -1;
+                    distanceToNextManeuver_Status.distanceToNextManeuver.unit = 255;
+                    distanceToNextManeuver_Status.bargraphInfo.bargraphOnOff = 0;
+                    distanceToNextManeuver_Status.validityInformation.distanceToNextManeuverValid = false;
                 }
-                distanceToNextManeuver_Status.bargraphInfo.bargraphOnOff = 1;
-                distanceToNextManeuver_Status.bargraphInfo.bargraph = Math.min(100, NavState.distanceMeters * 100 / 300);
-                distanceToNextManeuver_Status.validityInformation.distanceToNextManeuverValid = true;
+            } else if (NavState.NAV_CAPABLE) {
+                // nav-capable cluster, AA inactive: the unit's own next-maneuver distance (stock path,
+                // reusing verifiedBapBargraphSetting/computeDistanceAndDistanceUnit/showDistanceToNextManeuver).
+                NavigationService navigationService = this.getNavigationService();
+                boolean bl = navigationService.getRouteGuidanceState() == 1;
+                boolean bl2 = navigationService.getDistanceToNextManeuver().getDistanceToNextManeuverDistance() > 0 && bl;
+                distanceToNextManeuver_Status.bargraphInfo.bargraphOnOff = this.verifiedBapBargraphSetting();
+                this.computeDistanceAndDistanceUnit(distanceToNextManeuver_Status, bl);
+                distanceToNextManeuver_Status.bargraphInfo.bargraph = navigationService.getDistanceToNextManeuver().getDistanceToNextManeuverBargraph();
+                distanceToNextManeuver_Status.validityInformation.distanceToNextManeuverValid = distanceToNextManeuver_Status.distanceToNextManeuver.unit != 0 && distanceToNextManeuver_Status.distanceToNextManeuver.unit != 3 ? (distanceToNextManeuver_Status.distanceToNextManeuver.unit == 4 ? bl2 && distanceToNextManeuver_Status.distanceToNextManeuver.distance <= 125 : bl2 && distanceToNextManeuver_Status.distanceToNextManeuver.distance <= 200) : bl2;
+                if (distanceToNextManeuver_Status.validityInformation.distanceToNextManeuverValid) {
+                    distanceToNextManeuver_Status.validityInformation.distanceToNextManeuverValid = this.showDistanceToNextManeuver();
+                }
             } else {
                 distanceToNextManeuver_Status.distanceToNextManeuver.distance = -1;
                 distanceToNextManeuver_Status.distanceToNextManeuver.unit = 255;
@@ -186,7 +213,13 @@ NavigationServiceListener {
     }
 
     public void uninitialize() {
-        // navsd-shadow delta: no listeners were registered, nothing to remove.
+        // navsd-shadow delta: listeners were only registered on a nav-capable cluster (see init).
+        if (NavState.NAV_CAPABLE) {
+            try {
+                this.getSystemService().removeSystemServiceListener(this, SYSTEM_LISTENER_IDS);
+                this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
+            } catch (Throwable t) {}
+        }
     }
 
     public void indicationError(int n, BAPFunctionListener bAPFunctionListener) {
