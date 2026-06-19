@@ -417,7 +417,10 @@ ExboxServiceListener {
                 //   P1 = arrow + distance ("► 300 m") ; S2 = street ; T3 = maneuver word ; Q4 = exit #.
                 // (*_Type don't drive font/icons here — positional; the big font is the PRIMARY slot.)
                 string = clampLine(navPrimary);
-                n = 72;
+                // pi_Type=0 (like the PROBE_LAYOUT, which DID render all four lines incl. Q4).
+                // pi_Type=72 (the "Android Auto" label type) appears to select a 3-line layout that
+                // drops the quaternary slot, so time/exit in Q4 was never shown.
+                n = 0;
                 currentStationInfo_Status.secondaryInformation.setContent(clampLine(navSecondary));
                 currentStationInfo_Status.si_Type = 0;
                 currentStationInfo_Status.tertiaryInformation.setContent(clampLine(navTertiary));

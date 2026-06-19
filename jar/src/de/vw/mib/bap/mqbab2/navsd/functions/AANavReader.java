@@ -127,7 +127,8 @@ public final class AANavReader implements Runnable {
         if (DEBUG) {
             MIBLogger.getInstance().debug("aa_nav seq=" + seq + " st=" + status + " event=" + event
                     + " side=" + side + " angle=" + angle + " number=" + number + " dist=" + dist
-                    + " road=" + road);
+                    + " time=" + time + " unit=" + unit + " q4='" + quaternaryFor(event, number, time)
+                    + "' road=" + road);
         }
 
         // status != ACTIVE -> guidance stopped/disconnected: clear whichever path is live.
@@ -151,7 +152,7 @@ public final class AANavReader implements Runnable {
             if (statusEdge && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
             }
-            publishMedia(event, side, number, road, dist);
+            publishMedia(event, side, number, road, dist, time);
         }
     }
 
@@ -210,7 +211,7 @@ public final class AANavReader implements Runnable {
     }
 
     // ===== non-nav path: media now-playing widget =============================================
-    private void publishMedia(int event, int side, int number, String road, int dist) {
+    private void publishMedia(int event, int side, int number, String road, int dist, int time) {
         // Cluster layout (top->bottom): secondary, tertiary, PRIMARY(big), quaternary.
         //   PRIMARY = arrow + distance ("> 300 m"); secondary = street; tertiary = maneuver word.
         String arrow = arrowForManeuver(event, side);
@@ -220,7 +221,7 @@ public final class AANavReader implements Runnable {
         CurrentStationInfo.navPrimary = (distStr.length() > 0) ? (arrow + " " + distStr) : arrow;
         CurrentStationInfo.navSecondary = street;
         CurrentStationInfo.navTertiary = word;
-        CurrentStationInfo.navQuaternary = quaternaryFor(event, number);   // Q4: roundabout exit #
+        CurrentStationInfo.navQuaternary = quaternaryFor(event, number, time);  // Q4: exit # else time-to-turn
         CurrentStationInfo.pokeNav();
     }
 
@@ -269,7 +270,8 @@ public final class AANavReader implements Runnable {
         }
     }
 
-    private String quaternaryFor(int event, int number) {
+    private String quaternaryFor(int event, int number, int time) {
+        // Q4: roundabout exit number only.
         if ((event == 11 || event == 12 || event == 13) && number > 0) {
             return "exit " + number;
         }
@@ -282,7 +284,10 @@ public final class AANavReader implements Runnable {
             return "";
         }
         if (dist < 1000) {
-            return dist + " m";
+            if (dist < 10) {
+                return dist + " m";           // very short: show the exact metres
+            }
+            return (((dist + 5) / 10) * 10) + " m";   // else round to nearest 10 m, like Google
         }
         return (dist / 1000) + "," + ((dist % 1000) / 100) + " km";
     }
@@ -297,33 +302,38 @@ public final class AANavReader implements Runnable {
         }
     }
 
-    /** Clear both outputs (idempotent). The inactive path is already empty, so clearing it is a no-op. */
+    /** Clear the output of the path this cluster actually drives. */
     private void clearActive() {
         if (cleared) {
             return;
         }
         cleared = true;
-        // navsd path
-        try {
-            NavState.ACTIVE = false;
-            ActiveRgType.poke();
-            RGStatus.poke();
-            ManeuverDescriptor.poke();
-            DistanceToNextManeuver.poke();
-            TurnToInfo.poke();
-        } catch (Throwable t) {
-            // ignore
-        }
-        // media path
-        try {
-            CurrentStationInfo.navPrimary = null;
-            CurrentStationInfo.navSecondary = null;
-            CurrentStationInfo.navTertiary = null;
-            CurrentStationInfo.navQuaternary = null;
-            NavigationHandler.aaRouteGuidanceActive = false;
-            CurrentStationInfo.pokeNav();
-        } catch (Throwable t) {
-            // ignore
+        // Mirror the router (processOnce): clear ONLY the active path. Crucially, on a non-nav
+        // cluster we must not poke the navsd shadows -- poke()->process() emits navsd BAP regardless
+        // of isNavCapable(), and the shadows ARE constructed on a non-nav EU unit (factory "All"), so
+        // an un-gated poke here would push navsd traffic onto a non-nav cluster (Blocker 2).
+        if (ClusterCaps.isNavCapable()) {
+            try {
+                NavState.ACTIVE = false;
+                ActiveRgType.poke();
+                RGStatus.poke();
+                ManeuverDescriptor.poke();
+                DistanceToNextManeuver.poke();
+                TurnToInfo.poke();
+            } catch (Throwable t) {
+                // ignore
+            }
+        } else {
+            try {
+                CurrentStationInfo.navPrimary = null;
+                CurrentStationInfo.navSecondary = null;
+                CurrentStationInfo.navTertiary = null;
+                CurrentStationInfo.navQuaternary = null;
+                NavigationHandler.aaRouteGuidanceActive = false;
+                CurrentStationInfo.pokeNav();
+            } catch (Throwable t) {
+                // ignore
+            }
         }
     }
 
