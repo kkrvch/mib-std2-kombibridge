@@ -188,24 +188,45 @@ public final class AANavReader implements Runnable {
             case 12:
             case 13: return (side == 1) ? 22 : 21; // ROUNDABOUT  -> TRS_LEFT/RIGHT
             case 14: return 11;                    // STRAIGHT    -> FOLLOW_STREET
-            case 17: return 3;                     // DESTINATION -> ARRIVED
+            case 17:
+            case 18:
+            case 19: return 3;                     // DESTINATION / dest-left / dest-right -> ARRIVED
             default: return 13;                    // unknown     -> TURN
         }
     }
 
-    // VW direction = arrow rotation, CCW 0..255 (0=straight, 64=left, 128=u-turn, 192=right). [FW-TUNE]
+    // VW direction = arrow rotation, CCW 0..255. Hardware-verified on an Amundsen Maxidot: renderable
+    // values are discrete 0 (straight) / 64 (left) / 192 (right); 128 (180/down) does NOT render on
+    // the mono cluster. [HW-TUNE]
+    //  - turns: 3 sharpness levels off the AA event enum (slight/normal/sharp), mirrored L/R;
+    //  - roundabout: real exit bearing from the AA angle (compact ENTER_AND_EXIT carries it), else neutral;
+    //    the 21/22 glyph is set in mapMainElement;
+    //  - u-turn: the UTURN glyph (main=25) needs a valid side-direction to orient -> 64/192 (dir=128 = blank).
     static int mapDirection(int event, int side, int angle) {
-        if (event == 6) {
-            return 128;                            // u-turn
+        if (event == 6) {                          // u-turn: orient the UTURN glyph by side (64 left / 192 right)
+            return (side == 2) ? 192 : 64;
         }
-        if (event == 1 || event == 2 || event == 14) {
-            return 0;                              // depart / continue / straight
+        if (event == 1 || event == 2 || event == 14
+                || event == 17 || event == 18 || event == 19) {
+            return 0;                              // depart / name-change / straight / arrival
+        }
+        if (event == 11 || event == 12 || event == 13) {    // roundabout: true exit bearing when sent
+            if (angle >= 1 && angle <= 360) {
+                return ((angle - 180) * 256 / 360) & 0xFF;   // 180 = straight across; sign hw-confirmed
+            }
+            return 0;                              // no exit angle (large roundabout) -> neutral up
+        }
+        int mag;                                   // ordinary turn: slight 32 / normal 64 / sharp 96
+        switch (event) {
+            case 3:  mag = 32; break;              // SLIGHT_TURN
+            case 5:  mag = 96; break;              // SHARP_TURN
+            default: mag = 64; break;              // TURN / ramp / fork / merge / unknown
         }
         if (side == 1) {
-            return 64;                             // LEFT
+            return mag;                            // LEFT
         }
         if (side == 2) {
-            return 192;                            // RIGHT
+            return (256 - mag) & 0xFF;             // RIGHT (mirror)
         }
         return 0;                                  // unspecified -> straight
     }
