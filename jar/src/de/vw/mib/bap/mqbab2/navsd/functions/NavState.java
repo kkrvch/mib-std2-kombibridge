@@ -17,6 +17,7 @@ public final class NavState {
     public static volatile int     direction      = 192;    // VW direction angle 0..255 (192 = RIGHT), default
     public static volatile int     zLevelGuidance = 0;
     public static volatile String  street         = "";     // next-turn road -> TurnToInfo (fid 20)
+    public static volatile String  sideStreets    = "";     // roundabout exit-road geometry (SIDE_STREET_* glyph byte) -> ManeuverDescriptor col3; "" for non-roundabouts
     public static volatile int     distanceMeters = 0;
 
     private NavState() {}
