@@ -203,11 +203,13 @@ NavigationServiceListener {
         // The stock cleanup switch in validateManeuverData is reused verbatim.
         try {
             if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
-                // sidestreets ("" here): that field is the JUNCTION side-road geometry, not a label.
-                // Feeding the road name made the cluster draw a spurious unfilled approach road before
-                // the turn. The street name lives in TurnToInfo; AA gives no side-road geometry -> empty.
+                // sidestreets = JUNCTION side-road geometry, not a label. Feeding the road name here made
+                // the cluster draw a spurious approach road, so non-roundabout maneuvers still send ""
+                // (NavState.sideStreets is "" then). For a roundabout, AANavReader synthesizes one
+                // EXIT-road spoke at the taken-exit bearing, so the glyph draws the exit you take.
+                String ss = (NavState.sideStreets != null) ? NavState.sideStreets : "";
                 ManeuverDescriptor_Status$Maneuver_1 m = this.validateManeuverData(
-                        NavState.direction, NavState.mainElement, "", NavState.zLevelGuidance);
+                        NavState.direction, NavState.mainElement, ss, NavState.zLevelGuidance);
                 maneuverDescriptor_Status.maneuver_1.direction = m.direction;
                 maneuverDescriptor_Status.maneuver_1.mainElement = m.mainElement;
                 maneuverDescriptor_Status.maneuver_1.sidestreets.setContent(m.sidestreets);

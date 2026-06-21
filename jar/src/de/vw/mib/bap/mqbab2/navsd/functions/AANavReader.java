@@ -147,7 +147,7 @@ public final class AANavReader implements Runnable {
 
         // Router: one parse, exactly one output, chosen by the runtime cluster type.
         if (ClusterCaps.isNavCapable()) {
-            publishNavsd(event, side, angle, road, dist);
+            publishNavsd(event, side, angle, number, road, dist);
         } else {
             if (statusEdge && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
@@ -157,10 +157,12 @@ public final class AANavReader implements Runnable {
     }
 
     // ===== nav-capable path: NavState + navsd shadows ==========================================
-    private void publishNavsd(int event, int side, int angle, String road, int dist) {
+    private void publishNavsd(int event, int side, int angle, int number, String road, int dist) {
+        int effAngle = effectiveAngle(event, angle, number);    // real bearing (Maps) or synth from exit number (Yandex)
         NavState.mainElement    = mapMainElement(event, side);
-        NavState.direction      = mapDirection(event, side, angle);
+        NavState.direction      = mapDirection(event, side, effAngle);
         NavState.street         = (road != null) ? road : "";   // next-turn road -> TurnToInfo
+        NavState.sideStreets    = buildRingSideStreets(event, effAngle);  // exit-road spoke on a roundabout, "" otherwise
         NavState.distanceMeters = dist;                          // raw metres (stock formatter in the shadow)
         NavState.zLevelGuidance = 0;
         NavState.ACTIVE         = true;
@@ -229,6 +231,37 @@ public final class AANavReader implements Runnable {
             return (256 - mag) & 0xFF;             // RIGHT (mirror)
         }
         return 0;                                  // unspecified -> straight
+    }
+
+    // Effective exit bearing for a roundabout. Google Maps sends the real angle; Yandex Navigator sends
+    // angle=0 on every maneuver but a valid exit number, so synthesize a bearing from the number
+    // (typical 4-way roundabout: 1=right, 2=straight, 3=left, 4=back-left). Hardware-confirmed: Yandex
+    // roundabouts then point the right way. Maps and ordinary turns pass through unchanged. [HW-TUNE]
+    static int effectiveAngle(int event, int angle, int number) {
+        if ((event == 11 || event == 12 || event == 13) && number > 0 && (angle < 1 || angle > 360)) {
+            int a = 90 + (number - 1) * 90;
+            return (a > 315) ? 315 : a;
+        }
+        return angle;
+    }
+
+    // Roundabout exit-road geometry for the maneuver glyph (col3 sidestreets). One SIDE_STREET_*_EXIT
+    // glyph at the taken-exit bearing; the cluster draws the entry leg itself, giving an entry+exit
+    // ring. Non-roundabouts -> "" (no junction geometry). Glyph table = GuidanceModel.SIDE_STREET_*
+    // exit codes per 22.5-deg compass position (entry at BASE/180): only the 45-deg slots carry an EXIT
+    // glyph, and the bearing is 45-deg-quantized, so we snap to those. (Intermediate ROUNDABOUT stubs
+    // exist too but this cluster does not render them, so we omit them.)
+    private static final int[] RING_EXIT = {1, 47, 38, 31, 53, 23, 14, 7}; // FWD,RF,RIGHT,RB,BASE,LB,LEFT,LF
+    static String buildRingSideStreets(int event, int angle) {
+        if (event != 11 && event != 12 && event != 13) {
+            return "";
+        }
+        if (angle < 1 || angle > 360) {
+            return "";                             // no bearing (shouldn't happen post-effectiveAngle) -> plain glyph
+        }
+        int compass = ((180 - angle) % 360 + 360) % 360;   // exit bearing on the drawn circle
+        int oct = ((compass + 22) / 45) & 7;               // nearest of the 8 exit-capable positions
+        return String.valueOf((char) (RING_EXIT[oct] & 0xFF));
     }
 
     // ===== non-nav path: media now-playing widget =============================================
