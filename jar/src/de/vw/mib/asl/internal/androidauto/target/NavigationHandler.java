@@ -4,16 +4,16 @@ import de.adi961.miblogger.MIBLogger;
 import org.dsi.ifc.androidauto2.Constants;
 
 /**
- * AAtoKombi (track-text experiment build).
+ * AAtoKombi route-guidance state holder (media-widget path).
  *
- * The nav-BAP path (navsd LSG 50) is intentionally NOT used here: the cluster never subscribes to
- * it on this no-nav STD2. Instead AANavReader routes the AA navigation text into the
- * audio now-playing widget (via {@link de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo}),
- * a BAP group the cluster already renders.
+ * The output path is chosen at runtime by {@link de.vw.mib.bap.mqbab2.navsd.functions.ClusterCaps}:
+ * on a nav-capable cluster AANavReader drives the real navsd Navigation menu (LSG 50); on a
+ * non-nav STD2 the cluster never subscribes to navsd, so AANavReader instead routes the AA
+ * navigation text into the audio now-playing widget (via
+ * {@link de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo}).
  *
- * This handler now only tracks the route-guidance-active state; every navsd / NavBAP /
- * ManeuverDescriptor call has been removed so we do not touch the BAP nav infrastructure at all
- * (that was the suspected cause of the phone/music regression).
+ * This handler is used only on the media-widget path: it tracks the route-guidance-active state
+ * that gates the CurrentStationInfo injection. It makes no navsd / NavBAP calls of its own.
  */
 public class NavigationHandler {
 

@@ -110,8 +110,8 @@ ExboxServiceListener {
         }
     }
 
-    // The cluster's CurrentStationInfo BAPString lines hold up to 73 chars; clamp our injected text
-    // so an over-long title/street can never overflow the serializer and blank the widget. Null -> "".
+    // Clamp our injected text to 72 chars so an over-long title/street can never overflow the
+    // CurrentStationInfo BAPString serializer and blank the widget. Null -> "".
     private static String clampLine(String s) {
         if (s == null) return "";
         return s.length() > 72 ? s.substring(0, 72) : s;
@@ -428,7 +428,8 @@ ExboxServiceListener {
                     && de.vw.mib.asl.internal.androidauto.target.NavigationHandler.aaRouteGuidanceActive
                     && navPrimary != null && navPrimary.length() > 0) {
                 // Cluster renders top->bottom: secondary(S2), tertiary(T3), PRIMARY(P1,big), quaternary(Q4).
-                //   P1 = arrow + distance ("► 300 m") ; S2 = street ; T3 = maneuver word ; Q4 = exit #.
+                //   P1 = arrow + distance ("► 300 m") ; S2 = street ; T3 = maneuver word ;
+                //   Q4 = exit # or, when there's none, the now-playing title (see below).
                 // (*_Type don't drive font/icons here — positional; the big font is the PRIMARY slot.)
                 string = clampLine(navPrimary);
                 // pi_Type=0 (like the PROBE_LAYOUT, which DID render all four lines incl. Q4).

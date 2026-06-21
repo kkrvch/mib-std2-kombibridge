@@ -25,13 +25,13 @@ ASLNavSDConstants,
 NavigationServiceListener,
 ConfigurationServiceListener {
     // FIRMWARE-SPECIFIC. These attribute IDs are MHI2-derived (from adi961's High sources) and do
-    // NOT match this STD2 stock (P0480 stock uses {485494784, 0x5000080, 128} / config -1050869632).
+    // NOT match this STD2 stock (the dev unit's stock uses {485494784, 0x5000080, 128} / config -1050869632).
     // The dispatcher (ASLDataPoolAdapter._registeredDelegates) matches by EXACT id with no wildcard,
     // so with wrong ids the unit's own-navigation push updates never arrive. Regenerate these from
     // the TARGET firmware's MIBHMI.jar stock at build time (see build.sh shadow regen step). Until
     // then nav-capable fall-back works only by the cluster's pull/GET, not by push. [FW-REGEN]
     protected static final int[] NAVIGATION_LISTENER_IDS = new int[]{1110044, -2147483643, Integer.MIN_VALUE};
-    private static final int[] CONFIG_LISTENER_IDS = new int[]{-2147459647}; // [FW-REGEN] stock P0480 = -1050869632
+    private static final int[] CONFIG_LISTENER_IDS = new int[]{-2147459647}; // [FW-REGEN] stock = -1050869632
     private int _currentBapRgType = 3;
     private boolean isWaitingForDsiAck = false;
     static Class class$de$vw$mib$bap$mqbab2$generated$navsd$serializer$ActiveRgType_Status;
@@ -165,7 +165,7 @@ ConfigurationServiceListener {
 
     private void setCurrentRGType(ActiveRgType_Status activeRgType_Status) {
         // navsd-shadow delta: overlay AA ONLY on a nav-capable cluster. While AA guides there, force
-        // RG_TYPE_RGI_FROM_BAP_FUNCTION_MANEUVER_DESCRIPTIOR (0) so the cluster draws OUR
+        // RG_TYPE_RGI_FROM_BAP_FUNCTION_MANEUVER_DESCRIPTOR (0) so the cluster draws OUR
         // ManeuverDescriptor (3 = MOST_MAP waits for a map video we cannot supply).
         if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
             activeRgType_Status.rgtype = 0;

@@ -3,8 +3,9 @@
 #
 # What it does: compiles a tiny freestanding ARM listener (navshim_fs.cpp), links it into a
 # self-contained ELF blob, then injects that blob into the firmware's libgal and patches the
-# tail of GalReceiver::init so the GAL receiver registers Google's NavigationStatusEndpoint
-# (which the stock SAL never registers). Captured turn-by-turn is written to /dev/shmem/aa_nav.
+# tail of GalReceiver::init so the GAL receiver registers Google's NavigationStatusEndpoint and
+# MediaPlaybackStatusEndpoint (which the stock SAL never registers). Captured turn-by-turn is
+# written to /dev/shmem/aa_nav and the now-playing track to /dev/shmem/aa_media.
 #
 # Requirements (no QNX SDK needed):
 #   * clang            (system clang on macOS is fine)

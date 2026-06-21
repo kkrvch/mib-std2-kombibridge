@@ -1,7 +1,7 @@
 # Shim design — reverse-engineering of `NavigationStatusEndpoint`
 
-(Addresses below are Ghidra image-base = `nm` value + 0x10000, from the P0253 libgal; the P0480
-layout is identical, only the absolute addresses differ.)
+(Addresses below are Ghidra image-base = `nm` value + 0x10000, from the dev unit's libgal; the
+layout is build-independent, only the absolute addresses differ.)
 
 ## The idea
 Android Auto navigation reception is **fully implemented inside the GAL library** — the
@@ -48,7 +48,7 @@ vtable of our listener:
 - `+0x04` dtor
 - `+0x08` onStatus(uint32 status)   // NavigationStatus enum: UNAVAILABLE=0, ACTIVE=1, INACTIVE=2
 - `+0x0c` onNextTurn(Road* str, TurnSide, Event, Image* str, TurnAngle, TurnNumber)
-- `+0x10` onDistance(DistanceMeters, TimeToTurnSeconds)
+- `+0x10` onDistance(DistanceMeters, TimeToTurnSeconds, field3, DisplayUnit)
 
 (The exact fields the device handler forwards to onNextTurn/onDistance — and which protobuf
 "has" bits gate them — are what `navshim_fs.cpp` encodes; see its comments.)

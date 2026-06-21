@@ -49,6 +49,12 @@ label when a phone is connected, so it is provably subscribed and drawn. We repl
 with the live maneuver/street/distance. It's a passive text widget, so there are no side
 effects.
 
+→ **On a nav-capable cluster (e.g. Amundsen) this blocker does not apply:** the navsd group *is*
+subscribed, so the same reader (`AANavReader`) drives the real cluster **Navigation** menu — arrow
++ distance + street, with the cluster's own approach animation — instead of the media widget. The
+output path is chosen at runtime by `ClusterCaps.isNavCapable()`. See
+[NAVIGATION_VIA_NAVSD.md](NAVIGATION_VIA_NAVSD.md).
+
 ## Data flow
 
 ```
@@ -58,7 +64,9 @@ phone ── AA ──► libgal (shim) ──► /dev/shmem/aa_nav ──► ja
                  each callback       dist time unit road"
 ```
 
-`/dev/shmem` is a RAM filesystem (the SAL itself logs there), so nothing touches flash.
+`/dev/shmem` is a RAM filesystem (the SAL itself logs there), so nothing touches flash. (This is
+the non-nav path. On a nav-capable cluster the jar feeds the same shmem data into the navsd BAP
+functions instead of `CurrentStationInfo` — see [NAVIGATION_VIA_NAVSD.md](NAVIGATION_VIA_NAVSD.md).)
 
 ## What Android Auto actually projects (and what it does not)
 
@@ -75,15 +83,17 @@ So we can show: maneuver type, side, road name, distance/time **to the next turn
 route ETA on the phone/head-unit screen and does not project it to the car. This is a protocol
 limitation, the same on factory units.
 
-Note on distance: the device's `handleNavigationDistanceEvent` forwards only two fields to the
-listener (`DistanceMeters`, `TimeToTurnSeconds`); both came through as 0 in stationary tests. It
-is not yet confirmed whether they populate while driving, or whether the phone uses a display
-field the handler doesn't forward (which would need a deeper hook).
+Note on distance: the device's `handleNavigationDistanceEvent` forwards `DistanceMeters` plus
+`TimeToTurnSeconds` and a display-unit field to the listener. `DistanceMeters` reads 0 while
+stationary but populates while driving (confirmed on a drive log); `TimeToTurnSeconds` stayed 0
+even on the road. The distance is run through the cluster's own formatter so the value + unit
+match what it expects.
 
 ## Media now-playing (built)
 The same recipe also registers `MediaPlaybackStatusEndpoint`: the shim writes the real track to
-`/dev/shmem/aa_media` (`seq Song\tArtist\tAlbum`) and the jar shows it in the same media widget when
-no route guidance is active (otherwise the maneuver takes precedence).
+`/dev/shmem/aa_media` (`seq Song\tArtist\tAlbum`) and the jar shows it in the media widget when no
+route guidance is active. During guidance the maneuver takes precedence, but the track title is
+still surfaced in the widget's fourth line (Q4) as a marquee so music stays visible.
 
 ## Other endpoints (researched, not built)
 The same library exposes more endpoints the SAL likewise ignores:
@@ -94,12 +104,12 @@ The same library exposes more endpoints the SAL likewise ignores:
 
 ## Version specificity
 - **Scripts / mechanism** — portable across STD2.
-- **jar** — shadows are faithful copies of P0480 stock classes; within a firmware branch they
+- **jar** — shadows are faithful copies of the dev unit's stock classes; within a firmware branch they
   are usually compatible, but strictly should be recompiled against the target `MIBHMI.jar`.
 - **shim** - `inject.py` **auto-resolves** all per-firmware addresses
   from the target libgal's own `.dynsym` / relocations / `.plt`, and auto-locates the `BL` patch
   site by scanning `GalReceiver::init` for the call to the `onChannelOpened` PLT stub. The same
-  shim sources adapt to any STD2 libgal build. (Confirmed necessary in practice: even two P0480
-  copies — the device copy vs the firmware-image copy — have addresses shifted by 8 bytes, so the
+  shim sources adapt to any STD2 libgal build. (Confirmed necessary in practice: even two copies
+  of the same build — the device copy vs the firmware-image copy — have addresses shifted by 8 bytes, so the
   old hardcoded values were wrong for the firmware-image libgal.) See
   [`../shim/README.md`](../shim/README.md).

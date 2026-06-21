@@ -4,7 +4,7 @@ Companion to [`DESIGN.md`](DESIGN.md) (Navigation). Same idea: Google's GAL libr
 implements `MediaPlaybackStatusEndpoint` (advertise → phone opens channel → protobuf parse →
 dispatch to a listener), but the stock SAL never instantiates it. The shim constructs it, gives
 it our listener, and registers it — so the real now-playing track (Song/Artist/Album) reaches the
-HMI. Addresses below are from the firmware-image P0480 libgal (auto-resolved by `inject.py`; the
+HMI. Addresses below are from the dev unit's libgal (auto-resolved by `inject.py`; the
 *offsets* documented here are build-independent).
 
 ## Relevant exports
