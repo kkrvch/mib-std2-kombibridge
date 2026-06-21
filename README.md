@@ -3,11 +3,9 @@
 Show Android Auto turn-by-turn navigation (and player info) on the
 instrument cluster of a **VW MIB2 STD2 / MST2** unit (TechniSat / Preh).
 
-```
-      Hauptstrasse
-      Turn right
-   ►  300 m
-```
+<p align="center">
+  <img src="docs/img/cluster-nav.jpg" alt="Android Auto turn-by-turn on the MIB2 STD2 instrument cluster" width="640">
+</p>
 
 Stock MIB2 STD2 cannot do this: the firmware deliberately leaves the Android Auto
 navigation bridge disabled, and the cluster is not coded for navigation. AAtoKombi adds the
@@ -32,7 +30,7 @@ missing pieces — without reflashing the firmware and **fully reversible**.
       │  turn-by-turn is inside Google's libext.google.gal.receiver.so,
       │  but the stock SAL never registers the navigation endpoint
       ▼
- ┌─ shim/ ──────────────────────────────────────────────┐
+ ┌─ shim/ ───────────────────────────────────────────────┐
  │ patched libgal: registers Google's NavigationStatus   │
  │ AND MediaPlaybackStatus endpoints itself, captures    │
  │ road/maneuver/distance + track Title/Artist/Album,    │
@@ -40,16 +38,16 @@ missing pieces — without reflashing the firmware and **fully reversible**.
  └───────────────────────────────────────────────────────┘
       │
       ▼  /dev/shmem/aa_nav + aa_media   (plain text, one line per update)
- ┌─ jar/ ───────────────────────────────────────────────┐
- │ HMI Java mod (loaded via -Xbootclasspath/p): reads     │
- │ the files and renders the text. On a non-nav cluster   │
- │ it injects the maneuver into the MEDIA now-playing      │
- │ widget (CurrentStationInfo) — which the cluster already │
- │ draws ("Android Auto" label); the real track shows when │
- │ no route guidance is active. On a nav-capable cluster   │
- │ (e.g. Amundsen) it instead drives the real navsd        │
- │ Navigation menu. The path is picked at runtime          │
- │ (ClusterCaps.isNavCapable()).                           │
+ ┌─ jar/ ────────────────────────────────────────────────┐
+ │ HMI Java mod (loaded via -Xbootclasspath/p): reads    │
+ │ the files and renders the text. On a non-nav cluster  │
+ │ it injects the maneuver into the MEDIA now-playing    │
+ │ widget (CurrentStationInfo) — which the cluster       │
+ │ already draws ("Android Auto" label); the real        │
+ │ track shows when no route guidance is active. On a    │
+ │ nav-capable cluster (e.g. Amundsen) it instead        │
+ │ drives the real navsd Navigation menu. The path is    │
+ │ picked at runtime (ClusterCaps.isNavCapable()).       │
  └───────────────────────────────────────────────────────┘
       │
       ▼
