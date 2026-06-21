@@ -117,6 +117,20 @@ ExboxServiceListener {
         return s.length() > 72 ? s.substring(0, 72) : s;
     }
 
+    // The cluster's Q4 slot shows ~24 chars. Scroll a longer now-playing title as a marquee, advanced
+    // by the nav poll timer (AANavReader) via marqueeTick. Short titles are returned unchanged so there
+    // is no scrolling and no extra BAP traffic for them.
+    public static final int Q4_WIDTH = 24;
+    public static volatile int marqueeTick = 0;
+    private static String marqueeQ4(String s) {
+        if (s == null) return "";
+        if (s.length() <= Q4_WIDTH) return s;
+        String ring = s + "   -   ";              // gap so the wrap point is visible
+        int len = ring.length();
+        int off = ((marqueeTick % len) + len) % len;
+        return (ring + ring).substring(off, off + Q4_WIDTH);
+    }
+
     static {
         try { MIBLogger.getInstance().debug("CurrentStationInfo CLASS LOADED (AAtoKombi shadow)"); } catch (Throwable t) {}
     }
@@ -425,9 +439,16 @@ ExboxServiceListener {
                 currentStationInfo_Status.si_Type = 0;
                 currentStationInfo_Status.tertiaryInformation.setContent(clampLine(navTertiary));
                 currentStationInfo_Status.ti_Type = 0;
-                currentStationInfo_Status.quaternaryInformation.setContent(clampLine(navQuaternary));
+                // Q4: roundabout exit number (navQuaternary) takes priority; otherwise surface the
+                // now-playing track title so music stays visible during route guidance. The nav layout
+                // is pi_Type=0 (4-line) so Q4 renders, and this is recomputed on every media/nav update
+                // so the title follows song changes. mediaTitle is null when the track feature is off.
+                String navQ4 = (navQuaternary != null && navQuaternary.length() > 0)
+                        ? navQuaternary
+                        : marqueeQ4(mediaTitle);
+                currentStationInfo_Status.quaternaryInformation.setContent(clampLine(navQ4));
                 currentStationInfo_Status.qi_Type = 0;
-                MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "'");
+                MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "' q4='" + navQ4 + "'");
             }
             // otherwise (AA connected, no active route guidance) show the REAL now-playing track.
             else if (MEDIA_ENABLED && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {

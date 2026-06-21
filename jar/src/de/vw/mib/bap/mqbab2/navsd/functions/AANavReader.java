@@ -55,6 +55,7 @@ public final class AANavReader implements Runnable {
     private int  lastStatus = -1;
     private long lastSeqChangeMs = 0L;
     private boolean cleared = true;
+    private String lastMarqueeTitle = null;   // Q4 now-playing marquee: detect song change -> restart
 
     private AANavReader(NavigationHandler handler) {
         this.handler = handler;
@@ -83,9 +84,37 @@ public final class AANavReader implements Runnable {
     public void run() {
         try {
             processOnce();
+            tickMarquee();
         } catch (Throwable t) {
             // never let the poll disturb the HMI
         }
+    }
+
+    // Drive the Q4 now-playing marquee on the media path: advance the scroll one step per poll and
+    // refresh, but only while guidance is active and a long title actually occupies Q4 (i.e. no
+    // roundabout exit number there). Resets to the start when the song changes. Cheap no-op otherwise,
+    // so short titles cost nothing.
+    private void tickMarquee() {
+        if (cleared || ClusterCaps.isNavCapable()) {
+            return;
+        }
+        String q = CurrentStationInfo.navQuaternary;
+        if (q != null && q.length() > 0) {
+            return;                                   // roundabout exit owns Q4 -> no marquee
+        }
+        String t = CurrentStationInfo.mediaTitle;
+        if (t == null || t.length() <= CurrentStationInfo.Q4_WIDTH) {
+            CurrentStationInfo.marqueeTick = 0;
+            lastMarqueeTitle = t;
+            return;                                   // fits in Q4 -> nothing to scroll
+        }
+        if (!t.equals(lastMarqueeTitle)) {
+            lastMarqueeTitle = t;
+            CurrentStationInfo.marqueeTick = 0;       // new song -> start from the beginning
+        } else {
+            CurrentStationInfo.marqueeTick++;
+        }
+        CurrentStationInfo.pokeNav();
     }
 
     private void processOnce() {
