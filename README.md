@@ -4,7 +4,15 @@ Show Android Auto turn-by-turn navigation (and player info) on the
 instrument cluster of a **VW MIB2 STD2 / MST2** unit (TechniSat / Preh).
 
 <p align="center">
-  <img src="docs/img/cluster-nav.jpg" alt="Android Auto turn-by-turn on the MIB2 STD2 instrument cluster" width="640">
+  <img src="docs/img/cluster-nav-amundsen.jpg" alt="Android Auto turn-by-turn in the real Navigation menu on a nav-capable (Amundsen) MIB2 STD2 cluster" width="640">
+  <br>
+  <em>MIB2 <strong>with</strong> navigation (Amundsen): AA guidance driving the cluster's real Navigation menu.</em>
+</p>
+
+<p align="center">
+  <img src="docs/img/cluster-nav.jpg" alt="Android Auto turn-by-turn in the media widget on a non-nav (Bolero) MIB2 STD2 cluster" width="640">
+  <br>
+  <em>MIB2 <strong>without</strong> navigation (Bolero): the same guidance injected into the cluster's media now-playing widget.</em>
 </p>
 
 Stock MIB2 STD2 cannot do this: the firmware deliberately leaves the Android Auto
@@ -20,6 +28,8 @@ missing pieces — without reflashing the firmware and **fully reversible**.
 [![Watch the demo on YouTube](docs/img/demo.jpg)](https://www.youtube.com/watch?v=Qn0900pUQZw)
 
 ▶ **[Watch the demo on YouTube](https://www.youtube.com/watch?v=Qn0900pUQZw)**
+
+*The demo video is recorded on a MIB2 **without** navigation (Bolero) — guidance in the media widget.*
 
 ---
 
