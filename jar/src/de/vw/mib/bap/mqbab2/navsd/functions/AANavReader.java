@@ -156,7 +156,7 @@ public final class AANavReader implements Runnable {
         if (DEBUG) {
             MIBLogger.getInstance().debug("aa_nav seq=" + seq + " st=" + status + " event=" + event
                     + " side=" + side + " angle=" + angle + " number=" + number + " dist=" + dist
-                    + " time=" + time + " unit=" + unit + " q4='" + quaternaryFor(event, number, time)
+                    + " time=" + time + " unit=" + unit + " q4='" + quaternaryFor(event, number)
                     + "' road=" + road);
         }
 
@@ -181,7 +181,7 @@ public final class AANavReader implements Runnable {
             if (statusEdge && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
             }
-            publishMedia(event, side, number, road, dist, time);
+            publishMedia(event, side, number, road, dist);
         }
     }
 
@@ -294,7 +294,7 @@ public final class AANavReader implements Runnable {
     }
 
     // ===== non-nav path: media now-playing widget =============================================
-    private void publishMedia(int event, int side, int number, String road, int dist, int time) {
+    private void publishMedia(int event, int side, int number, String road, int dist) {
         // Cluster layout (top->bottom): secondary, tertiary, PRIMARY(big), quaternary.
         //   PRIMARY = arrow + distance ("> 300 m"); secondary = street; tertiary = maneuver word.
         String arrow = arrowForManeuver(event, side);
@@ -304,7 +304,7 @@ public final class AANavReader implements Runnable {
         CurrentStationInfo.navPrimary = (distStr.length() > 0) ? (arrow + " " + distStr) : arrow;
         CurrentStationInfo.navSecondary = street;
         CurrentStationInfo.navTertiary = word;
-        CurrentStationInfo.navQuaternary = quaternaryFor(event, number, time);  // Q4: exit # else time-to-turn
+        CurrentStationInfo.navQuaternary = quaternaryFor(event, number);  // Q4: roundabout exit #
         CurrentStationInfo.pokeNav();
     }
 
@@ -353,7 +353,7 @@ public final class AANavReader implements Runnable {
         }
     }
 
-    private String quaternaryFor(int event, int number, int time) {
+    private String quaternaryFor(int event, int number) {
         // Q4: roundabout exit number only.
         if ((event == 11 || event == 12 || event == 13) && number > 0) {
             return "exit " + number;

@@ -355,16 +355,12 @@ public class AndroidAutoTarget
     public void dsiAndroidAuto2UpdateCoverArtUrl(ResourceLocator resourceLocator, int n) {
     }
 
+    // No-op: AA turn-by-turn arrives via the patched GAL receiver (/dev/shmem/aa_nav -> AANavReader),
+    // not the DSI nav path, which delivers no maneuvers on this platform.
     public void dsiAndroidAuto2UpdateNavigationNextTurnEvent(String road, int turnSide, int event, int turnAngle, int turnNumber, int valid) {
-        if (valid == 1) {
-            this.navigationHandler.handleNextTurnEvent(road, turnSide, event, turnAngle, turnNumber);
-        }
     }
 
     public void dsiAndroidAuto2UpdateNavigationNextTurnDistance(int distanceMeters, int timeSeconds, int valid) {
-        if (valid == 1) {
-            this.navigationHandler.handleUpdateNextTurnDistanceEvent(distanceMeters, timeSeconds);
-        }
     }
 
     public void dsiAndroidAuto2SetExternalDestination(double d, double d2, String string, String string2) {

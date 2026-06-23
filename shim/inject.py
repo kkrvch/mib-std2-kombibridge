@@ -127,7 +127,7 @@ def blob_image_and_relocs(blob_path):
     gr=e.get_section_by_name('.galrefs')
     galrefs=[gr['sh_addr']+i*4 for i in range(gr['sh_size']//4)]
     ds=e.get_section_by_name('.dynsym')
-    ent={sy.name:sy['st_value'] for sy in ds.iter_symbols() if sy.name in (TRAMPOLINE_SYM,'gal_nav_inject')}
+    ent={sy.name:sy['st_value'] for sy in ds.iter_symbols() if sy.name==TRAMPOLINE_SYM}
     return img,hi,relocs,galrefs,ent
 
 def main():
@@ -146,7 +146,7 @@ def main():
     dynseg=next(s for s in e.iter_segments() if s['p_type']=='PT_DYNAMIC')
     dyn_foff=dynseg['p_offset']
     # find DT_REL/RELSZ/RELCOUNT entries (offset within .dynamic)
-    DT={17:'REL',18:'RELSZ',19:'RELENT',0x6ffffffa:'RELCOUNT'}
+    DT={17:'REL',18:'RELSZ',0x6ffffffa:'RELCOUNT'}
     dt={}
     o=dyn_foff
     while True:
@@ -228,10 +228,6 @@ def main():
     s32(raw,dt['RELSZ'][0]+4, len(newrel))
     s32(raw,dt['RELCOUNT'][0]+4, relcount+n_new)
     # 4) append to the file: [pad][blob image][pad][newrel]
-    while len(raw)<blob_foff: raw+=b'\x00'
-    raw[blob_foff:blob_foff]=b''  # ensure
-    raw+=b'\x00'*(blob_foff-len(raw)) if len(raw)<blob_foff else b''
-    # align and write the blob
     if len(raw)<blob_foff: raw+=b'\x00'*(blob_foff-len(raw))
     raw[blob_foff:blob_foff+len(img)]=img
     # rel table
