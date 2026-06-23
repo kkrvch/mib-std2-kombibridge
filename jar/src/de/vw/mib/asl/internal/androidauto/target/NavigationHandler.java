@@ -26,13 +26,4 @@ public class NavigationHandler {
         aaRouteGuidanceActive = (focus == Constants.NAVFOCUS_PROJECTED);
         MIBLogger.getInstance().debug("navigationFocus focus=" + focus + " aaRouteGuidanceActive=" + aaRouteGuidanceActive);
     }
-
-    public void handleNextTurnEvent(String road, int turnSide, int event, int turnAngle, int turnNumber) {
-        MIBLogger.getInstance().debug("handleNextTurnEvent road=" + road + " side=" + turnSide
-                + " event=" + event + " angle=" + turnAngle + " number=" + turnNumber);
-    }
-
-    public void handleUpdateNextTurnDistanceEvent(int distanceMeters, int timeSeconds) {
-        MIBLogger.getInstance().debug("handleUpdateNextTurnDistanceEvent dist=" + distanceMeters + " time=" + timeSeconds);
-    }
 }

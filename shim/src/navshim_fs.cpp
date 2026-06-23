@@ -38,8 +38,6 @@ static usize my_strlen(const char* s){ const char* p=s; while(*p) ++p; return (u
 static char* u2dec(char* o,u32 v){ char t[12]; int n=0; if(!v){*o++='0';*o=0;return o;}
   while(v){ t[n++]='0'+v%10; v/=10; } while(n--) *o++=t[n]; *o=0; return o; }
 static char* i2dec(char* o,i32 v){ if(v<0){*o++='-'; return u2dec(o,(u32)(-v)); } return u2dec(o,(u32)v); }
-static char* u2hex(char* o,u32 v){ const char* H="0123456789abcdef"; *o++='0';*o++='x';
-  for(int s=28;s>=0;s-=4) *o++=H[(v>>s)&0xf]; *o=0; return o; }
 
 // ===== hand-rolled dlsym over libc.so.3 (via the memset GOT slot) =====
 // We use stdio (fopen/fwrite/fclose) instead of open/write/close so we don't depend on the
@@ -137,10 +135,11 @@ static void ipc_flush(){
   write_file(IPC_PATH, b, (usize)(o-b));
 }
 
-static void rd_string(void* strObj){ // std::string* (CoW): data = *(char**)
+// Copy a CoW std::string's data (data = *(char**)strObj) into a fixed buffer.
+static void rd_str_to(void* strObj, char* dst, int cap){
   const char* r = strObj? *(const char**)strObj : 0;
-  usize n=0; if(r){ n=my_strlen(r); if(n>63) n=63; for(usize i=0;i<n;i++) g_st.road[i]=r[i]; }
-  g_st.road[n]=0;
+  int n=0; if(r){ while(r[n] && n<cap-1){ dst[n]=r[n]; ++n; } }
+  dst[n]=0;
 }
 
 // ===== listener: vtable as libgal expects (+4 dtor, +8 status, +0xc nextturn, +0x10 dist) =====
@@ -150,7 +149,7 @@ static void l_status(void*, u32 s){ g_st.status=s; g_st.seq++; ipc_flush(); }
 // onNextTurn(self, Road*, TurnSide, Event, Image*, TurnAngle, TurnNumber)
 static void l_nextturn(void*, void* road, u32 turnSide, u32 event, void* /*image*/, i32 angle, i32 number){
   g_st.side=turnSide; g_st.event=event; g_st.angle=angle; g_st.number=number;
-  rd_string(road);
+  rd_str_to(road, g_st.road, sizeof g_st.road);
   g_st.seq++; ipc_flush();
 }
 // onDistance(self, DistanceMeters, TimeToTurnSeconds, field3, DisplayUnit)
@@ -170,13 +169,6 @@ static Listener g_listener = { &g_listVT };
 static const char IPC_MEDIA[] = "/dev/shmem/aa_media";
 struct MediaState{ u32 seq; char song[80]; char artist[80]; char album[80]; };
 static MediaState g_ms;
-
-// Copy a CoW std::string's data (data = *(char**)strObj) into a fixed buffer.
-static void rd_str_to(void* strObj, char* dst, int cap){
-  const char* r = strObj? *(const char**)strObj : 0;
-  int n=0; if(r){ while(r[n] && n<cap-1){ dst[n]=r[n]; ++n; } }
-  dst[n]=0;
-}
 
 static void media_flush(){
   if(!p_fopen) return;
@@ -224,15 +216,6 @@ static void* g_inited_receiver = 0;
 
 typedef void (*reg_t)(void*,void*);
 
-// Native stage log → /dev/shmem/aa_nav.dbg (read on the first hardware test).
-// No file at all → resolve_libc (dlsym) failed OR gal_nav_inject was never called.
-static const char DBG_PATH[] = "/dev/shmem/aa_nav.dbg";
-static char  g_dbg[256];
-static char* g_dbgp = g_dbg;
-static void dbg_add(const char* s){ while(*s && g_dbgp < g_dbg+sizeof(g_dbg)-1) *g_dbgp++=*s++; }
-static void dbg_hex(u32 v){ char t[12]; u2hex(t,v); dbg_add(t); }
-static void dbg_flush(){ write_file(DBG_PATH, g_dbg, (usize)(g_dbgp-g_dbg)); }
-
 // Free service id. The range is deliberately narrow (0x10..0x40) so we don't read far past the
 // router table: system services take the low ids, a free one is almost certainly here.
 static u8 pick_free_id(u32 router){
@@ -245,8 +228,6 @@ extern "C" __attribute__((used)) void gal_nav_inject(void* receiver){
   if(receiver == g_inited_receiver) return;   // already armed for THIS receiver
   g_inited_receiver = receiver;               // re-arm on each new receiver (AA reconnect)
   resolve_libc();
-  g_dbgp=g_dbg; dbg_add("inject recv="); dbg_hex((u32)receiver);
-  dbg_add(" libc="); dbg_add(p_fopen? "ok":"FAIL"); dbg_flush();
   if(!p_fopen){ return; }                          // no libc → continuing would be pointless/unsafe
   my_memset(g_navEp,0,sizeof g_navEp);
   my_memset(g_mediaEp,0,sizeof g_mediaEp);
@@ -255,25 +236,21 @@ extern "C" __attribute__((used)) void gal_nav_inject(void* receiver){
 
   u32 router = (u32)receiver + 4;                 // MessageRouter is embedded at receiver+4
   u8 id = pick_free_id(router);
-  dbg_add(" id="); dbg_hex(id);
-  if(id==0xff){ dbg_add(" NO-FREE-ID"); dbg_flush(); return; }
+  if(id==0xff){ return; }
   *(u32*)(g_navEp+0x00) = ref(R_NAV_VTABLE) + 8;  // vptr = vtable+8
   *(u32*)(g_navEp+0x08) = router;                 // MessageRouter*
   g_navEp[0x0c] = id;                             // service id
   g_navEp[0x05] = id;                             // channel
   *(u32*)(g_navEp+0x24) = 2;                      // InstrumentClusterType = 2 (enum/text, mono)
   *(u32*)(g_navEp+0x2c) = (u32)&g_listener;       // listener -> ours
-  dbg_add(" built"); dbg_flush();
 
   ((reg_t)ref(R_REGISTER))(receiver, g_navEp);    // register with the router
-  dbg_add(" registered (NO start at init)"); dbg_flush();
   // We never call NavigationStatusEndpoint::start() — after auth the phone sees the service in
   // discovery and opens the nav channel itself; a prematurely queued start message breaks auth.
 
   // --- MediaPlaybackStatusEndpoint (now-playing). Register AFTER nav so pick_free_id picks a
   //     different free slot. Listener pointer is at +0x18 (NOT +0x2c); no clusterType. ---
   u8 mid = pick_free_id(router);
-  dbg_add(" mid="); dbg_hex(mid);
   if(mid != 0xff){
     *(u32*)(g_mediaEp+0x00) = ref(R_MEDIA_VTABLE) + 8; // vptr = vtable+8
     *(u32*)(g_mediaEp+0x08) = router;                  // MessageRouter*
@@ -281,9 +258,6 @@ extern "C" __attribute__((used)) void gal_nav_inject(void* receiver){
     g_mediaEp[0x05] = mid;                             // channel
     *(u32*)(g_mediaEp+0x18) = (u32)&g_mediaListener;   // listener -> ours (media: +0x18)
     ((reg_t)ref(R_REGISTER))(receiver, g_mediaEp);
-    dbg_add(" media-registered"); dbg_flush();
-  } else {
-    dbg_add(" media NO-FREE-ID"); dbg_flush();
   }
 }
 
