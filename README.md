@@ -180,8 +180,9 @@ goes through `/dev/shmem`, a RAM filesystem).
 ### 4. Verify on the unit
 - Connect your phone over Android Auto and start navigation → the cluster's media tab shows the
   maneuver + street; play music with no active route → it shows the real Title/Artist/Album.
-- If something's off, check `/dev/shmem/aa_nav.dbg` (should read `... libc=ok ... registered ...
-  media-registered`) and the `MIBLogger` output for `AANavReader` / `ShmemMediaReader` lines.
+- If something's off, check that `/dev/shmem/aa_nav` and `/dev/shmem/aa_media` exist and advance
+  while the phone is connected (the patched libgal writes them) and the `MIBLogger` output for
+  `AANavReader` / `ShmemMediaReader` lines.
 
 ### Advanced (optional)
 - **Verify the shadows against your firmware first.** If you already have a `MIBHMI.jar` (or only the
