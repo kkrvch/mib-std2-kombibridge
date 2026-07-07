@@ -101,6 +101,12 @@ ExboxServiceListener {
     // false -> ShmemMediaReader is not started and the cluster keeps the stock "Android Auto" label
     // (navigation still works). Flip to disable now-playing without touching the rest of the mod.
     public static final boolean MEDIA_ENABLED = true;
+    // AAtoKombi: master switch for feeding AA route-guidance (arrow/distance/street) into the media
+    // now-playing widget on a NON-nav cluster. true -> during guidance the widget shows the maneuver
+    // (original AAtoKombi behaviour). false -> the maneuver is never injected, so the widget always
+    // shows just the song title/artist/album -- "song titles, no map directions" for units without
+    // onboard navi. (Nav-capable clusters use the real navsd menu and are unaffected either way.)
+    public static final boolean NAV_ENABLED = true;
     private static CurrentStationInfo INSTANCE = null;
 
     public static void pokeNav() {
@@ -423,7 +429,8 @@ ExboxServiceListener {
         // status serialization — we fall back to the stock label instead of blanking the widget
         // (a black media menu was seen once on a cold first launch). All our text is length-clamped.
         try {
-            if (connType == 3
+            if (NAV_ENABLED
+                    && connType == 3
                     && !de.vw.mib.bap.mqbab2.navsd.functions.ClusterCaps.isNavCapable()
                     && de.vw.mib.asl.internal.androidauto.target.NavigationHandler.aaRouteGuidanceActive
                     && navPrimary != null && navPrimary.length() > 0) {
