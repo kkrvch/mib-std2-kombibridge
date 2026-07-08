@@ -12,7 +12,7 @@ import java.io.FileReader;
 /**
  * Reads the Android Auto now-playing track from /dev/shmem/aa_media (written by the patched GAL
  * receiver / navshim MediaPlaybackStatusEndpoint, see work/shim/) and shows it on the cluster's
- * media widget via {@link CurrentStationInfo}. Gated by {@link Config#MEDIA_ENABLED}.
+ * media widget via {@link CurrentStationInfo}. Gated by {@link Config#SHOW_MEDIA}.
  *
  * IPC line (the shim rewrites the whole line, O_TRUNC):
  *   seq &lt;Song&gt;\t&lt;Artist&gt;\t&lt;Album&gt;
@@ -38,7 +38,7 @@ public class ShmemMediaReader implements Runnable {
 
     /** Create and start the repeating poll timer on the framework timer thread. */
     public void start() {
-        if (!Config.MEDIA_ENABLED) {
+        if (!Config.SHOW_MEDIA) {
             return; // now-playing feature disabled
         }
         try {

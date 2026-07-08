@@ -6,34 +6,30 @@ import de.adi961.miblogger.MIBLogger;
  * Central compile-time switches for the AAtoKombi HMI mod.
  * Flip a value here and rebuild; no other file needs touching.
  *
- * (Plain int/boolean constants, not a Java enum — the mod compiles at -source/-target 1.3, which
- * predates enums. Because they are compile-time constants, every gate below is inlined and
- * dead-code-eliminated by javac, so a disabled feature leaves no bytecode behind.)
+ * (Plain boolean/int constants — the mod compiles at -source/-target 1.3. Because they are
+ * compile-time constants, every gate below is inlined and dead-code-eliminated by javac, so a
+ * disabled feature leaves no bytecode behind.)
  */
 public final class Config {
     private Config() {}
 
-    // ===== what AAtoKombi renders on the instrument cluster ==================================
-    // Cluster-output modes, ordered by capability: OFF < MEDIA < NAV.
-    /** AAtoKombi feeds nothing to the cluster — stock label, stock navsd (nav data never injected). */
-    public static final int OFF   = 0;
-    /** Now-playing track only (song / artist / album) — never turn-by-turn directions. */
-    public static final int MEDIA = 1;
-    /** AA turn-by-turn: the navsd Navigation menu on a nav-capable cluster, the media now-playing
-     *  widget on a non-nav one; the now-playing track is shown when no route guidance is active. */
-    public static final int NAV   = 2;
+    // ===== what AAtoKombi renders on the instrument cluster =================================
+    /**
+     * Draw AA turn-by-turn navigation on the cluster: the navsd Navigation menu on a nav-capable
+     * cluster, the media now-playing widget on a non-nav one. false -> the maneuver is never fed to
+     * the cluster (navsd stays stock, the media widget shows only the track / stock label).
+     */
+    public static final boolean SHOW_NAV = true;
 
-    /** The single cluster-output switch. Set to {@link #OFF}, {@link #MEDIA} or {@link #NAV}. */
-    public static final int CLUSTER_MODE = NAV;
+    /**
+     * Show the now-playing track (song / artist / album) in the media widget when no route guidance
+     * is active. false -> the cluster keeps the stock "Android Auto" label instead.
+     */
+    public static final boolean SHOW_MEDIA = true;
 
-    // Derived gates — DO NOT edit; set CLUSTER_MODE above. Kept under the original call-site names so
-    // every use stays readable, and (being compile-time constants) still dead-code-eliminates.
-    //   NAV_ENABLED   → draw AA navigation anywhere on the cluster (navsd menu AND media widget).
-    //   MEDIA_ENABLED → show the now-playing track (in NAV mode when idle, and in MEDIA mode).
-    public static final boolean NAV_ENABLED   = CLUSTER_MODE == NAV;
-    public static final boolean MEDIA_ENABLED = CLUSTER_MODE != OFF;
+    // Both false -> AAtoKombi feeds nothing to the cluster (stock label, stock navsd).
 
-    // ===== diagnostics ======================================================================
+    // ===== diagnostics =====================================================================
     /**
      * DIAGNOSTIC layout probe. When true, the AA media widget is replaced with line markers
      * P1/S2/T3/Q4 (all four lines, types 0) so the cluster's real line count / order / icon
@@ -41,7 +37,7 @@ public final class Config {
      */
     public static final boolean PROBE_ENABLED = false;
 
-    // ===== nav-active placeholder ===========================================================
+    // ===== nav-active placeholder ==========================================================
     /**
      * Suppress the stock "Navigation on the mobile device is active" cluster placeholder.
      *
@@ -56,7 +52,7 @@ public final class Config {
      */
     public static final boolean SUPPRESS_NAV_ACTIVE_PLACEHOLDER = true;
 
-    // ===== logging ==========================================================================
+    // ===== logging =========================================================================
     /**
      * Log verbosity, compiled into the jar: MIBLogger.TRACE | DEBUG | INFO | ERROR | SILENT.
      * This is the sole source of the level (the former /media/mp000/MIBLogger SD override is gone).

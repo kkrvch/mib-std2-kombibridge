@@ -94,7 +94,7 @@ ExboxServiceListener {
     public static volatile String mediaTitle = null;
     public static volatile String mediaArtist = null;
     public static volatile String mediaAlbum = null;
-    // AAtoKombi feature switches (PROBE_ENABLED / MEDIA_ENABLED / NAV_ENABLED) live in de.aatokombi.Config.
+    // AAtoKombi feature switches (SHOW_NAV / SHOW_MEDIA / PROBE_ENABLED) live in de.aatokombi.Config.
     private static CurrentStationInfo INSTANCE = null;
 
     public static void pokeNav() {
@@ -417,7 +417,7 @@ ExboxServiceListener {
         // status serialization — we fall back to the stock label instead of blanking the widget
         // (a black media menu was seen once on a cold first launch). All our text is length-clamped.
         try {
-            if (Config.NAV_ENABLED
+            if (Config.SHOW_NAV
                     && connType == 3
                     && !de.vw.mib.bap.mqbab2.navsd.functions.ClusterCaps.isNavCapable()
                     && de.vw.mib.asl.internal.androidauto.target.NavigationHandler.aaRouteGuidanceActive
@@ -447,7 +447,7 @@ ExboxServiceListener {
                 MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "' q4='" + navQ4 + "'");
             }
             // otherwise (AA connected, no active route guidance) show the REAL now-playing track.
-            else if (Config.MEDIA_ENABLED && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
+            else if (Config.SHOW_MEDIA && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
                 string = clampLine(mediaTitle);                       // line 1: track title
                 n = 72;
                 currentStationInfo_Status.secondaryInformation.setContent(clampLine(mediaArtist)); // line 2: artist
