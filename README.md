@@ -31,6 +31,17 @@ missing pieces — without reflashing the firmware and **fully reversible**.
 
 *The demo video is recorded on a MIB2 **without** navigation (Bolero) — guidance in the media widget.*
 
+### SEAT Virtual Cluster (Digital Cockpit)
+
+<p align="center">
+  <img src="docs/img/cluster-nav-seat-maneuver.jpg" alt="Android Auto turn-by-turn maneuver (arrow + street) on a SEAT Digital Cockpit / Virtual Cluster" width="410">
+  <img src="docs/img/cluster-media-seat.jpg" alt="AAtoKombi now-playing track on a SEAT Digital Cockpit while the car's native navigation runs on the cluster and Android Auto navigation is off" width="410">
+  <br>
+  <em>SEAT with the full <strong>Digital Cockpit</strong> (Virtual Cluster). <strong>Left:</strong> Android Auto
+  turn-by-turn on the cluster during AA guidance. <strong>Right:</strong> with AA navigation off and the car's
+  own (native) navigation active, AAtoKombi shows the now-playing track on the cluster.</em>
+</p>
+
 ---
 
 ## How it works (in one picture)
@@ -185,6 +196,18 @@ goes through `/dev/shmem`, a RAM filesystem).
   `AANavReader` / `ShmemMediaReader` lines.
 
 ### Advanced (optional)
+- **Build-time switches** all live in one file — `jar/src/de/aatokombi/Config.java`. Flip a constant and
+  rebuild the jar (`dist/AAtoKombi.jar`); nothing else needs touching:
+  - `SHOW_NAV` — draw AA turn-by-turn on the cluster (the real navsd **Navigation** menu on a nav-capable
+    cluster, the media widget on a non-nav one). `false` leaves the cluster navigation stock.
+  - `SHOW_MEDIA` — show the real now-playing track in the media widget when not navigating.
+    Both `false` → the mod feeds **nothing** to the cluster (pure-stock display).
+  - `SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is active"*
+    cluster placeholder that AA raises on connect (replaces the separate `NavActiveIgnore.jar` / navignore;
+    do **not** install both). Default on.
+  - `PROBE_ENABLED` — diagnostic cluster-layout probe; keep `false` for normal builds.
+  - `LOG_LEVEL` — log verbosity (`TRACE` … `SILENT`), written to `sloginfo` (and `/dev/shmem/aatokombi.log`
+    at `DEBUG`/`TRACE`).
 - **Verify the shadows against your firmware first.** If you already have a `MIBHMI.jar` (or only the
   whole HMI image — pull `MIBHMI.jxe` out of it with `tools/unpack-ifs.py your_hmi.ifs`, no QNX SDP
   needed), check it before building:
