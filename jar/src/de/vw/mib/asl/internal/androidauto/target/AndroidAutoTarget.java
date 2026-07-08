@@ -125,9 +125,11 @@ public class AndroidAutoTarget
         // AAtoKombi: feed AA nav from the patched GAL lib via /dev/shmem/aa_nav (replaces the stubbed
         // DSIAndroidAuto2 nav path). A single AANavReader parses the file once and routes the maneuver
         // by runtime cluster type (ClusterCaps): the navsd Navigation menu on a nav-capable cluster,
-        // the media now-playing widget on a non-nav one. Defensive: must never break target construction.
+        // the media now-playing widget on a non-nav one. Gated by Config.NAV_ENABLED so it drives NO
+        // cluster surface when nav is off (not started -> NavState.ACTIVE stays false -> navsd renders
+        // stock; the media branch is off too). Defensive: must never break target construction.
         try {
-            de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
+            if (Config.NAV_ENABLED) de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
         } catch (Throwable t) {}
         // AAtoKombi: feed the real AA now-playing track via /dev/shmem/aa_media (patched GAL media
         // endpoint), shown in the cluster media widget when no route guidance is active.
