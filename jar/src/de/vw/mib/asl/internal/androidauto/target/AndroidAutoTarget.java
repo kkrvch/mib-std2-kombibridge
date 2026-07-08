@@ -7,8 +7,8 @@
  */
 package de.vw.mib.asl.internal.androidauto.target;
 
+import de.aatokombi.Config;
 import de.adi961.miblogger.MIBLogger;
-import de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo;
 import de.vw.mib.asl.api.androidauto.ASLAndroidAutoFactory;
 import de.vw.mib.asl.api.exboxm.ASLExboxmFactory;
 import de.vw.mib.asl.api.exboxm.guidance.ExboxGuidanceManager;
@@ -131,8 +131,8 @@ public class AndroidAutoTarget
         } catch (Throwable t) {}
         // AAtoKombi: feed the real AA now-playing track via /dev/shmem/aa_media (patched GAL media
         // endpoint), shown in the cluster media widget when no route guidance is active.
-        // Gated by CurrentStationInfo.MEDIA_ENABLED so now-playing can be turned off independently.
-        try { if (CurrentStationInfo.MEDIA_ENABLED) new ShmemMediaReader().start(); } catch (Throwable t) {}
+        // Gated by Config.MEDIA_ENABLED so now-playing can be turned off independently.
+        try { if (Config.MEDIA_ENABLED) new ShmemMediaReader().start(); } catch (Throwable t) {}
         this.requestHandler.initNavigationListener(this.navigationListener);
         this.aslHandler.initNavigationListener(this.navigationListener);
         this.audioHandler.initTimerHandler(this.timerHandler);

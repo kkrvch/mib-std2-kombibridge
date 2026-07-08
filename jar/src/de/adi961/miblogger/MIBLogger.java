@@ -5,9 +5,7 @@
  */
 package de.adi961.miblogger;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
-import java.io.IOException;
+import de.aatokombi.Config;
 
 public class MIBLogger {
 
@@ -19,9 +17,8 @@ public class MIBLogger {
     public static final int ERROR = 4;
     public static final int SILENT = 5;
 
-    // Default INFO: quiet in normal use (a few startup lines). Set DEBUG/TRACE via the config
-    // file (/media/mp000/MIBLogger) for a debugging session.
-    private int logLevel = INFO;
+    // Verbosity is fixed at build time via de.aatokombi.Config.LOG_LEVEL.
+    private int logLevel = Config.LOG_LEVEL;
 
     static MIBLogger instance;
 
@@ -29,34 +26,11 @@ public class MIBLogger {
         if (instance != null) {
             return instance;
         }
-        // MST2 SD card mounts at /media/mp000.
-        instance = new MIBLogger("/media/mp000/MIBLogger");
+        instance = new MIBLogger();
         return instance;
     }
 
-    public MIBLogger(String configFilePath) {
-        try {
-            BufferedReader br = new BufferedReader(new FileReader(configFilePath));
-            String line = br.readLine();
-            if (line != null) {
-                if (line.equalsIgnoreCase("TRACE")) {
-                    logLevel = TRACE;
-                } else if (line.equalsIgnoreCase("DEBUG")) {
-                    logLevel = DEBUG;
-                } else if (line.equalsIgnoreCase("INFO")) {
-                    logLevel = INFO;
-                } else if (line.equalsIgnoreCase("ERROR")) {
-                    logLevel = ERROR;
-                } else if (line.equalsIgnoreCase("SILENT")) {
-                    logLevel = SILENT;
-                }
-            }
-            br.close();
-        } catch (IOException e) {
-            this.info("No config file found at " + configFilePath);
-            System.out.println("Error reading the log configuration file.");
-        }
-
+    public MIBLogger() {
         this.info("Starting with log level of " + logLevel);
     }
 
