@@ -3,6 +3,7 @@
  */
 package de.vw.mib.bap.mqbab2.audiosd.functions;
 
+import de.aatokombi.Config;
 import de.adi961.miblogger.MIBLogger;
 import de.vw.mib.bap.array.timer.Timer;
 import de.vw.mib.bap.array.timer.TimerNotifier;
@@ -93,20 +94,7 @@ ExboxServiceListener {
     public static volatile String mediaTitle = null;
     public static volatile String mediaArtist = null;
     public static volatile String mediaAlbum = null;
-    // AAtoKombi DIAGNOSTIC: when true, the AA media widget is replaced with line markers
-    // P1/S2/T3/Q4 (all four lines, types 0) so the cluster's real line count / order / icon
-    // rendering can be read on the unit. SET TO false FOR NORMAL BUILDS.
-    public static final boolean PROBE_LAYOUT = false;
-    // AAtoKombi: master switch for the now-playing track feature (AA MediaPlaybackStatusEndpoint).
-    // false -> ShmemMediaReader is not started and the cluster keeps the stock "Android Auto" label
-    // (navigation still works). Flip to disable now-playing without touching the rest of the mod.
-    public static final boolean MEDIA_ENABLED = true;
-    // AAtoKombi: master switch for feeding AA route-guidance (arrow/distance/street) into the media
-    // now-playing widget on a NON-nav cluster. true -> during guidance the widget shows the maneuver
-    // (original AAtoKombi behaviour). false -> the maneuver is never injected, so the widget always
-    // shows just the song title/artist/album -- "song titles, no map directions" for units without
-    // onboard navi. (Nav-capable clusters use the real navsd menu and are unaffected either way.)
-    public static final boolean NAV_ENABLED = true;
+    // AAtoKombi feature switches (PROBE_ENABLED / MEDIA_ENABLED / NAV_ENABLED) live in de.aatokombi.Config.
     private static CurrentStationInfo INSTANCE = null;
 
     public static void pokeNav() {
@@ -407,11 +395,11 @@ ExboxServiceListener {
                 n = 0;
             }
         }
-        // AAtoKombi DIAGNOSTIC PROBE (PROBE_LAYOUT): with AA connected, fill ALL FOUR lines with
-        // distinct markers (types 0) and return early. On the cluster you can then read how many
+        // AAtoKombi DIAGNOSTIC PROBE (Config.PROBE_ENABLED): with AA connected, fill ALL FOUR lines
+        // with distinct markers (types 0) and return early. On the cluster you can then read how many
         // lines the media widget actually draws, in what top-to-bottom order the slots map, and
         // whether the *_Type icons render at all.
-        if (PROBE_LAYOUT && connType == 3) {
+        if (Config.PROBE_ENABLED && connType == 3) {
             currentStationInfo_Status.secondaryInformation.setContent("S2");
             currentStationInfo_Status.si_Type = 0;
             currentStationInfo_Status.tertiaryInformation.setContent("T3");
@@ -429,7 +417,7 @@ ExboxServiceListener {
         // status serialization — we fall back to the stock label instead of blanking the widget
         // (a black media menu was seen once on a cold first launch). All our text is length-clamped.
         try {
-            if (NAV_ENABLED
+            if (Config.NAV_ENABLED
                     && connType == 3
                     && !de.vw.mib.bap.mqbab2.navsd.functions.ClusterCaps.isNavCapable()
                     && de.vw.mib.asl.internal.androidauto.target.NavigationHandler.aaRouteGuidanceActive
@@ -439,7 +427,7 @@ ExboxServiceListener {
                 //   Q4 = exit # or, when there's none, the now-playing title (see below).
                 // (*_Type don't drive font/icons here — positional; the big font is the PRIMARY slot.)
                 string = clampLine(navPrimary);
-                // pi_Type=0 (like the PROBE_LAYOUT, which DID render all four lines incl. Q4).
+                // pi_Type=0 (like the PROBE_ENABLED layout, which DID render all four lines incl. Q4).
                 // pi_Type=72 (the "Android Auto" label type) appears to select a 3-line layout that
                 // drops the quaternary slot, so time/exit in Q4 was never shown.
                 n = 0;
@@ -459,7 +447,7 @@ ExboxServiceListener {
                 MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "' q4='" + navQ4 + "'");
             }
             // otherwise (AA connected, no active route guidance) show the REAL now-playing track.
-            else if (MEDIA_ENABLED && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
+            else if (Config.MEDIA_ENABLED && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
                 string = clampLine(mediaTitle);                       // line 1: track title
                 n = 72;
                 currentStationInfo_Status.secondaryInformation.setContent(clampLine(mediaArtist)); // line 2: artist

@@ -1,5 +1,6 @@
 package de.vw.mib.asl.internal.androidauto.target;
 
+import de.aatokombi.Config;
 import de.adi961.miblogger.MIBLogger;
 import de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo;
 import de.vw.mib.asl.framework.internal.framework.ServiceManager;
@@ -11,7 +12,7 @@ import java.io.FileReader;
 /**
  * Reads the Android Auto now-playing track from /dev/shmem/aa_media (written by the patched GAL
  * receiver / navshim MediaPlaybackStatusEndpoint, see work/shim/) and shows it on the cluster's
- * media widget via {@link CurrentStationInfo}. Gated by {@link CurrentStationInfo#MEDIA_ENABLED}.
+ * media widget via {@link CurrentStationInfo}. Gated by {@link Config#MEDIA_ENABLED}.
  *
  * IPC line (the shim rewrites the whole line, O_TRUNC):
  *   seq &lt;Song&gt;\t&lt;Artist&gt;\t&lt;Album&gt;
@@ -37,7 +38,7 @@ public class ShmemMediaReader implements Runnable {
 
     /** Create and start the repeating poll timer on the framework timer thread. */
     public void start() {
-        if (!CurrentStationInfo.MEDIA_ENABLED) {
+        if (!Config.MEDIA_ENABLED) {
             return; // now-playing feature disabled
         }
         try {
