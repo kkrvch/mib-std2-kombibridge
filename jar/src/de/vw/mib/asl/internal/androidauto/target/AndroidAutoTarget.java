@@ -125,16 +125,16 @@ public class AndroidAutoTarget
         // AAtoKombi: feed AA nav from the patched GAL lib via /dev/shmem/aa_nav (replaces the stubbed
         // DSIAndroidAuto2 nav path). A single AANavReader parses the file once and routes the maneuver
         // by runtime cluster type (ClusterCaps): the navsd Navigation menu on a nav-capable cluster,
-        // the media now-playing widget on a non-nav one. Gated by Config.NAV_ENABLED so it drives NO
+        // the media now-playing widget on a non-nav one. Gated by Config.SHOW_NAV so it drives NO
         // cluster surface when nav is off (not started -> NavState.ACTIVE stays false -> navsd renders
         // stock; the media branch is off too). Defensive: must never break target construction.
         try {
-            if (Config.NAV_ENABLED) de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
+            if (Config.SHOW_NAV) de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
         } catch (Throwable t) {}
         // AAtoKombi: feed the real AA now-playing track via /dev/shmem/aa_media (patched GAL media
         // endpoint), shown in the cluster media widget when no route guidance is active.
-        // Gated by Config.MEDIA_ENABLED so now-playing can be turned off independently.
-        try { if (Config.MEDIA_ENABLED) new ShmemMediaReader().start(); } catch (Throwable t) {}
+        // Gated by Config.SHOW_MEDIA so now-playing can be turned off independently.
+        try { if (Config.SHOW_MEDIA) new ShmemMediaReader().start(); } catch (Throwable t) {}
         this.requestHandler.initNavigationListener(this.navigationListener);
         this.aslHandler.initNavigationListener(this.navigationListener);
         this.audioHandler.initTimerHandler(this.timerHandler);
