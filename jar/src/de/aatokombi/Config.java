@@ -40,7 +40,7 @@ public final class Config {
      * Layout cost: showing Q4 needs the 4-line media layout (pi_Type=0). When this flag is OFF the
      * track widget keeps the stock 3-line layout (pi_Type=72, big title) exactly as before.
      */
-    public static final boolean SHOW_MEDIA_PROGRESS = true;
+    public static final boolean SHOW_MEDIA_PROGRESS = false;
 
     // Both SHOW_NAV and SHOW_MEDIA false -> AAtoKombi feeds nothing to the cluster (stock label,
     // stock navsd).
