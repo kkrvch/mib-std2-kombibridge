@@ -20,8 +20,7 @@ import java.io.FileReader;
  *                                     BAP function shadows (poke -> process -> BAP send);
  *   non-nav cluster     (Bolero)   -> the media now-playing widget, via {@link CurrentStationInfo}.
  *
- * Replaces the two former readers (ShmemNavReader for media, NavShmemReader for navsd) so the file
- * is parsed once and there is a single source of truth + a single staleness owner.
+ * Parses the file once, so there is a single source of truth and a single staleness owner.
  *
  * Runs on a REPEATING framework timer (TimerManager + TIMER_THREAD_INVOKER) so the BAP send /
  * CurrentStationInfo refresh happen on the framework-managed thread the stock timers use, not a
@@ -123,7 +122,6 @@ public final class AANavReader implements Runnable {
             maybeClearStale();
             return;
         }
-        // seq status event side angle number dist time unit road
         String[] p = split(line, 10);
         if (p == null) {
             maybeClearStale();
@@ -234,7 +232,7 @@ public final class AANavReader implements Runnable {
     //    the 21/22 glyph is set in mapMainElement;
     //  - u-turn: the UTURN glyph (main=25) needs a valid side-direction to orient -> 64/192 (dir=128 = blank).
     static int mapDirection(int event, int side, int angle) {
-        if (event == 6) {                          // u-turn: orient the UTURN glyph by side (64 left / 192 right)
+        if (event == 6) {
             return (side == 2) ? 192 : 64;
         }
         if (event == 1 || event == 2 || event == 14
@@ -354,7 +352,6 @@ public final class AANavReader implements Runnable {
     }
 
     private String quaternaryFor(int event, int number) {
-        // Q4: roundabout exit number only.
         if ((event == 11 || event == 12 || event == 13) && number > 0) {
             return "exit " + number;
         }

@@ -27,7 +27,23 @@ public final class Config {
      */
     public static final boolean SHOW_MEDIA = true;
 
-    // Both false -> AAtoKombi feeds nothing to the cluster (stock label, stock navsd).
+    /**
+     * Add a 4th line with an ASCII playback progress bar + elapsed/total time (e.g.
+     * "1:23 ----|----- 3:45") to the now-playing track widget. The cluster has NO graphical media
+     * progress bar reachable from the head unit (the audiosd PlayPosition function, fid 52, is
+     * auto-generated dead code — not served, no cluster sink), so this is rendered as text in the
+     * CurrentStationInfo Q4 slot.
+     *
+     * Position (PlaybackSeconds) comes from the patched GAL MediaPlaybackStatusEndpoint status
+     * callback; duration from its metadata callback (see shim/DESIGN_MEDIA.md). Requires SHOW_MEDIA.
+     *
+     * Layout cost: showing Q4 needs the 4-line media layout (pi_Type=0). When this flag is OFF the
+     * track widget keeps the stock 3-line layout (pi_Type=72, big title) exactly as before.
+     */
+    public static final boolean SHOW_MEDIA_PROGRESS = true;
+
+    // Both SHOW_NAV and SHOW_MEDIA false -> AAtoKombi feeds nothing to the cluster (stock label,
+    // stock navsd).
 
     // ===== diagnostics =====================================================================
     /**

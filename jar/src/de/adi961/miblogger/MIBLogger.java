@@ -17,7 +17,6 @@ public class MIBLogger {
     public static final int ERROR = 4;
     public static final int SILENT = 5;
 
-    // Verbosity is fixed at build time via de.aatokombi.Config.LOG_LEVEL.
     private int logLevel = Config.LOG_LEVEL;
 
     static MIBLogger instance;

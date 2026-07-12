@@ -94,6 +94,10 @@ ExboxServiceListener {
     public static volatile String mediaTitle = null;
     public static volatile String mediaArtist = null;
     public static volatile String mediaAlbum = null;
+    // AAtoKombi now-playing progress (Config.SHOW_MEDIA_PROGRESS). ShmemMediaReader sets these from
+    // the GAL MediaPlaybackStatus (position) / MediaPlaybackMetadata (duration).
+    public static volatile int mediaPosSec = 0;
+    public static volatile int mediaDurSec = 0;
     // AAtoKombi feature switches (SHOW_NAV / SHOW_MEDIA / PROBE_ENABLED) live in de.aatokombi.Config.
     private static CurrentStationInfo INSTANCE = null;
 
@@ -123,6 +127,31 @@ ExboxServiceListener {
         int len = ring.length();
         int off = ((marqueeTick % len) + len) % len;
         return (ring + ring).substring(off, off + Q4_WIDTH);
+    }
+
+    // Scrubber-style progress for the Q4 slot, e.g. "1:23 -----|------ 3:45": a uniform '-' track with
+    // a single '|' play-marker at the current position, elapsed/total on the sides. Constant rendered
+    // width (BAR_WIDTH-1 dashes + one marker) so the line doesn't stretch under the cluster's
+    // proportional font as progress advances. ASCII-only. Returns "" when there's no known duration.
+    private static final int BAR_WIDTH = 12;
+    private static String progressBar(int posSec, int durSec) {
+        if (durSec <= 0) return "";
+        if (posSec < 0) posSec = 0;
+        if (posSec > durSec) posSec = durSec;
+        int pos = (int) ((long) posSec * (BAR_WIDTH - 1) / durSec);
+        if (pos < 0) pos = 0; else if (pos > BAR_WIDTH - 1) pos = BAR_WIDTH - 1;
+        StringBuffer b = new StringBuffer(Q4_WIDTH);
+        b.append(fmtMMSS(posSec)).append(' ');
+        for (int i = 0; i < BAR_WIDTH; i++) b.append(i == pos ? '|' : '-');
+        b.append(' ').append(fmtMMSS(durSec));
+        return b.toString();
+    }
+
+    // Seconds -> "m:ss" (minutes uncapped so long podcasts still read correctly).
+    private static String fmtMMSS(int sec) {
+        int m = sec / 60;
+        int s = sec % 60;
+        return m + ":" + (s < 10 ? "0" : "") + s;
     }
 
     static {
@@ -450,11 +479,18 @@ ExboxServiceListener {
             else if (Config.SHOW_MEDIA && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
                 string = clampLine(mediaTitle);                       // line 1: track title
                 n = 72;
-                currentStationInfo_Status.secondaryInformation.setContent(clampLine(mediaArtist)); // line 2: artist
+                currentStationInfo_Status.secondaryInformation.setContent(clampLine(mediaArtist));
                 currentStationInfo_Status.si_Type = mediaArtist != null && mediaArtist.length() != 0 ? 73 : 0;
-                currentStationInfo_Status.tertiaryInformation.setContent(clampLine(mediaAlbum));    // line 3: album
+                currentStationInfo_Status.tertiaryInformation.setContent(clampLine(mediaAlbum));
                 currentStationInfo_Status.ti_Type = mediaAlbum != null && mediaAlbum.length() != 0 ? 74 : 0;
-                MIBLogger.getInstance().debug("CurrentStationInfo: track-in-media t='" + mediaTitle + "' a='" + mediaArtist + "' al='" + mediaAlbum + "'");
+                // Optional Q4 progress bar; n=0 selects the 4-line layout (pi_Type note above).
+                String bar = Config.SHOW_MEDIA_PROGRESS ? progressBar(mediaPosSec, mediaDurSec) : "";
+                if (bar.length() > 0) {
+                    n = 0;
+                    currentStationInfo_Status.quaternaryInformation.setContent(clampLine(bar));
+                    currentStationInfo_Status.qi_Type = 0;
+                }
+                MIBLogger.getInstance().debug("CurrentStationInfo: track-in-media t='" + mediaTitle + "' a='" + mediaArtist + "' al='" + mediaAlbum + "' bar='" + bar + "'");
             }
         } catch (Throwable t) {
             // Never let our injection blank the cluster — revert to the plain "Android Auto" label.

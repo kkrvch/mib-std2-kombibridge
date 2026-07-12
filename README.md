@@ -1,4 +1,4 @@
-# AAtoKombi — Android Auto navigation on the MIB2 STD2 instrument cluster
+# Kombibridge — Android Auto navigation on the MIB2 STD2 instrument cluster
 
 Show Android Auto turn-by-turn navigation (and player info) on the
 instrument cluster of a **VW MIB2 STD2 / MST2** unit (TechniSat / Preh).
@@ -9,14 +9,8 @@ instrument cluster of a **VW MIB2 STD2 / MST2** unit (TechniSat / Preh).
   <em>MIB2 <strong>with</strong> navigation (Amundsen): AA guidance driving the cluster's real Navigation menu.</em>
 </p>
 
-<p align="center">
-  <img src="docs/img/cluster-nav.jpg" alt="Android Auto turn-by-turn in the media widget on a non-nav (Bolero) MIB2 STD2 cluster" width="640">
-  <br>
-  <em>MIB2 <strong>without</strong> navigation (Bolero): the same guidance injected into the cluster's media now-playing widget.</em>
-</p>
-
 Stock MIB2 STD2 cannot do this: the firmware deliberately leaves the Android Auto
-navigation bridge disabled, and the cluster is not coded for navigation. AAtoKombi adds the
+navigation bridge disabled, and the cluster is not coded for navigation. Kombibridge adds the
 missing pieces — without reflashing the firmware and **fully reversible**.
 
 > **Status:** working (navigation in the cluster's media widget, or the real Navigation menu on a
@@ -25,21 +19,27 @@ missing pieces — without reflashing the firmware and **fully reversible**.
 
 ## Demo
 
-[![Watch the demo on YouTube](docs/img/demo.jpg)](https://www.youtube.com/watch?v=Qn0900pUQZw)
+<p align="center">
+  <img src="docs/img/cluster-nav.jpg" alt="Android Auto turn-by-turn in the media widget on a non-nav (Bolero) MIB2 STD2 cluster" width="640">
+  <br>
+  <em>On a unit <strong>without</strong> navigation (Bolero): AA turn-by-turn injected into the cluster's media now-playing widget.</em>
+</p>
 
-▶ **[Watch the demo on YouTube](https://www.youtube.com/watch?v=Qn0900pUQZw)**
-
-*The demo video is recorded on a MIB2 **without** navigation (Bolero) — guidance in the media widget.*
+<p align="center">
+  <img src="docs/img/cluster-media.jpg" alt="Android Auto now-playing track with an ASCII progress bar (media mode) on a MIB2 STD2 instrument cluster" width="640">
+  <br>
+  <em><strong>Media mode:</strong> the real now-playing track (artist / album / title) with an ASCII progress bar, shown when no route guidance is active.</em>
+</p>
 
 ### SEAT Virtual Cluster (Digital Cockpit)
 
 <p align="center">
   <img src="docs/img/cluster-nav-seat-maneuver.jpg" alt="Android Auto turn-by-turn maneuver (arrow + street) on a SEAT Digital Cockpit / Virtual Cluster" width="410">
-  <img src="docs/img/cluster-media-seat.jpg" alt="AAtoKombi now-playing track on a SEAT Digital Cockpit while the car's native navigation runs on the cluster and Android Auto navigation is off" width="410">
+  <img src="docs/img/cluster-media-seat.jpg" alt="Kombibridge now-playing track on a SEAT Digital Cockpit while the car's native navigation runs on the cluster and Android Auto navigation is off" width="410">
   <br>
   <em>SEAT with the full <strong>Digital Cockpit</strong> (Virtual Cluster). <strong>Left:</strong> Android Auto
   turn-by-turn on the cluster during AA guidance. <strong>Right:</strong> with AA navigation off and the car's
-  own (native) navigation active, AAtoKombi shows the now-playing track on the cluster.</em>
+  own (native) navigation active, Kombibridge shows the now-playing track on the cluster.</em>
 </p>
 
 ---
@@ -250,7 +250,7 @@ ETA-to-destination is **not** available — Android Auto does not project it to 
 - Phone caller-ID feature.
 
 ## Credits
-AAtoKombi is a port of **[adi961/mib2-android-auto-vc](https://github.com/adi961/mib2-android-auto-vc)**
+Kombibridge is a port of **[adi961/mib2-android-auto-vc](https://github.com/adi961/mib2-android-auto-vc)**
 (Android Auto navigation on the cluster for MIB2 **High** / MHI2) to MIB2 **STD2** / MST2. The HMI
 side — the AA target handling, the navigation handler, and the `de.adi961.miblogger` logger — comes
 from that project. adi961's mod in turn builds on the LSD/bootclasspath work of

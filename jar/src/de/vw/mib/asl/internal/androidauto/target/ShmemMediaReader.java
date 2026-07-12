@@ -15,8 +15,10 @@ import java.io.FileReader;
  * media widget via {@link CurrentStationInfo}. Gated by {@link Config#SHOW_MEDIA}.
  *
  * IPC line (the shim rewrites the whole line, O_TRUNC):
- *   seq &lt;Song&gt;\t&lt;Artist&gt;\t&lt;Album&gt;
- * The seq is separated by the first space; the three text fields are tab-separated.
+ *   seq &lt;Song&gt;\t&lt;Artist&gt;\t&lt;Album&gt;\t&lt;posSec&gt;\t&lt;durSec&gt;
+ * The seq is separated by the first space; the text/number fields are tab-separated. posSec/durSec
+ * feed the optional progress bar ({@link Config#SHOW_MEDIA_PROGRESS}); they are appended after the
+ * three track strings so an older 3-field line still parses (pos/dur then default to 0 = no bar).
  *
  * Staleness / disconnect handling: the shim bumps seq on every MediaPlaybackStatus callback (the
  * periodic PlaybackSeconds position while playing), so aa_media advances ~1/s during playback.
@@ -85,30 +87,57 @@ public class ShmemMediaReader implements Runnable {
         lastSeq = seq;
         lastSeqChangeMs = System.currentTimeMillis();
 
-        // song \t artist \t album  (the remainder after the seq)
+        // Tab-split the remainder into up to 5 fields; trailing pos/dur are optional (older shim
+        // writes only song/artist/album).
         String rest = line.substring(sp + 1);
-        String song = "", artist = "", album = "";
-        int t1 = rest.indexOf('\t');
-        if (t1 >= 0) {
-            song = rest.substring(0, t1);
-            int t2 = rest.indexOf('\t', t1 + 1);
-            if (t2 >= 0) {
-                artist = rest.substring(t1 + 1, t2);
-                album = rest.substring(t2 + 1);
-            } else {
-                artist = rest.substring(t1 + 1);
-            }
-        } else {
-            song = rest;
-        }
+        String[] f = splitTabs(rest);
+        String song   = f.length > 0 ? f[0] : "";
+        String artist = f.length > 1 ? f[1] : "";
+        String album  = f.length > 2 ? f[2] : "";
+        int posSec = parseIntSafe(f.length > 3 ? f[3] : null);
+        int durSec = parseIntSafe(f.length > 4 ? f[4] : null);
 
         MIBLogger.getInstance().debug("aa_media seq=" + seq
-                + " song=" + song + " artist=" + artist + " album=" + album);
+                + " song=" + song + " artist=" + artist + " album=" + album
+                + " pos=" + posSec + " dur=" + durSec);
 
         CurrentStationInfo.mediaTitle = song;
         CurrentStationInfo.mediaArtist = artist;
         CurrentStationInfo.mediaAlbum = album;
+        CurrentStationInfo.mediaPosSec = posSec;
+        CurrentStationInfo.mediaDurSec = durSec;
         CurrentStationInfo.pokeNav();
+    }
+
+    /** Split on tabs (no regex — the mod targets 1.3). Empty trailing fields are preserved. */
+    private static String[] splitTabs(String s) {
+        int n = 1;
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) == '\t') n++;
+        }
+        String[] out = new String[n];
+        int start = 0, idx = 0;
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) == '\t') {
+                out[idx++] = s.substring(start, i);
+                start = i + 1;
+            }
+        }
+        out[idx] = s.substring(start);
+        return out;
+    }
+
+    /** Parse a non-negative int, defaulting to 0 on null / garbage. */
+    private static int parseIntSafe(String s) {
+        if (s == null || s.length() == 0) {
+            return 0;
+        }
+        try {
+            int v = Integer.parseInt(s.trim());
+            return v < 0 ? 0 : v;
+        } catch (NumberFormatException ex) {
+            return 0;
+        }
     }
 
     /** Clear the now-playing override if aa_media has gone stale (playback stopped / disconnected). */
@@ -120,6 +149,8 @@ public class ShmemMediaReader implements Runnable {
             CurrentStationInfo.mediaTitle = null;
             CurrentStationInfo.mediaArtist = null;
             CurrentStationInfo.mediaAlbum = null;
+            CurrentStationInfo.mediaPosSec = 0;
+            CurrentStationInfo.mediaDurSec = 0;
             CurrentStationInfo.pokeNav();
             MIBLogger.getInstance().debug("aa_media stale -> cleared now-playing");
         }

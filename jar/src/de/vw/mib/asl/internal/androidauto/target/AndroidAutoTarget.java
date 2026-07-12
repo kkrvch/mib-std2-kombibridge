@@ -1,7 +1,6 @@
 /*
  * MST2 port of mib2-android-auto-vc AndroidAutoTarget.
  * Base: MST2 stock (tsd.mibstd2.hmi MIBHMI.jxe), plus mod behavioural delta.
- * Cover art intentionally dropped.
  * Platform-specific constants (OBSERVED_EVENTS, classifier, targetId, attr base)
  * are the MST2 stock values
  */
