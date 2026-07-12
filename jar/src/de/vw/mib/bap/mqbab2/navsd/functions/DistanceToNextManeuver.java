@@ -136,9 +136,9 @@ NavigationServiceListener {
     }
 
     private void setDistanceToNextManeuverStatusData(DistanceToNextManeuver_Status distanceToNextManeuver_Status) {
-        // navsd-shadow delta: distance from NavState (real metres from the shim), but run through the
-        // STOCK formatter so the cluster shows the correct figure. Writing raw metres into the field
-        // displayed as 1/10 (the cluster expects the formatter's value+unit pair, not raw metres).
+        // navsd-shadow delta: distance from NavState (real metres from the shim), run through the
+        // STOCK formatter — the cluster expects the formatter's value+unit pair (field shown as 1/10),
+        // not raw metres.
         try {
             if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
                 if (NavState.distanceMeters > 0) {

@@ -37,8 +37,31 @@ InstrumentClusterType** to set (that was nav-specific). So construction is simpl
 ## Listener interface (object at endpoint+0x18) — what we implement
 Listener vtable (vptr points at slot s0; same convention as nav's ListVT):
 - `+0x04` dtor
-- `+0x08` onStatus(...)    ← from handleMediaPlaybackStatus (playback state/flags/seconds) — not used yet
+- `+0x08` onStatus(...)    ← from handleMediaPlaybackStatus — carries PlaybackSeconds (progress)
 - `+0x0c` onMetadata(self, std::string arr[5], int durationSeconds, int rating)
+
+### `MediaPlaybackStatus` message layout + onStatus arg map (reversed, this build)
+`MediaPlaybackStatus` fields (from `k*FieldNumber` + `MergePartialFromCodedStream` tag→offset):
+```
+field 1 State(enum)     → msg+0x14      field 4 Shuffle(bool)   → msg+0x1c
+field 2 MediaSource(str)→ msg+0x10      field 5 Repeat(bool)    → msg+0x1d
+field 3 PlaybackSeconds → msg+0x18      field 6 RepeatOne(bool) → msg+0x1e
+```
+`handleMediaPlaybackStatus @0x8358c` extracts these and calls the listener's `onStatus` (vtable +8).
+Only `PlaybackSeconds` (the single 32-bit field, msg+0x18) is useful for a progress bar. It is passed
+as the **7th argument** — callee `[sp+8]` (the caller writes it to `fp-0x4c`, and `sp = fp-0x54`):
+```
+arg0 self   arg1 &media-source-struct(by-ref)   arg2 Repeat   arg3 RepeatOne
+arg4,arg5 = the media-source temp spill (sp+0, sp+4)   arg6 = PlaybackSeconds (sp+8)
+```
+So the shim declares `m_status(self, src, repeat, repeatOne, a4, a5, playbackSeconds)` and uses the
+last one. `handleMediaPlaybackMetadata` passes `durationSeconds` (msg+0x24) as its 3rd arg — the
+progress-bar total. Position updates ~1/s (status heartbeat); duration updates per track (metadata).
+Both are written to `/dev/shmem/aa_media` as two extra tab fields appended after Song/Artist/Album.
+
+> Note: the exact `onStatus` arg slot for PlaybackSeconds was pinned by static RE. If the on-unit
+> progress value reads as garbage, the value lives at `msg+0x18`; adjust the arg index in `m_status`
+> (candidates: the two-word spill at arg4/arg5) and rebuild.
 
 ### Metadata fields (`MediaPlaybackMetadata`, from `k*FieldNumber` + parser offsets)
 Parsed-struct offsets (field-number order; first five are `std::string`, CoW = a single `char*`):

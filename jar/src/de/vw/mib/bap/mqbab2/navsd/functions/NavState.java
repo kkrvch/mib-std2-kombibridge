@@ -8,11 +8,8 @@ package de.vw.mib.bap.mqbab2.navsd.functions;
  * plain volatile statics.
  */
 public final class NavState {
-    public static volatile boolean ACTIVE         = false;  // off until the shim delivers a route
-    // Nav-capable vs non-nav is no longer a static per-build flag: it is detected at runtime by
-    // ClusterCaps.isNavCapable() (ConfigurationService.isNavigationFeatureSelected()), so one build
-    // self-selects navsd output on a routing cluster (Amundsen) and the media path on a non-nav one
-    // (Bolero). See ClusterCaps.
+    public static volatile boolean ACTIVE         = false;
+    // Nav-capable vs non-nav is detected at runtime; see ClusterCaps.
     public static volatile int     mainElement    = 13;     // VW MAIN_ELEMENT (13 = TURN), default
     public static volatile int     direction      = 192;    // VW direction angle 0..255 (192 = RIGHT), default
     public static volatile int     zLevelGuidance = 0;

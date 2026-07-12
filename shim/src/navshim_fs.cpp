@@ -163,44 +163,60 @@ static const ListVT g_listVT = { 0, l_dtor, l_status, l_nextturn, l_distance };
 struct Listener{ const ListVT* vt; };
 static Listener g_listener = { &g_listVT };
 
-// ===== MediaPlaybackStatusEndpoint: now-playing track (see DESIGN_MEDIA.md) =====
-// IPC for the jar: /dev/shmem/aa_media, rewritten on each metadata event (O_TRUNC):
-//   seq <Song>\t<Artist>\t<Album>
+// ===== MediaPlaybackStatusEndpoint: now-playing track + progress (see DESIGN_MEDIA.md) =====
+// IPC for the jar: /dev/shmem/aa_media, rewritten on each media event (O_TRUNC). Fields after the
+// three track strings are appended so the older 3-field parser still finds song/artist/album:
+//   seq <Song>\t<Artist>\t<Album>\t<posSec>\t<durSec>
 static const char IPC_MEDIA[] = "/dev/shmem/aa_media";
-struct MediaState{ u32 seq; char song[80]; char artist[80]; char album[80]; };
+struct MediaState{ u32 seq; u32 pos; u32 dur; char song[80]; char artist[80]; char album[80]; };
 static MediaState g_ms;
 
 static void media_flush(){
   if(!p_fopen) return;
-  char b[300]; char* o=b;
+  char b[320]; char* o=b;
   o=u2dec(o,g_ms.seq); *o++=' ';
   { const char* s=g_ms.song;   while(*s) *o++=*s++; } *o++='\t';
   { const char* s=g_ms.artist; while(*s) *o++=*s++; } *o++='\t';
-  { const char* s=g_ms.album;  while(*s) *o++=*s++; }
+  { const char* s=g_ms.album;  while(*s) *o++=*s++; } *o++='\t';
+  o=u2dec(o,g_ms.pos); *o++='\t';
+  o=u2dec(o,g_ms.dur);
   *o++='\n';
   write_file(IPC_MEDIA, b, (usize)(o-b));
 }
 
 // Listener vtable {s0, dtor, onStatus(+8), onMetadata(+0xc)}.
 static void m_dtor(void*){}
-// handleMediaPlaybackStatus → +8. This fires periodically while media plays (it carries the
-// PlaybackSeconds position the head unit uses for its progress bar), so we use it as a HEARTBEAT:
-// bump seq and rewrite aa_media (track text unchanged). The HMI side (ShmemMediaReader) treats
-// "aa_media seq frozen for N seconds" as playback-stopped / phone-disconnected and clears the
-// now-playing text — which is how the cluster un-sticks after an unexpected AA drop.
-static void m_status(void*){ g_ms.seq++; media_flush(); }
+// handleMediaPlaybackStatus → +8. Fires periodically (~1/s) while media plays, carrying the
+// PlaybackSeconds position (msg+0x18, the only 32-bit field) as the 7th arg (callee [sp+8]). Also a
+// HEARTBEAT: bumping seq lets ShmemMediaReader treat a frozen aa_media as playback-stopped /
+// phone-disconnected and clear the widget — how the cluster un-sticks after an unexpected AA drop.
+//   arg index:  0=self 1=&src 2=repeat 3=repeatOne 4,5=src-temp-spill 6=PlaybackSeconds
+static void m_status(void* /*self*/, void* /*src*/, u32 /*repeat*/, u32 /*repeatOne*/,
+                     u32 /*a4*/, u32 /*a5*/, u32 playbackSeconds){
+  g_ms.pos = playbackSeconds;
+  g_ms.seq++; media_flush();
+}
 // handleMediaPlaybackMetadata → +0xc. arr = 5 CoW std::string in the order the device builds them:
 //   arr[0]=Song, arr[1]=Album, arr[2]=Artist, arr[3]=AlbumArt(bytes), arr[4]=Playlist.
-static void m_metadata(void* /*self*/, void* arr, u32 /*durationSeconds*/, u32 /*rating*/){
+// durationSeconds (MediaPlaybackMetadata+0x24) is the track length — feeds the progress bar total.
+static void m_metadata(void* /*self*/, void* arr, u32 /*a2*/, u32 /*a3*/){
   void** a = (void**)arr;
   if(a){
     rd_str_to(&a[0], g_ms.song,   sizeof g_ms.song);
     rd_str_to(&a[2], g_ms.artist, sizeof g_ms.artist);
     rd_str_to(&a[1], g_ms.album,  sizeof g_ms.album);
+    // DurationSeconds is NOT the 3rd register arg — the on-unit constant "56:28" proved r2 is
+    // garbage. RE of handleMediaPlaybackMetadata@0x836f8: libgal builds the 5 CoW strings into
+    // buf r7+0x00..+0x10 and packs durationSeconds at r7+0x14 and rating at r7+0x18 into the
+    // SAME buffer, then passes r1=r7 as `arr`. So the real values live right after the strings:
+    //   arr[5] (off 0x14) = DurationSeconds,  arr[6] (off 0x18) = Rating.
+    g_ms.dur = ((const u32*)arr)[5];
+  } else {
+    g_ms.dur = 0;
   }
   g_ms.seq++; media_flush();
 }
-struct MediaVT{ void* s0; void(*dtor)(void*); void(*status)(void*);
+struct MediaVT{ void* s0; void(*dtor)(void*); void(*status)(void*,void*,u32,u32,u32,u32,u32);
                 void(*metadata)(void*,void*,u32,u32); };
 static const MediaVT g_mediaVT = { 0, m_dtor, m_status, m_metadata };
 struct MediaListener{ const MediaVT* vt; };

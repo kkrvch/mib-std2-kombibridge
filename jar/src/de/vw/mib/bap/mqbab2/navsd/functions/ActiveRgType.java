@@ -52,12 +52,8 @@ ConfigurationServiceListener {
         // landmine (Blocker 2).
         INSTANCE = this;
         if (ClusterCaps.isNavCapable()) {
-            // navsd is this cluster's output: register the stock nav/config listeners so the unit's
-            // own navigation still draws when AA is inactive. The AA feed itself is pumped by the
-            // single AANavReader (started once from AndroidAutoTarget), which fills NavState and pokes
-            // these functions. On a non-nav cluster we register nothing -- the media path owns the
-            // output and the nav service is left untouched (avoids the phone/audio-BAP landmine,
-            // Blocker 2).
+            // The AA feed itself is pumped by the single AANavReader (started once from
+            // AndroidAutoTarget), which fills NavState and pokes these functions.
             try {
                 this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
                 this.getConfigurationService().addConfigurationListener(this, CONFIG_LISTENER_IDS);

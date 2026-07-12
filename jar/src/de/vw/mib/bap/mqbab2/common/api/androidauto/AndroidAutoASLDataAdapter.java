@@ -37,7 +37,6 @@ implements AndroidAutoService {
     }
 
     public boolean isAndroidAutoRouteGuidanceActive() {
-        // --- the ONLY behavioural change vs stock ---
         if (Config.SUPPRESS_NAV_ACTIVE_PLACEHOLDER) {
             return false;
         }
