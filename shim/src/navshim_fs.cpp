@@ -168,18 +168,25 @@ static Listener g_listener = { &g_listVT };
 // three track strings are appended so the older 3-field parser still finds song/artist/album:
 //   seq <Song>\t<Artist>\t<Album>\t<posSec>\t<durSec>
 static const char IPC_MEDIA[] = "/dev/shmem/aa_media";
-struct MediaState{ u32 seq; u32 pos; u32 dur; char song[80]; char artist[80]; char album[80]; };
+// AlbumArt (cover) raw bytes -> RAM file, O_TRUNC-overwritten on each metadata event. /dev/shmem is a
+// RAM fs (no flash wear). The HMI jar (AndroidAutoTarget.applyCoverArt) stages it and points TrackInfo
+// list-58's __cover at it; the stock CoverArt usecase blits it to the AID cluster. AID-only feature.
+static const char COVER_PATH[] = "/dev/shmem/aa_cover";
+struct MediaState{ u32 seq; u32 pos; u32 dur; char song[80]; char artist[80]; char album[80];
+                   u32 coverseq; u32 coverlen; };
 static MediaState g_ms;
 
 static void media_flush(){
   if(!p_fopen) return;
-  char b[320]; char* o=b;
+  char b[360]; char* o=b;
   o=u2dec(o,g_ms.seq); *o++=' ';
   { const char* s=g_ms.song;   while(*s) *o++=*s++; } *o++='\t';
   { const char* s=g_ms.artist; while(*s) *o++=*s++; } *o++='\t';
   { const char* s=g_ms.album;  while(*s) *o++=*s++; } *o++='\t';
   o=u2dec(o,g_ms.pos); *o++='\t';
-  o=u2dec(o,g_ms.dur);
+  o=u2dec(o,g_ms.dur); *o++='\t';
+  o=u2dec(o,g_ms.coverseq); *o++='\t';   // field 5: bumps per metadata event (track switch)
+  o=u2dec(o,g_ms.coverlen);              // field 6: cover byte length (0 = phone sent no art)
   *o++='\n';
   write_file(IPC_MEDIA, b, (usize)(o-b));
 }
@@ -211,8 +218,28 @@ static void m_metadata(void* /*self*/, void* arr, u32 /*a2*/, u32 /*a3*/){
     // SAME buffer, then passes r1=r7 as `arr`. So the real values live right after the strings:
     //   arr[5] (off 0x14) = DurationSeconds,  arr[6] (off 0x18) = Rating.
     g_ms.dur = ((const u32*)arr)[5];
+    // AlbumArt = arr[3] (the 4th protobuf string, `bytes`). CONFIRMED by disassembly of
+    // handleMediaPlaybackMetadata@0x836f0: each arr[i] is a GCC libstdc++ COW std::string whose
+    // object IS the char* data pointer (the destructor does `data-0xc; cmp _S_empty_rep`, proving
+    // COW layout). The _Rep header sits 0xc bytes BEFORE the data, so the exact byte length =
+    // data[-3] (_M_length) and capacity = data[-2]. We copy _M_length bytes VERBATIM (binary blob —
+    // NOT strlen, which would stop at the first 0x00 inside the JPEG) to COVER_PATH and bump coverseq
+    // so the jar re-stages on each track switch. Fully sanity-gated: an implausible field => skip
+    // (coverlen=0), never a bad deref. The AA-active state gate lives in the HMI jar (SHOW_COVER_ART).
+    const u8* adata = (const u8*)a[3];
+    g_ms.coverseq++;                       // new metadata => track switch => jar re-evaluates cover
+    u32 alen = 0, acap = 0;
+    if(adata){ alen = ((const u32*)adata)[-3]; acap = ((const u32*)adata)[-2]; }
+    int sane = adata && (alen>0) && (alen<=262144) && (alen<=acap) && ((u32)adata>0x10000);
+    if(sane){
+      write_file(COVER_PATH, (const char*)adata, alen);   // raw JPEG/PNG bytes, O_TRUNC full overwrite
+      g_ms.coverlen = alen;
+    } else {
+      g_ms.coverlen = 0;                   // phone sent no art / implausible field
+    }
   } else {
     g_ms.dur = 0;
+    g_ms.coverlen = 0;
   }
   g_ms.seq++; media_flush();
 }
