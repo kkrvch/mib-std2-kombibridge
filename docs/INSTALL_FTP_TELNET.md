@@ -1,10 +1,9 @@
 # AAtoKombi install via FTP + Telnet
 
-Build the two artifacts from files pulled off the unit, then deploy them over FTP + Telnet only —
-no toolbox SD-card round-trip, no local JDK/clang (the build runs in Docker).
+Build the two artifacts from files pulled off the unit, then deploy them over FTP + Telnet only.
 
-**Prerequisites:** `curl`, Docker running, and a unit reachable on the network. Replace `{UNIT_IP}`
-throughout (e.g. `10.13.5.118`), pick up one from the network section in toolbox. Telnet/FTP creds 
+**Prerequisites:** `curl`, Docker, and a unit reachable on the network. Replace `{UNIT_IP}`
+throughout (e.g. `10.11.12.118`), pick up one from the network section in toolbox. Telnet/FTP creds 
 are `root` / `root`.
 
 > **Applies only to units reachable over the network:** either a unit with built-in Wi-Fi, or one
