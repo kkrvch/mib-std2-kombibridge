@@ -94,7 +94,7 @@ public final class AANavReader implements Runnable {
     // roundabout exit number there). Resets to the start when the song changes. Cheap no-op otherwise,
     // so short titles cost nothing.
     private void tickMarquee() {
-        if (cleared || ClusterCaps.isNavCapable()) {
+        if (cleared || navCapable()) {
             return;
         }
         String q = CurrentStationInfo.navQuaternary;
@@ -173,7 +173,7 @@ public final class AANavReader implements Runnable {
         cleared = false;
 
         // Router: one parse, exactly one output, chosen by the runtime cluster type.
-        if (ClusterCaps.isNavCapable()) {
+        if (navCapable()) {
             publishNavsd(event, side, angle, number, road, dist);
         } else {
             if (statusEdge && handler != null) {
@@ -181,6 +181,15 @@ public final class AANavReader implements Runnable {
             }
             publishMedia(event, side, number, road, dist);
         }
+    }
+
+    // Nav-capable for the active stack. PQ (PQ audiosd shadow live): the mqbpq navsd functions are
+    // built only on a nav-coded PQ unit, so their existence IS the signal. MQB: ClusterCaps.
+    private boolean navCapable() {
+        if (de.vw.mib.bap.mqbpq.audiosd.functions.CurrentStationInfo.isActive()) {
+            return de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.isActive();
+        }
+        return ClusterCaps.isNavCapable();
     }
 
     // ===== nav-capable path: NavState + navsd shadows ==========================================
@@ -193,11 +202,17 @@ public final class AANavReader implements Runnable {
         NavState.distanceMeters = dist;                          // raw metres (stock formatter in the shadow)
         NavState.zLevelGuidance = 0;
         NavState.ACTIVE         = true;
+        // MQB navsd shadows (no-op on PQ):
         ActiveRgType.poke();
         RGStatus.poke();
         ManeuverDescriptor.poke();
         DistanceToNextManeuver.poke();
         TurnToInfo.poke();
+        // PQ navsd shadows (no-op on MQB; PQ has no ActiveRgType/RGStatus):
+        de.vw.mib.bap.mqbpq.navsd.functions.RouteGuidanceStatus.poke();
+        de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.poke();
+        de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
+        de.vw.mib.bap.mqbpq.navsd.functions.TurnToInfo.poke();
     }
 
     // GAL (AA) NextTurnEnum + TurnSide -> VW navsd MAIN_ELEMENT (ASLNavSDConstants values). [FW-TUNE]
@@ -392,7 +407,7 @@ public final class AANavReader implements Runnable {
         // cluster we must not poke the navsd shadows -- poke()->process() emits navsd BAP regardless
         // of isNavCapable(), and the shadows ARE constructed on a non-nav EU unit (factory "All"), so
         // an un-gated poke here would push navsd traffic onto a non-nav cluster (Blocker 2).
-        if (ClusterCaps.isNavCapable()) {
+        if (navCapable()) {
             try {
                 NavState.ACTIVE = false;
                 ActiveRgType.poke();
@@ -400,6 +415,10 @@ public final class AANavReader implements Runnable {
                 ManeuverDescriptor.poke();
                 DistanceToNextManeuver.poke();
                 TurnToInfo.poke();
+                de.vw.mib.bap.mqbpq.navsd.functions.RouteGuidanceStatus.poke();
+                de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.poke();
+                de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
+                de.vw.mib.bap.mqbpq.navsd.functions.TurnToInfo.poke();
             } catch (Throwable t) {
                 // ignore
             }
