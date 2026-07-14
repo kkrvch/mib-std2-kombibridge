@@ -125,7 +125,7 @@ tools/
 The on-device **deployment** (SD card, Green Engineering Menu, activate/deactivate scripts)
 lives in a separate toolbox repository —
 [olli991/mib-std2-pq-zr-toolbox](https://github.com/olli991/mib-std2-pq-zr-toolbox) — this repo
-only builds the two artifacts.
+only builds the two artifacts. For a pure **FTP + Telnet** install/build/rollback flow, see [`docs/INSTALL_FTP_TELNET.md`](docs/INSTALL_FTP_TELNET.md).
 
 ---
 
