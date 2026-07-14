@@ -98,8 +98,8 @@ tools/            optional firmware-extraction / shadow-verification helpers
 
 The on-device **deployment** (SD card, Green Engineering Menu, activate/deactivate scripts)
 lives in a separate toolbox repository —
-[olli991/mib-std2-pq-zr-toolbox](https://github.com/olli991/mib-std2-pq-zr-toolbox) — this repo
-only builds the two artifacts. For a pure **FTP + Telnet** install/build/rollback flow, see [`docs/INSTALL_FTP_TELNET.md`](docs/INSTALL_FTP_TELNET.md).
+[kkrvch/mib-std2-pq-zr-toolbox](https://github.com/kkrvch/mib-std2-pq-zr-toolbox) — this repo
+only builds the two artifacts.
 
 ---
 
@@ -109,8 +109,11 @@ You build the two artifacts **against the exact files from your own unit**, then
 with the toolbox. Nothing here is firmware-version-specific — the shim auto-adapts across STD2
 firmware builds. (Development was done on **`MST2_EU_SK_ZR_P0480T`**.)
 
+> **No toolbox / SD card?** For a pure **FTP + Telnet** install/build/rollback flow, follow
+> [`docs/INSTALL_FTP_TELNET.md`](docs/INSTALL_FTP_TELNET.md) instead.
+
 ### 0. Prerequisites (once)
-- **The deployment toolbox** ([olli991/mib-std2-pq-zr-toolbox](https://github.com/olli991/mib-std2-pq-zr-toolbox)) set up for your unit.
+- **The deployment toolbox** ([kkrvch/mib-std2-pq-zr-toolbox](https://github.com/kkrvch/mib-std2-pq-zr-toolbox)) set up for your unit.
 - **Docker** — the whole build runs in containers (jxe2jar + the JDK 8 / clang / lld / pyelftools
   toolchain), so nothing else needs installing.
 
@@ -156,11 +159,19 @@ goes through `/dev/shmem`, a RAM filesystem).
   while the phone is connected (the patched libgal writes them) and the `MIBLogger` output for
   `AANavReader` / `ShmemMediaReader` lines.
 
-### Options (optional)
-The defaults just work. Build-time switches — turn AA nav or the now-playing track on/off, the
-media progress bar, the nav-active-placeholder suppression, log level — all live in one file,
-`jar/src/de/aatokombi/Config.java`: flip a constant and rebuild the jar. Deeper build/RE notes are
-in [`docs/`](docs/) and [`shim/README.md`](shim/README.md).
+### Options
+The defaults just work. All build-time switches live in one file —
+`jar/src/de/aatokombi/Config.java`; flip a constant and rebuild the jar:
+- `SHOW_NAV` — draw AA turn-by-turn on the cluster (the navsd **Navigation** menu on a nav-capable
+  cluster, the media widget on a non-nav one). Default on.
+- `SHOW_MEDIA` — show the real now-playing track in the media widget when not navigating. Default on.
+- `SHOW_MEDIA_PROGRESS` — add an ASCII playback progress bar to the now-playing track. Default off.
+- `SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is active"*
+  cluster placeholder. Default on.
+- `PROBE_ENABLED` — diagnostic cluster-layout probe; keep off for normal builds.
+- `LOG_LEVEL` — log verbosity (`TRACE` … `SILENT`).
+
+Deeper build / reverse-engineering notes: [`docs/`](docs/) and [`shim/README.md`](shim/README.md).
 
 ---
 
