@@ -109,8 +109,8 @@ You build the two artifacts **against the exact files from your own unit**, then
 with the toolbox. Nothing here is firmware-version-specific — the shim auto-adapts across STD2
 firmware builds. (Development was done on **`MST2_EU_SK_ZR_P0480T`**.)
 
-> **No toolbox / SD card?** For a pure **FTP + Telnet** install/build/rollback flow, follow
-> [`docs/INSTALL_FTP_TELNET.md`](docs/INSTALL_FTP_TELNET.md) instead.
+> For a pure **FTP + Telnet** install/build/rollback flow, follow
+> [`docs/INSTALL_FTP_TELNET.md`](docs/INSTALL_FTP_TELNET.md) instead (Still requires toolbox to enable FTP/Telnet).
 
 ### 0. Prerequisites (once)
 - **The deployment toolbox** ([kkrvch/mib-std2-pq-zr-toolbox](https://github.com/kkrvch/mib-std2-pq-zr-toolbox)) set up for your unit.
