@@ -88,7 +88,7 @@ shim/     native libgal patch → builds the patched .so   (files + RE specs: sh
   build.sh    compile + link + inject
   lib/        ← put unit's libext.google.gal.receiver.so here
 
-docs/     ARCHITECTURE.md          — the design + reverse-engineering write-up (shim RE notes live in shim/)
+docs/     ARCHITECTURE.md          — the design + notes
           NAVIGATION_VIA_NAVSD.md  — the nav-capable (navsd Navigation-menu) output path
 
 build.sh          one-button build of BOTH artifacts from the toolbox dumps (all in Docker)
@@ -171,7 +171,7 @@ The defaults just work. All build-time switches live in one file —
 - `PROBE_ENABLED` — diagnostic cluster-layout probe; keep off for normal builds.
 - `LOG_LEVEL` — log verbosity (`TRACE` … `SILENT`).
 
-Deeper build / reverse-engineering notes: [`docs/`](docs/) and [`shim/README.md`](shim/README.md).
+Deeper build notes: [`docs/`](docs/) and [`shim/README.md`](shim/README.md).
 
 ---
 
