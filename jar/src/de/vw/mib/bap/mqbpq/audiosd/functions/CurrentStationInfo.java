@@ -64,6 +64,9 @@ implements TimerNotifier {
     private static final int PQ_LINE_MAX = 48;   // one under the 49-char infotext BAPString capacity
     private static volatile CurrentStationInfo INSTANCE = null;
 
+    /** True once instantiated → this unit runs the mqbpq (PQ) stack. */
+    public static boolean isActive() { return INSTANCE != null; }
+
     /** Refresh the widget. Called by the MQB shadow's pokeNav() fan-out. Never throws. */
     public static void poke() {
         CurrentStationInfo i = INSTANCE;
