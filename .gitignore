@@ -24,5 +24,3 @@ jar/reference/
 
 # some trash
 **__pycache__
-# FTP+Telnet deploy cache (scripts/deploy.sh)
-.deploy/
