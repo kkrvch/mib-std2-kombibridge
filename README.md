@@ -44,53 +44,34 @@ missing pieces — without reflashing the firmware and **fully reversible**.
 
 ---
 
-## How it works (in one picture)
+## How it works
 
 ```
  Android Auto (phone)
-      │  turn-by-turn is inside Google's libext.google.gal.receiver.so,
-      │  but the stock SAL never registers the navigation endpoint
+      │  turn-by-turn + now-playing live inside Google's libext.google.gal.receiver.so,
+      │  but the stock SAL never registers those endpoints
       ▼
- ┌─ shim/ ───────────────────────────────────────────────┐
- │ patched libgal: registers Google's NavigationStatus   │
- │ AND MediaPlaybackStatus endpoints itself, captures    │
- │ road/maneuver/distance + track Title/Artist/Album,    │
- │ writes them to /dev/shmem/aa_nav + aa_media           │
- └───────────────────────────────────────────────────────┘
-      │
-      ▼  /dev/shmem/aa_nav + aa_media   (plain text, one line per update)
- ┌─ jar/ ────────────────────────────────────────────────┐
- │ HMI Java mod (loaded via -Xbootclasspath/p): reads    │
- │ the files and renders the text. On a non-nav cluster  │
- │ it injects the maneuver into the MEDIA now-playing    │
- │ widget (CurrentStationInfo) — which the cluster       │
- │ already draws ("Android Auto" label); the real        │
- │ track shows when no route guidance is active. On a    │
- │ nav-capable cluster (e.g. Amundsen) it instead        │
- │ drives the real navsd Navigation menu. The path is    │
- │ picked at runtime (ClusterCaps.isNavCapable()).       │
- └───────────────────────────────────────────────────────┘
-      │
+ ┌─ shim/ ── patched libgal ───────────────────────────────┐
+ │ registers Google's Navigation + MediaPlaybackStatus      │
+ │ endpoints itself; writes maneuver/road/distance +        │
+ │ track Title/Artist/Album to /dev/shmem/aa_nav + aa_media  │
+ └──────────────────────────────────────────────────────────┘
       ▼
- Instrument cluster — Media tab (or the Navigation menu) shows the live maneuver / track
+ ┌─ jar/ ── HMI Java mod (-Xbootclasspath/p) ───────────────┐
+ │ reads the shmem files and renders them: on a non-nav      │
+ │ cluster into the media now-playing widget, on a           │
+ │ nav-capable one into the real navsd Navigation menu       │
+ │ (picked at runtime by ClusterCaps.isNavCapable())         │
+ └──────────────────────────────────────────────────────────┘
+      ▼
+ Instrument cluster shows the live maneuver / track
 ```
 
-The navsd path is documented separately in [`docs/NAVIGATION_VIA_NAVSD.md`](docs/NAVIGATION_VIA_NAVSD.md).
-
-Two key findings drive the design (both verifiable on the binaries):
-
-1. **The data is already in the firmware, just disabled.** Google's
-   `libext.google.gal.receiver.so` fully implements `NavigationStatusEndpoint`
-   (handlers + vtable), but the stock SAL references it **0 times** — it only registers
-   `BluetoothEndpoint`. The shim registers it for us — and the same way for the media
-   now-playing endpoint (built); the phone endpoint is the same recipe, researched. See `docs/`.
-2. **The cluster won't take nav in the nav slot** when the unit isn't nav-coded, but it *does*
-   render the media now-playing widget — so we put the nav text there. A nav-coded cluster (e.g.
-   Amundsen) *does* take the nav slot, so there we drive the real navsd Navigation menu instead;
-   the path is chosen at runtime.
-
-Full write-up: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (and
-[`docs/NAVIGATION_VIA_NAVSD.md`](docs/NAVIGATION_VIA_NAVSD.md) for the nav-capable path).
+Two firmware facts make this possible — the AA nav/media data is present in the GAL library but
+never registered by the stock SAL, and the cluster's media widget is drawable while its nav slot
+stays gated on a non-nav unit. Full write-up with the binary evidence:
+**[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**; the nav-capable path:
+**[`docs/NAVIGATION_VIA_NAVSD.md`](docs/NAVIGATION_VIA_NAVSD.md)**.
 
 ---
 
@@ -103,12 +84,8 @@ jar/      HMI Java mod  → builds AAtoKombi.jar
   build.sh    one-command build (javac + jar)
   lib/        ← MIBHMI.jar (staged here by build.sh from the MIBHMI.jxe)
 
-shim/     native libgal patch → builds the patched .so
-  src/navshim_fs.cpp   freestanding ARM listener (nav + media → /dev/shmem)
-  inject.py            ELF injector (auto-resolves addresses, adds the blob, patches init's BL)
-  build.sh             compile + link + inject
-  DESIGN.md            nav reverse-engineering spec
-  DESIGN_MEDIA.md      now-playing (MediaPlaybackStatusEndpoint) reverse-engineering spec
+shim/     native libgal patch → builds the patched .so   (files + RE specs: shim/README.md)
+  build.sh    compile + link + inject
   lib/        ← put unit's libext.google.gal.receiver.so here
 
 docs/     ARCHITECTURE.md          — the design + reverse-engineering write-up (shim RE notes live in shim/)
@@ -116,10 +93,7 @@ docs/     ARCHITECTURE.md          — the design + reverse-engineering write-up
 
 build.sh          one-button build of BOTH artifacts from the toolbox dumps (all in Docker)
 docker/           the build toolchain image (JDK 8 + clang + lld + pyelftools)
-tools/
-  extract-mibhmi.sh   (optional) install + verify a firmware's MIBHMI.jar against the shadows
-  unpack-ifs.py       (optional) pure-Python QNX6 IFS unpacker (pull MIBHMI.jxe out of a HMI image,
-                      no QNX SDP / dumpifs needed)
+tools/            optional firmware-extraction / shadow-verification helpers
 ```
 
 The on-device **deployment** (SD card, Green Engineering Menu, activate/deactivate scripts)
@@ -159,22 +133,9 @@ Use the toolbox's **"Dump files"** menu item to copy these from the unit to your
 ```
 Everything runs in Docker: it converts the `.jxe` to a jar, builds the toolchain image (cached
 after the first run), compiles both artifacts inside the container with the repo bind-mounted, and
-drops the two deployables in `dist/`. Inputs and outputs are only ever bind-mounted.
-
-`inject.py` prints the per-firmware addresses it **auto-resolved** from your libgal:
-```
-resolved galrefs from libgal:
-    R_REGISTER     = 0x...   R_NAV_VTABLE = 0x...   R_GOT_MEMSET   = 0x...
-    R_ONCHOPEN     = 0x...   R_MEDIA_VTABLE = 0x...
-BL patch site: file offset 0x... [auto]
-```
-Optional sanity-check: these match `nm -D your_libgal`. If the `BL` auto-locator ever fails on an
-unusual build, pass `--bl-offset 0xNNNN` to `inject.py`.
-
-> The jar contains faithful **shadows** of several stock classes (`CurrentStationInfo`,
-> `AndroidAutoTarget`, and the navsd nav functions). They are derived from the dev unit's
-> firmware; within a firmware branch they are usually compatible — rebuilding against *your*
-> `MIBHMI.jar` (which `build.sh` produces from the `.jxe`) keeps them in sync.
+drops the two deployables in `dist/`. It adapts to your firmware automatically (the libgal patch
+resolves its per-build addresses from the file you pass, and the jar is rebuilt against your unit's
+`MIBHMI.jar`).
 
 ### 3. Deploy both artifacts back to the unit (with the toolbox)
 Put the two `dist/` outputs onto the toolbox SD card, then run the toolbox's Enable step:
@@ -195,59 +156,13 @@ goes through `/dev/shmem`, a RAM filesystem).
   while the phone is connected (the patched libgal writes them) and the `MIBLogger` output for
   `AANavReader` / `ShmemMediaReader` lines.
 
-### Advanced (optional)
-- **Build-time switches** all live in one file — `jar/src/de/aatokombi/Config.java`. Flip a constant and
-  rebuild the jar (`dist/AAtoKombi.jar`); nothing else needs touching:
-  - `SHOW_NAV` — draw AA turn-by-turn on the cluster (the real navsd **Navigation** menu on a nav-capable
-    cluster, the media widget on a non-nav one). `false` leaves the cluster navigation stock.
-  - `SHOW_MEDIA` — show the real now-playing track in the media widget when not navigating.
-    Both `false` → the mod feeds **nothing** to the cluster (pure-stock display).
-  - `SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is active"*
-    cluster placeholder that AA raises on connect (replaces the separate `NavActiveIgnore.jar` / navignore;
-    do **not** install both). Default on.
-  - `PROBE_ENABLED` — diagnostic cluster-layout probe; keep `false` for normal builds.
-  - `LOG_LEVEL` — log verbosity (`TRACE` … `SILENT`), written to `sloginfo` (and `/dev/shmem/aatokombi.log`
-    at `DEBUG`/`TRACE`).
-- **Verify the shadows against your firmware first.** If you already have a `MIBHMI.jar` (or only the
-  whole HMI image — pull `MIBHMI.jxe` out of it with `tools/unpack-ifs.py your_hmi.ifs`, no QNX SDP
-  needed), check it before building:
-  ```sh
-  CFR=/path/to/cfr.jar tools/extract-mibhmi.sh /path/to/your/MIBHMI.jar
-  ```
-  It installs the jar at `jar/lib/MIBHMI.jar` and runs `javap` checks that the stock classes we
-  shadow (`CurrentStationInfo`, `AndroidAutoTarget`, …) still expose the members our shadows rely
-  on (with `$CFR` set it also decompiles them into `jar/reference/` for a manual diff against
-  `jar/src/`).
-- **Build a single piece locally** (without the Docker toolchain — needs **JDK 8** whose `javac`
-  still accepts `-source/-target 1.3`, plus `clang`, `ld.lld`, `python3` + `pyelftools`):
-  ```sh
-  ( cd jar  && JAVAC=/jdk8/bin/javac JAR=/jdk8/bin/jar ./build.sh )      # -> jar/build/AAtoKombi.jar
-  ( cd shim && ./build.sh /your/unit/libext.google.gal.receiver.so )    # -> shim/build/libext.google.gal.receiver.so
-  ```
-  (`jar/build.sh` still needs a `MIBHMI.jar` at `jar/lib/`; the `.jxe → .jar` conversion itself is
-  Docker-only.)
+### Options (optional)
+The defaults just work. Build-time switches — turn AA nav or the now-playing track on/off, the
+media progress bar, the nav-active-placeholder suppression, log level — all live in one file,
+`jar/src/de/aatokombi/Config.java`: flip a constant and rebuild the jar. Deeper build/RE notes are
+in [`docs/`](docs/) and [`shim/README.md`](shim/README.md).
 
 ---
-
-## What works / what's planned
-
-| Feature | State | Notes |
-|---|---|---|
-| Nav maneuver + street on cluster | ✅ working | media widget on a non-nav cluster; the real navsd **Navigation** menu (arrow + distance + street) on a nav-capable one. See `docs/NAVIGATION_VIA_NAVSD.md` |
-| Maneuver arrow (turn / u-turn / roundabout exit) | ✅ working | hardware-tuned glyph + bearing; roundabout exit synthesized from the AA exit number for Yandex (which sends angle 0) |
-| Distance-to-turn | ✅ working | populates while driving (run through the cluster's own formatter) |
-| Time-to-turn | 🟡 partial | `TimeToTurnSeconds` stayed 0 even on the road — AA appears not to forward it |
-| Real now-playing track on cluster | ✅ working | patched GAL `MediaPlaybackStatusEndpoint` → `/dev/shmem/aa_media` → media widget; shown when no route guidance is active, and as a Q4 marquee during guidance. See `shim/DESIGN_MEDIA.md` |
-| Caller ID from AA (phone) | 🔎 researched | AA has a full `PhoneStatusEndpoint`; same shim+shadow recipe |
-
-ETA-to-destination is **not** available — Android Auto does not project it to the car
-(only next-turn data). See `docs/ARCHITECTURE.md`.
-
-## Roadmap
-- ✅ Auto-resolve shim addresses from the target libgal (symbols + relocations + `.plt`, and the
-  `init` `BL` site) so one package adapts to any firmware version without manual reversing.
-- ✅ Real now-playing track from AA (`MediaPlaybackStatusEndpoint`) — same shim recipe as nav.
-- Phone caller-ID feature.
 
 ## Credits
 Kombibridge is a port of **[adi961/mib2-android-auto-vc](https://github.com/adi961/mib2-android-auto-vc)**
