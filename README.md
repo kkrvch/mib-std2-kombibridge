@@ -13,6 +13,10 @@ Stock MIB2 STD2 cannot do this: the firmware deliberately leaves the Android Aut
 navigation bridge disabled, and the cluster is not coded for navigation. Kombibridge adds the
 missing pieces — without reflashing the firmware and **fully reversible**.
 
+Both instrument-cluster stacks are now supported — the **MQB** (`mqbab2`) and the **PQ** (`mqbpq`)
+BAP cluster variants — so the same build works whether your cluster speaks the MQB or the older PQ
+protocol.
+
 > **Status:** working (navigation in the cluster's media widget, or the real Navigation menu on a
 > nav-capable cluster, + real now-playing track).
 > Personal/educational modding project. Use COMPLETELY at your own risk.
@@ -40,6 +44,13 @@ missing pieces — without reflashing the firmware and **fully reversible**.
   <em>SEAT with the full <strong>Digital Cockpit</strong> (Virtual Cluster). <strong>Left:</strong> Android Auto
   turn-by-turn on the cluster during AA guidance. <strong>Right:</strong> with AA navigation off and the car's
   own (native) navigation active, Kombibridge shows the now-playing track on the cluster.</em>
+</p>
+
+<p align="center">
+  <img src="docs/img/cluster-cover-seat.jpg" alt="Android Auto album cover art on a SEAT Digital Cockpit / colour Virtual Cluster, with the now-playing track and ASCII progress bar" width="640">
+  <br>
+  <em><strong>Cover art</strong> (<code>SHOW_COVER_ART</code>, AID / colour Virtual Cockpit only): the Android Auto
+  album cover pushed to the cluster alongside the now-playing track and progress bar.</em>
 </p>
 
 ---
@@ -166,6 +177,8 @@ The defaults just work. All build-time switches live in one file —
   cluster, the media widget on a non-nav one). Default on.
 - `SHOW_MEDIA` — show the real now-playing track in the media widget when not navigating. Default on.
 - `SHOW_MEDIA_PROGRESS` — add an ASCII playback progress bar to the now-playing track. Default off.
+- `SHOW_COVER_ART` — push the AA album cover to the cluster (AID / colour Virtual Cockpit only; inert
+  on a monochrome cluster). Requires `SHOW_MEDIA`. Default off.
 - `SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is active"*
   cluster placeholder. Default on.
 - `PROBE_ENABLED` — diagnostic cluster-layout probe; keep off for normal builds.
