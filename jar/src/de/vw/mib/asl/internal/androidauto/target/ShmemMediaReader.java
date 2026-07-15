@@ -37,6 +37,15 @@ public class ShmemMediaReader implements Runnable {
     private Timer timer;
     private long lastSeq = -1L;
     private long lastSeqChangeMs = 0L;
+    // AID cover art: the shim's coverSeq starts at 0; -2 forces a first applyCoverArt on the
+    // first metadata event. The target is used only for the (AID-only) cover push — the
+    // now-playing text still sinks to CurrentStationInfo below, unchanged.
+    private final AndroidAutoTarget target;
+    private long lastCoverSeq = -2L;
+
+    public ShmemMediaReader(AndroidAutoTarget target) {
+        this.target = target;
+    }
 
     /** Create and start the repeating poll timer on the framework timer thread. */
     public void start() {
@@ -107,6 +116,31 @@ public class ShmemMediaReader implements Runnable {
         CurrentStationInfo.mediaPosSec = posSec;
         CurrentStationInfo.mediaDurSec = durSec;
         CurrentStationInfo.pokeNav();
+
+        // Cover art (AID only): fields 5=coverSeq, 6=coverLen (appended after pos/dur by the shim).
+        // coverSeq advances on every metadata event (track switch); re-evaluate the cover only then,
+        // not on the ~1s heartbeat. coverLen 0 => phone sent no art => clear it. Fully gated by
+        // SHOW_COVER_ART so a non-AID build never touches the kombipictureserver path.
+        if (Config.SHOW_COVER_ART && target != null) {
+            long coverSeq = parseLongSafe(f.length > 5 ? f[5] : null, -1L);
+            int coverLen = parseIntSafe(f.length > 6 ? f[6] : null);
+            if (coverSeq != lastCoverSeq) {
+                lastCoverSeq = coverSeq;
+                target.applyCoverArt(coverLen);
+            }
+        }
+    }
+
+    /** Parse a long, defaulting on null / garbage. */
+    private static long parseLongSafe(String s, long dflt) {
+        if (s == null || s.length() == 0) {
+            return dflt;
+        }
+        try {
+            return Long.parseLong(s.trim());
+        } catch (NumberFormatException ex) {
+            return dflt;
+        }
     }
 
     /** Split on tabs (no regex — the mod targets 1.3). Empty trailing fields are preserved. */
@@ -152,6 +186,11 @@ public class ShmemMediaReader implements Runnable {
             CurrentStationInfo.mediaPosSec = 0;
             CurrentStationInfo.mediaDurSec = 0;
             CurrentStationInfo.pokeNav();
+            // Drop the AID cover too when playback goes stale / the phone disconnects.
+            if (Config.SHOW_COVER_ART && target != null) {
+                try { target.applyCoverArt(0); } catch (Throwable t) {}
+                lastCoverSeq = -2L;
+            }
             MIBLogger.getInstance().debug("aa_media stale -> cleared now-playing");
         }
     }

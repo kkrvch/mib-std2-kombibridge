@@ -42,6 +42,21 @@ public final class Config {
      */
     public static final boolean SHOW_MEDIA_PROGRESS = false;
 
+    /**
+     * Push the Android Auto album cover to the instrument cluster. AID / colour Virtual Cockpit ONLY.
+     *
+     * The shim writes the raw AlbumArt bytes (MediaPlaybackMetadata field 4) to /dev/shmem/aa_cover;
+     * {@link de.vw.mib.asl.internal.androidauto.target.AndroidAutoTarget#applyCoverArt(int)} stages
+     * them into the HMI image cache and points TrackInfo list-58's __cover / __is_cover_available at
+     * them. The STOCK CoverArt usecase (MediaCoverArtAdapter reads list 58) then forwards the cover to
+     * the cluster via DSIKombiPictureServer.responseCoverArt — but only if the cluster advertises the
+     * MOST cover-art capability (datapool 1077026816). A monochrome cluster never requests it, so this
+     * is inert (and harmless) there. Independent of the now-playing text path (CurrentStationInfo).
+     *
+     * Requires SHOW_MEDIA. Default OFF: experimental, verifiable only on an AID-equipped car.
+     */
+    public static final boolean SHOW_COVER_ART = false;
+
     // Both SHOW_NAV and SHOW_MEDIA false -> AAtoKombi feeds nothing to the cluster (stock label,
     // stock navsd).
 

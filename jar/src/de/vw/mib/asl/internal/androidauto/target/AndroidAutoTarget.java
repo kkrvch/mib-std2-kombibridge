@@ -38,6 +38,9 @@ import org.dsi.ifc.base.DSIListener;
 import org.dsi.ifc.global.ResourceLocator;
 import org.osgi.framework.ServiceReference;
 
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+
 public class AndroidAutoTarget
         extends AbstractASLTarget
         implements DSIServiceStateListener {
@@ -133,7 +136,7 @@ public class AndroidAutoTarget
         // AAtoKombi: feed the real AA now-playing track via /dev/shmem/aa_media (patched GAL media
         // endpoint), shown in the cluster media widget when no route guidance is active.
         // Gated by Config.SHOW_MEDIA so now-playing can be turned off independently.
-        try { if (Config.SHOW_MEDIA) new ShmemMediaReader().start(); } catch (Throwable t) {}
+        try { if (Config.SHOW_MEDIA) new ShmemMediaReader(this).start(); } catch (Throwable t) {}
         this.requestHandler.initNavigationListener(this.navigationListener);
         this.aslHandler.initNavigationListener(this.navigationListener);
         this.audioHandler.initTimerHandler(this.timerHandler);
@@ -352,8 +355,122 @@ public class AndroidAutoTarget
     public void dsiAndroidAuto2UpdatePlayposition(int timePosition, int valid) {
     }
 
-    // Cover art intentionally not handled: monochrome cluster, no cover support.
+    // The DSI cover-art-URL callback is empty on this platform: AA cover art does not arrive via the
+    // DSIAndroidAuto2 attribute here. The real cover bytes come from the patched GAL media endpoint
+    // (/dev/shmem/aa_cover -> ShmemMediaReader -> applyCoverArt below), gated by Config.SHOW_COVER_ART.
     public void dsiAndroidAuto2UpdateCoverArtUrl(ResourceLocator resourceLocator, int n) {
+    }
+
+    // ===== AID album cover (Config.SHOW_COVER_ART) =====================================
+    // The shim writes the raw AlbumArt bytes to /dev/shmem/aa_cover; here we stage them into the HMI
+    // image cache and point TrackInfo list-58's __cover at them with __is_cover_available=true. The
+    // stock MediaCoverArtAdapter reads list 58 and the stock CoverArt usecase forwards it to the
+    // instrument cluster via DSIKombiPictureServer.responseCoverArt -- as long as the cluster reports
+    // the MOST cover-art capability (datapool 1077026816); a monochrome cluster never requests it, so
+    // this is inert there. coverLen <= 0 => clear the cover. Independent of the now-playing text path.
+    private int coverRot = 0;
+    private int coverPicId = 0;             // monotonic picture id stamped into the cover ResourceLocator
+    private String coverDirCached = null;
+
+    public void applyCoverArt(int coverLen) {
+        try {
+            if (TrackInfo.mMetaInfos == null || TrackInfo.mMetaInfos.length == 0) {
+                return;
+            }
+            if (coverLen <= 0) {
+                TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__is_cover_available = false;
+                TrackInfo.CURRENT_TRACK_INFO.updateList(TrackInfo.mMetaInfos);
+                return;
+            }
+            ResourceLocator rl = stageCover();
+            if (rl == null) {
+                return;
+            }
+            TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__cover = rl;
+            TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__is_cover_available = true;
+            TrackInfo.CURRENT_TRACK_INFO.updateList(TrackInfo.mMetaInfos);
+            MIBLogger.getInstance().debug("applyCoverArt: cover=" + rl.url + " id=" + rl.id);
+        } catch (Throwable t) {
+            MIBLogger.getInstance().error("applyCoverArt failed: " + t);
+        }
+    }
+
+    // Copy /dev/shmem/aa_cover -> <coverDir>/aa_cover_<0|1>.<ext>. The rotating index makes the
+    // ResourceLocator URL differ each track so KombiPictureServerUtil.compareResourceLocator sees a
+    // change (a fixed name reads as "unchanged" and is never re-pushed); the id also bumps so the
+    // centered now-playing view (which dedups by id) refreshes too. Extension sniffed from the magic.
+    private ResourceLocator stageCover() {
+        FileInputStream fis = null;
+        FileOutputStream fos = null;
+        try {
+            fis = new FileInputStream("/dev/shmem/aa_cover");
+            byte[] buf = new byte[8192];
+            int first = fis.read(buf);
+            if (first <= 0) {
+                return null;
+            }
+            String ext = sniffExt(buf, first);
+            coverRot ^= 1;
+            String out = coverDir() + "/aa_cover_" + coverRot + ext;
+            fos = new FileOutputStream(out);
+            fos.write(buf, 0, first);
+            int n;
+            while ((n = fis.read(buf)) > 0) {
+                fos.write(buf, 0, n);
+            }
+            fos.close();
+            fos = null;
+            if (++coverPicId <= 0) {
+                coverPicId = 1;             // stay positive; 0 reads as "no id"
+            }
+            return new ResourceLocator(coverPicId, out);
+        } catch (Throwable t) {
+            MIBLogger.getInstance().error("stageCover failed: " + t);
+            return null;
+        } finally {
+            try { if (fis != null) fis.close(); } catch (Throwable t) {}
+            try { if (fos != null) fos.close(); } catch (Throwable t) {}
+        }
+    }
+
+    // Pick (once, cached) a directory we can write AND the picture server can read: prefer the VW HMI
+    // image cache /var/app/icab/tmp (the cluster reads from there); else fall back to /dev/shmem (RAM).
+    private String coverDir() {
+        if (coverDirCached != null) {
+            return coverDirCached;
+        }
+        String tmp = "/var/app/icab/tmp";
+        try { new java.io.File(tmp).mkdirs(); } catch (Throwable t) {}
+        coverDirCached = dirWritable(tmp) ? tmp : "/dev/shmem";
+        MIBLogger.getInstance().debug("coverDir -> " + coverDirCached);
+        return coverDirCached;
+    }
+
+    private static boolean dirWritable(String dir) {
+        try {
+            java.io.File d = new java.io.File(dir);
+            if (!d.isDirectory()) {
+                return false;
+            }
+            java.io.File p = new java.io.File(dir + "/.aa_wtest");
+            FileOutputStream fo = new FileOutputStream(p);
+            fo.write(48);
+            fo.close();
+            p.delete();
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private static String sniffExt(byte[] b, int len) {
+        if (len >= 3 && (b[0] & 0xff) == 0xFF && (b[1] & 0xff) == 0xD8 && (b[2] & 0xff) == 0xFF) {
+            return ".jpg";
+        }
+        if (len >= 4 && (b[0] & 0xff) == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G') {
+            return ".png";
+        }
+        return ".png";
     }
 
     // No-op: AA turn-by-turn arrives via the patched GAL receiver (/dev/shmem/aa_nav -> AANavReader),
