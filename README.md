@@ -21,6 +21,34 @@ protocol.
 > nav-capable cluster, + real now-playing track).
 > Personal/educational modding project. Use COMPLETELY at your own risk.
 
+## ☕ Support this project
+
+Kombibridge is a free, open-source hobby project. If you enjoy it and you'd like to say thanks, a
+small crypto tip is very welcome.
+
+> **Always double-check the network** before sending — funds sent on the wrong chain are lost.
+
+| Coin | Network | Address |
+|------|---------|---------|
+| **USDT** | TRC-20 (Tron) | `TRypSugQAVagpSMHizwehC1CRmhCKqfLoR` |
+| **BTC** | Bitcoin (native) | `bc1q0fv8uhr0tuvahk2dtdq357mnykg02067nq4k9x` |
+
+Prefer to scan? Open one QR at a time:
+
+<details>
+<summary>📷 USDT (TRC-20) QR</summary>
+<br>
+<img src="docs/img/qr-usdt-trc20.png" alt="USDT TRC-20 address QR code" width="200">
+</details>
+
+<details>
+<summary>📷 BTC QR</summary>
+<br>
+<img src="docs/img/qr-btc.png" alt="BTC address QR code" width="200">
+</details>
+
+Thank you! ⭐ Starring the repo helps just as much.
+
 ## Demo
 
 <p align="center">
