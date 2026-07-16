@@ -81,6 +81,18 @@ Thank you! ⭐ Starring the repo helps just as much.
   album cover pushed to the cluster alongside the now-playing track and progress bar.</em>
 </p>
 
+### Older PQ cluster (mono centre display)
+
+<p align="center">
+  <img src="docs/img/cluster-nav-pq.jpg" alt="Android Auto turn-by-turn maneuver arrow in the small monochrome centre display of an older PQ MIB2 STD2 cluster" width="410">
+  <img src="docs/img/cluster-media-pq.jpg" alt="Kombibridge now-playing track (artist / album / title) in the small monochrome centre display of an older PQ MIB2 STD2 cluster" width="410">
+  <br>
+  <em>The older <strong>PQ</strong> cluster (small monochrome centre display between analogue gauges),
+  with both output paths working independently.
+  <strong>Left:</strong> Android Auto turn-by-turn maneuver via the navigation path.
+  <strong>Right:</strong> the real now-playing track (artist / album / title) via the media path.</em>
+</p>
+
 ---
 
 ## How it works
