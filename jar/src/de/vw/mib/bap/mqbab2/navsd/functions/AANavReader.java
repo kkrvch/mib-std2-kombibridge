@@ -137,7 +137,10 @@ public final class AANavReader implements Runnable {
             angle  = Integer.parseInt(p[4]);
             number = Integer.parseInt(p[5]);
             dist   = Integer.parseInt(p[6]);
-            time   = Integer.parseInt(p[7]);
+            // time is an UNSIGNED 32-bit field: Waze writes 4294967295 (0xFFFFFFFF, "ETA unknown"),
+            // which overflows Integer.parseInt and would throw NumberFormatException.
+            // Google sends 0.
+            time   = (int) Long.parseLong(p[7]);
             unit   = Integer.parseInt(p[8]);
         } catch (NumberFormatException ex) {
             return;
