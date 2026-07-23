@@ -83,6 +83,23 @@ public final class Config {
      */
     public static final boolean SUPPRESS_NAV_ACTIVE_PLACEHOLDER = true;
 
+    // ===== disconnect handling =============================================================
+    /**
+     * Backstop timeout (ms) for the ONE disconnect case the GAL library gives no signal for:
+     * the phone is physically yanked and the SAL never tears the receiver down, so the
+     * GalReceiver::shutdown hook never fires and the connected flag stays stuck at 1.
+     *
+     * The normal disconnect edge is event-driven and instant, NOT timed: the patched shim flips an
+     * explicit {@code connected} flag to 0 the moment the AA session tears down (its
+     * GalReceiver::shutdown hook), and bumps a {@code session} epoch on every reconnect
+     * (GalReceiver::init). The readers clear immediately on connected=0 and on a new session, and
+     * KEEP the last frame indefinitely while connected=1 (so Waze frozen at a light no longer blanks).
+     *
+     * This backstop only bites when connected has been stuck at 1 with no new data for this long — i.e.
+     * a hard yank with no teardown callback. Kept generous so a long stationary stop never trips it.
+     */
+    public static final long AA_STALE_BACKSTOP_MS = 300000L;   // 5 min
+
     // ===== logging =========================================================================
     /**
      * Log verbosity, compiled into the jar: MIBLogger.TRACE | DEBUG | INFO | ERROR | SILENT.
