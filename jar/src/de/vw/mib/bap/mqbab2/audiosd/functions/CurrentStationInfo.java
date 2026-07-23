@@ -475,7 +475,7 @@ ExboxServiceListener {
                         : marqueeQ4(mediaTitle);
                 currentStationInfo_Status.quaternaryInformation.setContent(clampLine(navQ4));
                 currentStationInfo_Status.qi_Type = 0;
-                MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "' q4='" + navQ4 + "'");
+                if (Config.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "' q4='" + navQ4 + "'");
             }
             // otherwise (AA connected, no active route guidance) show the REAL now-playing track.
             else if (Config.SHOW_MEDIA && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
@@ -492,7 +492,7 @@ ExboxServiceListener {
                     currentStationInfo_Status.quaternaryInformation.setContent(clampLine(bar));
                     currentStationInfo_Status.qi_Type = 0;
                 }
-                MIBLogger.getInstance().debug("CurrentStationInfo: track-in-media t='" + mediaTitle + "' a='" + mediaArtist + "' al='" + mediaAlbum + "' bar='" + bar + "'");
+                if (Config.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: track-in-media t='" + mediaTitle + "' a='" + mediaArtist + "' al='" + mediaAlbum + "' bar='" + bar + "'");
             }
         } catch (Throwable t) {
             // Never let our injection blank the cluster — revert to the plain "Android Auto" label.

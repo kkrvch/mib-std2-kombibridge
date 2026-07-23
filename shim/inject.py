@@ -3,7 +3,8 @@
 #  - new RWX PT_LOAD with the blob (a 7th phdr is written into free space in the table)
 #  - .rel.dyn is moved into the new segment: [first RELATIVE][+ ours][rest]
 #  - DT_REL/DT_RELSZ/DT_RELCOUNT are patched in place
-#  - the `BL onChannelOpened` in the tail of GalReceiver::init -> `BL init_trampoline`
+#  - the `BL onChannelOpened` in the tail of GalReceiver::init  -> `BL init_trampoline`     (session up)
+#  - the 1st `BL MessageRouter::shutdown` in GalReceiver::shutdown -> `BL shutdown_trampoline` (session down)
 import sys, struct, io, argparse
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
@@ -11,6 +12,7 @@ from elftools.elf.relocation import RelocationSection
 R_RELATIVE=23
 R_JUMP_SLOT=22
 TRAMPOLINE_SYM='init_trampoline'
+TRAMPOLINE_SYM2='shutdown_trampoline'
 
 # --- per-firmware addresses are AUTO-RESOLVED from the target libgal (no hardcoding) ---
 # The blob's .galrefs slots (see navshim_fs.cpp g_ref[]) are filled here, in this exact order.
@@ -19,11 +21,15 @@ TRAMPOLINE_SYM='init_trampoline'
 #   2 R_GOT_MEMSET   memset GOT slot                       (R_ARM_JUMP_SLOT reloc)
 #   3 R_ONCHOPEN     onChannelOpened PLT stub              (derived via the BL auto-locator)
 #   4 R_MEDIA_VTABLE _ZTV27MediaPlaybackStatusEndpoint     (.dynsym; navshim adds +8 at runtime)
+#   5 R_MR_SHUTDOWN  MessageRouter::shutdown               (.dynsym; call displaced from the 1st BL
+#                                                           of GalReceiver::shutdown)
 SYM_REGISTER='_ZN11GalReceiver15registerServiceEP20ProtocolEndpointBase'
 SYM_NAV_VTABLE='_ZTV24NavigationStatusEndpoint'
 SYM_ONCHOPEN='_ZN20ProtocolEndpointBase15onChannelOpenedEh'  # the call displaced from init's tail
 SYM_MEDIA_VTABLE='_ZTV27MediaPlaybackStatusEndpoint'
 SYM_INIT='_ZN11GalReceiver4initERK10shared_ptrI20IControllerCallbacksE'
+SYM_MR_SHUTDOWN='_ZN13MessageRouter8shutdownEv'    # displaced from GalReceiver::shutdown's 1st BL
+SYM_GAL_SHUTDOWN='_ZN11GalReceiver8shutdownEv'     # the teardown fn we patch (symmetric to init)
 
 def g16(b,o): return struct.unpack_from('<H',b,o)[0]
 def g32(b,o): return struct.unpack_from('<I',b,o)[0]
@@ -76,25 +82,28 @@ def plt_stub_for_got(e,raw,v2f,got_slot):
         va+=4
     return None
 
-def find_init_bl_to(e,raw,v2f,syms,target):
-    """Scan GalReceiver::init for the BL whose target == `target` (the onChannelOpened PLT stub).
-    Returns (file_offset, vaddr) of that BL, or (None,None)."""
-    init=syms[SYM_INIT]
-    higher=[v for v in syms.values() if v>init]
-    end=min(higher) if higher else init+0x400
+def find_bl_to(e,raw,v2f,syms,func_sym,target,last):
+    """Scan the function `func_sym` for the BL whose target == `target` (a PLT stub).
+    `last=True` keeps the last match (init's tail call); `last=False` the first (shutdown's 1st BL).
+    Returns (file_offset, vaddr) of that BL, or (None,None). Function end = next dynsym symbol."""
+    start=syms[func_sym]
+    higher=[v for v in syms.values() if v>start]
+    end=min(higher) if higher else start+0x400
     hit=(None,None)
-    for va in range(init,end,4):
+    for va in range(start,end,4):
         w=g32(raw,v2f(va))
         if (w&0x0F000000)==0x0B000000 and (w>>28)&0xf!=0xf:   # BL, cond != 0xF
             imm=w&0xffffff
             if imm&0x800000: imm-=0x1000000
             if va+8+(imm<<2)==target:
-                hit=(v2f(va),va)   # keep the LAST match (the call in init's tail)
+                hit=(v2f(va),va)
+                if not last:
+                    return hit    # first match
     return hit
 
 def resolve_galrefs(e,raw,n_slots):
-    """Resolve the n_slots .galrefs values (in g_ref enum order) and the BL patch site.
-    Returns (resolved_list, bl_file_offset, bl_vaddr)."""
+    """Resolve the n_slots .galrefs values (in g_ref enum order) and BOTH BL patch sites.
+    Returns (resolved_list, init_bl(foff,va), shutdown_bl(foff,va))."""
     v2f=vaddr_to_foff(e)
     syms=dynsym_map(e); js=jump_slot_map(e)
     def sym(name):
@@ -102,14 +111,21 @@ def resolve_galrefs(e,raw,n_slots):
         return syms[name]
     if 'memset' not in js: sys.exit("ERROR: no memset JUMP_SLOT relocation in libgal")
     if SYM_ONCHOPEN not in js: sys.exit("ERROR: no onChannelOpened JUMP_SLOT relocation in libgal")
+    if SYM_MR_SHUTDOWN not in js: sys.exit("ERROR: no MessageRouter::shutdown JUMP_SLOT relocation in libgal")
     onch_stub=plt_stub_for_got(e,raw,v2f,js[SYM_ONCHOPEN])
     if onch_stub is None: sys.exit("ERROR: could not locate onChannelOpened PLT stub")
-    resolved=[sym(SYM_REGISTER), sym(SYM_NAV_VTABLE), js['memset'], onch_stub, sym(SYM_MEDIA_VTABLE)]
+    mrsd_stub=plt_stub_for_got(e,raw,v2f,js[SYM_MR_SHUTDOWN])
+    if mrsd_stub is None: sys.exit("ERROR: could not locate MessageRouter::shutdown PLT stub")
+    # R_MR_SHUTDOWN is the REAL function addr (dynsym), so gal_shutdown_hook calls it directly,
+    # bypassing the PLT stub — the same convention used for R_REGISTER.
+    resolved=[sym(SYM_REGISTER), sym(SYM_NAV_VTABLE), js['memset'], onch_stub,
+              sym(SYM_MEDIA_VTABLE), sym(SYM_MR_SHUTDOWN)]
     if len(resolved)!=n_slots:
         sys.exit("ERROR: g_ref slot count mismatch: navshim has %d, inject.py resolves %d"
                  %(n_slots,len(resolved)))
-    bl_foff,bl_va=find_init_bl_to(e,raw,v2f,syms,onch_stub)
-    return resolved,bl_foff,bl_va
+    init_bl=find_bl_to(e,raw,v2f,syms,SYM_INIT,onch_stub,last=True)        # tail call
+    sd_bl  =find_bl_to(e,raw,v2f,syms,SYM_GAL_SHUTDOWN,mrsd_stub,last=False) # 1st BL
+    return resolved,init_bl,sd_bl
 
 def blob_image_and_relocs(blob_path):
     e=ELFFile(open(blob_path,'rb'))
@@ -127,7 +143,8 @@ def blob_image_and_relocs(blob_path):
     gr=e.get_section_by_name('.galrefs')
     galrefs=[gr['sh_addr']+i*4 for i in range(gr['sh_size']//4)]
     ds=e.get_section_by_name('.dynsym')
-    ent={sy.name:sy['st_value'] for sy in ds.iter_symbols() if sy.name==TRAMPOLINE_SYM}
+    ent={sy.name:sy['st_value'] for sy in ds.iter_symbols()
+         if sy.name in (TRAMPOLINE_SYM,TRAMPOLINE_SYM2)}
     return img,hi,relocs,galrefs,ent
 
 def main():
@@ -135,7 +152,9 @@ def main():
     ap.add_argument('gal'); ap.add_argument('blob'); ap.add_argument('-o',default=None)
     ap.add_argument('--write',action='store_true')
     ap.add_argument('--bl-offset',type=lambda x:int(x,0),default=None,
-                    help='override the auto-located BL patch file offset (e.g. 0x7226c)')
+                    help='override the auto-located init BL patch file offset (e.g. 0x7226c)')
+    ap.add_argument('--bl-offset-shutdown',type=lambda x:int(x,0),default=None,
+                    help='override the auto-located GalReceiver::shutdown BL patch file offset')
     a=ap.parse_args()
     raw=bytearray(open(a.gal,'rb').read())
     e=ELFFile(io.BytesIO(raw))
@@ -162,18 +181,26 @@ def main():
     print("blob: image=0x%x bytes, %d blob-relocs, %d galrefs, %s"%(hi,len(brelocs),len(galrefs),ent))
 
     # --- AUTO-RESOLVE the per-firmware addresses from THIS libgal and bake them into .galrefs ---
-    resolved,bl_auto,bl_va=resolve_galrefs(e,raw,len(galrefs))
-    names=['R_REGISTER','R_NAV_VTABLE','R_GOT_MEMSET','R_ONCHOPEN','R_MEDIA_VTABLE']
+    resolved,(init_foff,init_va),(sd_foff,sd_va)=resolve_galrefs(e,raw,len(galrefs))
+    names=['R_REGISTER','R_NAV_VTABLE','R_GOT_MEMSET','R_ONCHOPEN','R_MEDIA_VTABLE','R_MR_SHUTDOWN']
     print("resolved galrefs from libgal:")
     for nm,val in zip(names,resolved): print("    %-12s = 0x%x"%(nm,val))
     for off,val in zip(galrefs,resolved):     # write resolved VAs into the blob's .galrefs slots
         s32(img,off,val)                       # (relativized below: at load g_ref[i]=base+val)
-    BL_PATCH_FOFF = a.bl_offset if a.bl_offset is not None else bl_auto
-    if BL_PATCH_FOFF is None:
+
+    # Two BL patch sites: init tail (-> init_trampoline) and shutdown's 1st BL (-> shutdown_trampoline).
+    INIT_FOFF = a.bl_offset if a.bl_offset is not None else init_foff
+    if INIT_FOFF is None:
         sys.exit("ERROR: could not auto-locate the init BL; pass --bl-offset 0xNNNN")
-    bl_pc = bl_va if a.bl_offset is None else BL_PATCH_FOFF   # vaddr for the branch arithmetic
-    print("BL patch site: file offset 0x%x (vaddr 0x%x)%s"%(
-        BL_PATCH_FOFF, bl_pc, " [overridden]" if a.bl_offset is not None else " [auto]"))
+    init_pc = init_va if a.bl_offset is None else INIT_FOFF   # vaddr for the branch arithmetic
+    SD_FOFF = a.bl_offset_shutdown if a.bl_offset_shutdown is not None else sd_foff
+    if SD_FOFF is None:
+        sys.exit("ERROR: could not auto-locate the shutdown BL; pass --bl-offset-shutdown 0xNNNN")
+    sd_pc = sd_va if a.bl_offset_shutdown is None else SD_FOFF
+    print("init BL     @ file offset 0x%x (vaddr 0x%x)%s"%(
+        INIT_FOFF, init_pc, " [overridden]" if a.bl_offset is not None else " [auto]"))
+    print("shutdown BL @ file offset 0x%x (vaddr 0x%x)%s"%(
+        SD_FOFF, sd_pc, " [overridden]" if a.bl_offset_shutdown is not None else " [auto]"))
 
     # --- placement: new RWX segment at end of file ---
     new_vaddr=align(top,0x1000)
@@ -199,13 +226,20 @@ def main():
     seg_memsz=seg_filesz
     rel_new_foff=blob_foff+rel_in_seg
 
-    # --- BL patch ---
-    tramp_vaddr=new_vaddr+ent[TRAMPOLINE_SYM]
-    # ARM BL @ bl_pc(vaddr): imm24=((target-(pc+8))>>2)&0xffffff, cond=E
-    off=(tramp_vaddr-(bl_pc+8))>>2
-    bl=0xEB000000 | (off & 0xffffff)
-    old_bl=g32(raw,BL_PATCH_FOFF)
-    print("BL patch @0x%x: 0x%08x -> 0x%08x (target trampoline @0x%x)"%(BL_PATCH_FOFF,old_bl,bl,tramp_vaddr))
+    # --- BL patches (ARM BL @ pc(vaddr): imm24=((target-(pc+8))>>2)&0xffffff, cond=E) ---
+    def make_bl(pc, tramp_vaddr):
+        off=(tramp_vaddr-(pc+8))>>2
+        if off < -0x800000 or off > 0x7fffff:
+            sys.exit("ERROR: BL from 0x%x to 0x%x out of ±32MB range"%(pc,tramp_vaddr))
+        return 0xEB000000 | (off & 0xffffff)
+    init_tramp=new_vaddr+ent[TRAMPOLINE_SYM]
+    sd_tramp  =new_vaddr+ent[TRAMPOLINE_SYM2]
+    init_bl=make_bl(init_pc, init_tramp)
+    sd_bl  =make_bl(sd_pc,   sd_tramp)
+    print("init BL patch     @0x%x: 0x%08x -> 0x%08x (trampoline @0x%x)"%(
+        INIT_FOFF, g32(raw,INIT_FOFF), init_bl, init_tramp))
+    print("shutdown BL patch @0x%x: 0x%08x -> 0x%08x (trampoline @0x%x)"%(
+        SD_FOFF, g32(raw,SD_FOFF), sd_bl, sd_tramp))
     print("new segment: vaddr=0x%x foff=0x%x filesz=0x%x ; rel.dyn@vaddr0x%x (%d entries)"%(
         new_vaddr,new_foff,seg_filesz,rel_vaddr,n_old+n_new))
 
@@ -214,8 +248,9 @@ def main():
         return
 
     # ====== WRITE ======
-    # 1) BL
-    s32(raw,BL_PATCH_FOFF,bl)
+    # 1) BLs
+    s32(raw,INIT_FOFF,init_bl)
+    s32(raw,SD_FOFF,sd_bl)
     # 2) add a 7th phdr (room exists: phoff+phnum*32 .. up to DT_HASH at 0x118)
     ph_new_off=e_phoff+e_phnum*e_phentsize
     assert ph_new_off+e_phentsize<=0x118, "no room for the phdr"
