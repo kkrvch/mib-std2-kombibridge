@@ -1,5 +1,6 @@
 package de.vw.mib.bap.mqbab2.navsd.functions;
 
+import de.aatokombi.Config;
 import de.adi961.miblogger.MIBLogger;
 import de.vw.mib.asl.framework.internal.framework.ServiceManager;
 import de.vw.mib.asl.internal.androidauto.target.NavigationHandler;
@@ -28,7 +29,7 @@ import java.io.FileReader;
  * does not depend on whether the navsd shadows were constructed.
  *
  * IPC line (the shim rewrites the whole line on each event, O_TRUNC):
- *   seq status event side angle number dist time unit road
+ *   seq status event side angle number dist time unit connected session road
  * status = GAL NavigationStatus (0=UNAVAILABLE, 1=ACTIVE, 2=INACTIVE); event = AA NextTurnEnum;
  * side = AA TurnSide (1=LEFT, 2=RIGHT, 3=UNSPECIFIED). AA proto enums == DSI Constants 1:1.
  *
@@ -36,13 +37,8 @@ import java.io.FileReader;
  */
 public final class AANavReader implements Runnable {
 
-    private static final boolean DEBUG = false;
-
     private static final String PATH = "/dev/shmem/aa_nav";
     private static final long POLL_MS = 300L;
-    // If aa_nav stops advancing (seq frozen) this long, treat nav as stopped (phone disconnected /
-    // route ended) and clear the override so the cluster leaves guidance view.
-    private static final long STALE_MS = 15000L;
 
     private static volatile boolean started = false;
     private static AANavReader instance = null;
@@ -53,6 +49,7 @@ public final class AANavReader implements Runnable {
     private long lastSeq = -1L;
     private int  lastStatus = -1;
     private long lastSeqChangeMs = 0L;
+    private long lastSession = -1L;   // AA session epoch from the shim; change => phone reconnected
     private boolean cleared = true;
     private String lastMarqueeTitle = null;   // Q4 now-playing marquee: detect song change -> restart
 
@@ -122,13 +119,13 @@ public final class AANavReader implements Runnable {
             maybeClearStale();
             return;
         }
-        String[] p = split(line, 10);
+        String[] p = split(line, 12);
         if (p == null) {
             maybeClearStale();
             return;
         }
-        long seq;
-        int status, event, side, angle, number, dist, time, unit;
+        long seq, session;
+        int status, event, side, angle, number, dist, time, unit, connected;
         try {
             seq    = Long.parseLong(p[0]);
             status = Integer.parseInt(p[1]);
@@ -142,26 +139,54 @@ public final class AANavReader implements Runnable {
             // Google sends 0.
             time   = (int) Long.parseLong(p[7]);
             unit   = Integer.parseInt(p[8]);
+            connected = Integer.parseInt(p[9]);   // AA session up (0 = GalReceiver::shutdown fired)
+            session   = Long.parseLong(p[10]);    // AA session epoch (bumps on each reconnect)
         } catch (NumberFormatException ex) {
             return;
         }
-        String road = p[9];
+        String road = p[11];
+
+        // New AA session (phone reconnected): drop any stale content and re-arm the seq tracker, so a
+        // yank+replug never leaves the previous session's maneuver on the cluster.
+        if (session != lastSession) {
+            lastSession = session;
+            lastSeq = -1L;
+            lastStatus = -1;   // force a focus re-grab on the new session's first ACTIVE maneuver
+            clearActive();
+        }
+
+        // Authoritative disconnect from the GAL library: AA session torn down -> clear immediately,
+        // no timeout. The shim flushes connected=0 from its GalReceiver::shutdown hook (without bumping
+        // seq), so this must be checked BEFORE the frozen-seq branch.
+        if (connected == 0) {
+            if (lastStatus == 1 && handler != null) {
+                try { handler.navigationFocus(Constants.NAVFOCUS_NATIVE); } catch (Throwable t) {}
+            }
+            lastStatus = -1;   // non-active sentinel: forces a PROJECTED re-grab when guidance resumes
+            lastSeq = seq;
+            clearActive();
+            return;
+        }
 
         if (seq == lastSeq) {
+            // Connected but no new maneuver (e.g. Waze frozen at a light). KEEP the last frame; the
+            // long backstop only fires for a hard yank that produced no teardown call.
             maybeClearStale();
             return;
         }
         lastSeq = seq;
         lastSeqChangeMs = System.currentTimeMillis();
 
-        if (DEBUG) {
-            MIBLogger.getInstance().debug("aa_nav seq=" + seq + " st=" + status + " event=" + event
-                    + " side=" + side + " angle=" + angle + " number=" + number + " dist=" + dist
-                    + " time=" + time + " unit=" + unit + " q4='" + quaternaryFor(event, number)
-                    + "' road=" + road);
+        // Verbosity is driven solely by Config.LOG_LEVEL (no private DEBUG flag). Compile-time constant
+        // -> the per-poll string is not even built unless the jar is compiled at DEBUG/TRACE.
+        if (Config.LOG_LEVEL <= MIBLogger.DEBUG) {
+            MIBLogger.getInstance().debug("aa_nav seq=" + seq + " st=" + status + " conn=" + connected
+                    + " sess=" + session + " event=" + event + " side=" + side + " angle=" + angle
+                    + " number=" + number + " dist=" + dist + " time=" + time + " unit=" + unit
+                    + " q4='" + quaternaryFor(event, number) + "' road=" + road);
         }
 
-        // status != ACTIVE -> guidance stopped/disconnected: clear whichever path is live.
+        // status != ACTIVE -> guidance stopped (arrived / route paused) though the channel is open.
         if (status != 1) {
             if (status != lastStatus && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_NATIVE); } catch (Throwable t) {}
@@ -391,11 +416,13 @@ public final class AANavReader implements Runnable {
     }
 
     // ===== shared lifecycle ====================================================================
+    // Backstop for a hard yank with no teardown call (connected=0 and session change clear promptly
+    // in processOnce): fires only when the connected flag is stuck at 1 past AA_STALE_BACKSTOP_MS.
     private void maybeClearStale() {
         if (cleared) {
             return;
         }
-        if (System.currentTimeMillis() - lastSeqChangeMs > STALE_MS) {
+        if (System.currentTimeMillis() - lastSeqChangeMs > Config.AA_STALE_BACKSTOP_MS) {
             clearActive();
         }
     }

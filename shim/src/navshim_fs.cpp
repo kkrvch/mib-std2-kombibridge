@@ -18,7 +18,8 @@ typedef unsigned long  usize;
 
 // ===== .galrefs: absolute VAs in libgal; the injector relativizes them (R_ARM_RELATIVE) =====
 // At runtime g_ref[i] = libbase + value. All target functions are ARM (bit0 = 0).
-enum { R_REGISTER=0, R_NAV_VTABLE=1, R_GOT_MEMSET=2, R_ONCHOPEN=3, R_MEDIA_VTABLE=4, N_REFS };
+enum { R_REGISTER=0, R_NAV_VTABLE=1, R_GOT_MEMSET=2, R_ONCHOPEN=3, R_MEDIA_VTABLE=4,
+       R_MR_SHUTDOWN=5, N_REFS };
 // These slots are PLACEHOLDERS (0). The injector (inject.py) resolves the per-firmware absolute
 // VAs from the TARGET libgal's own .dynsym / relocations / .plt and writes them into these slots
 // before relativizing them. So the shim is no longer locked to one libgal build — see shim/README.md.
@@ -28,8 +29,10 @@ enum { R_REGISTER=0, R_NAV_VTABLE=1, R_GOT_MEMSET=2, R_ONCHOPEN=3, R_MEDIA_VTABL
 //   R_GOT_MEMSET   = memset GOT slot                         (R_ARM_JUMP_SLOT reloc)
 //   R_ONCHOPEN     = onChannelOpened PLT stub                (the call displaced from init's tail)
 //   R_MEDIA_VTABLE = _ZTV27MediaPlaybackStatusEndpoint       (.dynsym symbol; vptr = +8 below)
+//   R_MR_SHUTDOWN  = MessageRouter::shutdown                 (.dynsym symbol; call displaced from
+//                                                             GalReceiver::shutdown's 1st BL)
 __attribute__((section(".galrefs"), used))
-volatile u32 g_ref[N_REFS] = { 0, 0, 0, 0, 0 };
+volatile u32 g_ref[N_REFS] = { 0, 0, 0, 0, 0, 0 };
 static inline u32 ref(int i){ return g_ref[i]; }            // = libbase + VA
 
 // ===== minimal freestanding libc =====
@@ -101,7 +104,7 @@ static void resolve_libc(){
 // ===== IPC: a dumb pipe of raw fields for the HMI jar (ShmemNavReader does the semantics) =====
 // /dev/shmem is a RAM fs on this QNX (the SAL itself writes iap2_carplay.log there) → no flash.
 // Line format (rewritten with O_TRUNC on every event):
-//   seq status event side angle number dist time unit road
+//   seq status event side angle number dist time unit connected session road
 static const char IPC_PATH[] = "/dev/shmem/aa_nav";
 // Field map (from the device libgal parser):
 //   NextTurnEvent listener args = Road(str), TurnSide, Event, Image(str), TurnAngle, TurnNumber
@@ -109,6 +112,17 @@ static const char IPC_PATH[] = "/dev/shmem/aa_nav";
 //   Status                     = status
 struct NavState{ u32 seq,status,event,side,dist,time,unit; i32 angle,number; char road[64]; };
 static NavState g_st;
+
+// ===== connection state =====================================================================
+// g_session: bumped once per AA session in gal_nav_inject (each GalReceiver::init = new session).
+//   Written into both IPC files so the jar distinguishes a fresh session (seq restarts at 0) from a
+//   mid-session glitch, and drops stale content on reconnect.
+// g_navConn / g_mediaConn: 1 while the AA session is up, 0 after teardown. Cleared by the
+//   GalReceiver::shutdown hook (the authoritative disconnect edge) and re-asserted whenever nav/media
+//   data actually flows (belt-and-suspenders: connected can't be stuck at 0 while frames arrive).
+static u32 g_session   = 0;
+static u32 g_navConn   = 0;
+static u32 g_mediaConn = 0;
 
 // Write a buffer to a file via stdio (mode "w" = create/truncate).
 static void write_file(const char* path, const char* buf, usize len){
@@ -119,8 +133,10 @@ static void write_file(const char* path, const char* buf, usize len){
 
 static void ipc_flush(){
   if(!p_fopen) return;
-  // format: seq status event side angle number dist time unit road
-  char b[200]; char* o=b;
+  // format: seq status event side angle number dist time unit connected session road
+  // connected/session are inserted BEFORE road (road is the space-remainder field, may hold spaces).
+  // Worst case ~123 numeric bytes + road[63] + '\n' -> 256 leaves comfortable headroom.
+  char b[256]; char* o=b;
   o=u2dec(o,g_st.seq);   *o++=' ';
   o=u2dec(o,g_st.status);*o++=' ';
   o=u2dec(o,g_st.event); *o++=' ';
@@ -130,6 +146,8 @@ static void ipc_flush(){
   o=u2dec(o,g_st.dist);  *o++=' ';
   o=u2dec(o,g_st.time);  *o++=' ';
   o=u2dec(o,g_st.unit);  *o++=' ';
+  o=u2dec(o,g_navConn);  *o++=' ';   // connected: nav channel up (0 = session torn down)
+  o=u2dec(o,g_session);  *o++=' ';   // session epoch
   { usize n=my_strlen(g_st.road); for(usize i=0;i<n;i++) *o++=g_st.road[i]; }
   *o++='\n';
   write_file(IPC_PATH, b, (usize)(o-b));
@@ -145,16 +163,16 @@ static void rd_str_to(void* strObj, char* dst, int cap){
 // ===== listener: vtable as libgal expects (+4 dtor, +8 status, +0xc nextturn, +0x10 dist) =====
 // NavigationStatus enum: UNAVAILABLE=0, ACTIVE=1, INACTIVE=2
 static void l_dtor(void*){}
-static void l_status(void*, u32 s){ g_st.status=s; g_st.seq++; ipc_flush(); }
+static void l_status(void*, u32 s){ g_navConn=1; g_st.status=s; g_st.seq++; ipc_flush(); }  // data flowing => channel up
 // onNextTurn(self, Road*, TurnSide, Event, Image*, TurnAngle, TurnNumber)
 static void l_nextturn(void*, void* road, u32 turnSide, u32 event, void* /*image*/, i32 angle, i32 number){
-  g_st.side=turnSide; g_st.event=event; g_st.angle=angle; g_st.number=number;
+  g_navConn=1; g_st.side=turnSide; g_st.event=event; g_st.angle=angle; g_st.number=number;
   rd_str_to(road, g_st.road, sizeof g_st.road);
   g_st.seq++; ipc_flush();
 }
 // onDistance(self, DistanceMeters, TimeToTurnSeconds, field3, DisplayUnit)
 static void l_distance(void*, u32 meters, u32 timeSec, u32 /*field3*/, u32 unit){
-  g_st.dist=meters; g_st.time=timeSec; g_st.unit=unit; g_st.seq++; ipc_flush();
+  g_navConn=1; g_st.dist=meters; g_st.time=timeSec; g_st.unit=unit; g_st.seq++; ipc_flush();
 }
 
 struct ListVT{ void* s0; void(*dtor)(void*); void(*status)(void*,u32);
@@ -166,7 +184,7 @@ static Listener g_listener = { &g_listVT };
 // ===== MediaPlaybackStatusEndpoint: now-playing track + progress (see DESIGN_MEDIA.md) =====
 // IPC for the jar: /dev/shmem/aa_media, rewritten on each media event (O_TRUNC). Fields after the
 // three track strings are appended so the older 3-field parser still finds song/artist/album:
-//   seq <Song>\t<Artist>\t<Album>\t<posSec>\t<durSec>
+//   seq <Song>\t<Artist>\t<Album>\t<posSec>\t<durSec>\t<coverSeq>\t<coverLen>\t<connected>\t<session>
 static const char IPC_MEDIA[] = "/dev/shmem/aa_media";
 // AlbumArt (cover) raw bytes -> RAM file, O_TRUNC-overwritten on each metadata event. /dev/shmem is a
 // RAM fs (no flash wear). The HMI jar (AndroidAutoTarget.applyCoverArt) stages it and points TrackInfo
@@ -178,7 +196,8 @@ static MediaState g_ms;
 
 static void media_flush(){
   if(!p_fopen) return;
-  char b[360]; char* o=b;
+  // Worst case ~326 bytes (3×79 strings + 7 numeric fields) -> 420 leaves headroom.
+  char b[420]; char* o=b;
   o=u2dec(o,g_ms.seq); *o++=' ';
   { const char* s=g_ms.song;   while(*s) *o++=*s++; } *o++='\t';
   { const char* s=g_ms.artist; while(*s) *o++=*s++; } *o++='\t';
@@ -186,7 +205,9 @@ static void media_flush(){
   o=u2dec(o,g_ms.pos); *o++='\t';
   o=u2dec(o,g_ms.dur); *o++='\t';
   o=u2dec(o,g_ms.coverseq); *o++='\t';   // field 5: bumps per metadata event (track switch)
-  o=u2dec(o,g_ms.coverlen);              // field 6: cover byte length (0 = phone sent no art)
+  o=u2dec(o,g_ms.coverlen); *o++='\t';   // field 6: cover byte length (0 = phone sent no art)
+  o=u2dec(o,g_mediaConn);   *o++='\t';   // field 7: connected (media channel up, 0 = torn down)
+  o=u2dec(o,g_session);                  // field 8: session epoch
   *o++='\n';
   write_file(IPC_MEDIA, b, (usize)(o-b));
 }
@@ -194,12 +215,13 @@ static void media_flush(){
 // Listener vtable {s0, dtor, onStatus(+8), onMetadata(+0xc)}.
 static void m_dtor(void*){}
 // handleMediaPlaybackStatus → +8. Fires periodically (~1/s) while media plays, carrying the
-// PlaybackSeconds position (msg+0x18, the only 32-bit field) as the 7th arg (callee [sp+8]). Also a
-// HEARTBEAT: bumping seq lets ShmemMediaReader treat a frozen aa_media as playback-stopped /
-// phone-disconnected and clear the widget — how the cluster un-sticks after an unexpected AA drop.
+// PlaybackSeconds position (msg+0x18, the only 32-bit field) as the 7th arg (callee [sp+8]). Bumping
+// seq advances the position; disconnect is signalled explicitly via the connected flag (the
+// GalReceiver::shutdown hook), NOT inferred from a frozen seq, so a paused track no longer self-clears.
 //   arg index:  0=self 1=&src 2=repeat 3=repeatOne 4,5=src-temp-spill 6=PlaybackSeconds
 static void m_status(void* /*self*/, void* /*src*/, u32 /*repeat*/, u32 /*repeatOne*/,
                      u32 /*a4*/, u32 /*a5*/, u32 playbackSeconds){
+  g_mediaConn=1;                        // data flowing => channel up
   g_ms.pos = playbackSeconds;
   g_ms.seq++; media_flush();
 }
@@ -207,6 +229,7 @@ static void m_status(void* /*self*/, void* /*src*/, u32 /*repeat*/, u32 /*repeat
 //   arr[0]=Song, arr[1]=Album, arr[2]=Artist, arr[3]=AlbumArt(bytes), arr[4]=Playlist.
 // durationSeconds (MediaPlaybackMetadata+0x24) is the track length — feeds the progress bar total.
 static void m_metadata(void* /*self*/, void* arr, u32 /*a2*/, u32 /*a3*/){
+  g_mediaConn=1;                        // data flowing => channel up
   void** a = (void**)arr;
   if(a){
     rd_str_to(&a[0], g_ms.song,   sizeof g_ms.song);
@@ -252,9 +275,12 @@ static MediaListener g_mediaListener = { &g_mediaVT };
 // ===== endpoint objects (layout from RE, sizeof ~0x30 → reserve 0x40) =====
 static u8 g_navEp[0x40]   __attribute__((aligned(8)));
 static u8 g_mediaEp[0x40] __attribute__((aligned(8)));
-// Track the receiver we armed. GalReceiver::init runs again on an AA reconnect (new receiver), so we
-// must RE-register the endpoints each time — a process-once latch left us silent until a reboot.
-// Keyed on the receiver pointer so we don't double-register for the same one.
+// Track the receiver we armed, so we don't double-register within one live session. GalReceiver::init
+// runs again on every AA reconnect and re-initialises the MessageRouter (clearing our registrations),
+// so we MUST re-register each session. The SAL may reuse the SAME GalReceiver object across a
+// disconnect+reconnect (observed on hardware: projection returns but our endpoints stay dead) — so
+// this latch is CLEARED in gal_shutdown_hook, not keyed on the pointer changing. Init after a shutdown
+// therefore always re-arms; a second init on the same live session (no shutdown between) is skipped.
 static void* g_inited_receiver = 0;
 
 typedef void (*reg_t)(void*,void*);
@@ -276,6 +302,13 @@ extern "C" __attribute__((used)) void gal_nav_inject(void* receiver){
   my_memset(g_mediaEp,0,sizeof g_mediaEp);
   my_memset(&g_st,0,sizeof g_st);
   my_memset(&g_ms,0,sizeof g_ms);
+  // New AA session: bump the epoch (jar drops any stale content) and reset the connect flags.
+  // Flush the reset (connected=0 + empty content + new epoch) NOW, before registration, so a stale
+  // nav/track from the previous session clears immediately on replug; the data callbacks re-assert
+  // connected=1 as soon as the phone starts streaming again.
+  g_session++; g_navConn=0; g_mediaConn=0;
+  ipc_flush();
+  media_flush();
 
   u32 router = (u32)receiver + 4;                 // MessageRouter is embedded at receiver+4
   u8 id = pick_free_id(router);
@@ -318,4 +351,32 @@ __attribute__((naked,used)) extern "C" void init_trampoline(){
     "mov  r2, r4\n"                                // receiver(this) -> 3rd argument
     "bl   nav_init_hook\n"                         // r0=controlEp, r1=0 already set by init
     "pop  {pc}\n");                                // return into init's epilogue
+}
+
+// ===== hook on GalReceiver::shutdown (the authoritative session-teardown edge) ================
+// The SAL drives the receiver lifecycle from outside libgal: GalReceiver::init on connect,
+// GalReceiver::shutdown on disconnect (both are exported symbols with no in-library callers). We
+// already hook init; this is the symmetric teardown hook — and it replaces the per-endpoint
+// onChannelClosed vtable interception entirely (no RAM vtable copies, no slot-offset assumptions).
+//
+// The injector repoints the FIRST `bl` in GalReceiver::shutdown (its call to MessageRouter::shutdown)
+// to shutdown_trampoline. At that site: r0 = this+4 (MessageRouter*), r4 = this (receiver), and the
+// caller recomputes r0 from r4 right after the call, so r0 need not survive our hook. We clear the
+// connected flags, flush both IPC files (instant clear on the cluster), then run the displaced
+// MessageRouter::shutdown so the library tears down exactly as before.
+typedef void (*mrsd_t)(void*);
+extern "C" __attribute__((used)) void gal_shutdown_hook(void* messageRouter){
+  g_navConn = 0; g_mediaConn = 0;
+  // Clear the arm-latch: teardown deregistered our endpoints (MessageRouter::shutdown below), so the
+  // next GalReceiver::init MUST re-register even if the SAL reuses the same receiver object. Without
+  // this, a same-object reconnect left our nav/media endpoints dead while AA projection came back.
+  g_inited_receiver = 0;
+  ipc_flush(); media_flush();
+  ((mrsd_t)ref(R_MR_SHUTDOWN))(messageRouter);   // displaced original MessageRouter::shutdown(this+4)
+}
+__attribute__((naked,used)) extern "C" void shutdown_trampoline(){
+  __asm__ volatile(
+    "push {lr}\n"                                  // save the return address into shutdown
+    "bl   gal_shutdown_hook\n"                     // r0 = this+4 (MessageRouter*) already set
+    "pop  {pc}\n");                                // return into shutdown's body (recomputes r0 from r4)
 }
