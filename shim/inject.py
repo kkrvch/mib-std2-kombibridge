@@ -30,6 +30,7 @@ SYM_MEDIA_VTABLE='_ZTV27MediaPlaybackStatusEndpoint'
 SYM_INIT='_ZN11GalReceiver4initERK10shared_ptrI20IControllerCallbacksE'
 SYM_MR_SHUTDOWN='_ZN13MessageRouter8shutdownEv'    # displaced from GalReceiver::shutdown's 1st BL
 SYM_GAL_SHUTDOWN='_ZN11GalReceiver8shutdownEv'     # the teardown fn we patch (symmetric to init)
+SYM_SENDVERSION='_ZN10Controller18sendVersionRequestEv'  # holds the advertised AA protocol version
 
 def g16(b,o): return struct.unpack_from('<H',b,o)[0]
 def g32(b,o): return struct.unpack_from('<I',b,o)[0]
@@ -127,6 +128,33 @@ def resolve_galrefs(e,raw,n_slots):
     sd_bl  =find_bl_to(e,raw,v2f,syms,SYM_GAL_SHUTDOWN,mrsd_stub,last=False) # 1st BL
     return resolved,init_bl,sd_bl
 
+def patch_protocol_version(e,raw,minor):
+    """Rewrite the advertised AA protocol minor version.
+
+    sendVersionRequest builds `msgid=1 | major=1 | minor` (BE uint16 each) and writes the minor with
+    `strb rX,[r0,#5]`. Locate that store, take its source register, rewrite the `mov rX,#imm` feeding
+    it — no absolute address baked in, so the patch survives a different libgal build.
+    """
+    if not 0 <= minor <= 255: sys.exit("ERROR: --aa-protocol-minor out of range")
+    v2f=vaddr_to_foff(e); syms=dynsym_map(e)
+    if SYM_SENDVERSION not in syms: sys.exit("ERROR: %s not found in libgal"%SYM_SENDVERSION)
+    base=v2f(syms[SYM_SENDVERSION])
+    strb=None; reg=None
+    for off in range(base,base+0x100,4):                     # ARM, so 4-byte aligned
+        w=g32(raw,off)
+        if (w & 0xFFFF0FFF)==0xE5C00005:                     # strb rX,[r0,#5]
+            strb=off; reg=(w>>12)&0xF; break
+    if strb is None: sys.exit("ERROR: could not find the minor-version store in sendVersionRequest")
+    mov=None; cur=None
+    for off in range(base,strb,4):
+        w=g32(raw,off)
+        if (w & 0xFFFFFF00)==(0xE3A00000 | (reg<<12)):       # mov rX,#imm8
+            mov=off; cur=w & 0xFF
+    if mov is None: sys.exit("ERROR: could not find the `mov r%d,#imm` feeding it"%reg)
+    s32(raw,mov,0xE3A00000 | (reg<<12) | minor)
+    print("AA protocol: advertise 1.%d instead of 1.%d (mov r%d @file 0x%x)"%(minor,cur,reg,mov))
+
+
 def blob_image_and_relocs(blob_path):
     e=ELFFile(open(blob_path,'rb'))
     loads=[s for s in e.iter_segments() if s['p_type']=='PT_LOAD']
@@ -155,9 +183,16 @@ def main():
                     help='override the auto-located init BL patch file offset (e.g. 0x7226c)')
     ap.add_argument('--bl-offset-shutdown',type=lambda x:int(x,0),default=None,
                     help='override the auto-located GalReceiver::shutdown BL patch file offset')
+    ap.add_argument('--aa-protocol-minor',type=int,default=None,
+                    help='advertise AA protocol 1.<N> instead of the firmware value. 1.7 makes the '
+                         'phone send NavigationState (lanes, ETA) and STOP sending the legacy turn '
+                         'events, which the shim no longer parses — so a session that negotiates '
+                         'below 1.7 has no nav at all. Default: leave the firmware alone.')
     a=ap.parse_args()
     raw=bytearray(open(a.gal,'rb').read())
     e=ELFFile(io.BytesIO(raw))
+    if a.aa_protocol_minor is not None:
+        patch_protocol_version(e,raw,a.aa_protocol_minor)
     # --- ELF header ---
     e_phoff=g32(raw,0x1c); e_phentsize=g16(raw,0x2a); e_phnum=g16(raw,0x2c)
     loads=[s for s in e.iter_segments() if s['p_type']=='PT_LOAD']

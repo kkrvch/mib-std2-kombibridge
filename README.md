@@ -32,7 +32,8 @@ protocol.
 <p align="center">
   <img src="docs/img/cluster-media.jpg" alt="Android Auto now-playing track with an ASCII progress bar (media mode) on a MIB2 STD2 instrument cluster" width="640">
   <br>
-  <em><strong>Media mode:</strong> the real now-playing track (artist / album / title) with an ASCII progress bar, shown when no route guidance is active.</em>
+  <em><strong>Media mode:</strong> the real now-playing track (artist / album / title) with an ASCII progress
+  bar (<code>SHOW_MEDIA_PROGRESS</code>, off by default), shown when no route guidance is active.</em>
 </p>
 
 ### SEAT Virtual Cluster (Digital Cockpit)
@@ -50,7 +51,8 @@ protocol.
   <img src="docs/img/cluster-cover-seat.jpg" alt="Android Auto album cover art on a SEAT Digital Cockpit / colour Virtual Cluster, with the now-playing track and ASCII progress bar" width="640">
   <br>
   <em><strong>Cover art</strong> (<code>SHOW_COVER_ART</code>, AID / colour Virtual Cockpit only): the Android Auto
-  album cover pushed to the cluster alongside the now-playing track and progress bar.</em>
+  album cover pushed to the cluster alongside the now-playing track and the
+  <code>SHOW_MEDIA_PROGRESS</code> bar. Both switches are off by default.</em>
 </p>
 
 ### Older PQ cluster (mono centre display)
@@ -74,17 +76,20 @@ protocol.
       │  turn-by-turn + now-playing live inside Google's libext.google.gal.receiver.so,
       │  but the stock SAL never registers those endpoints
       ▼
- ┌─ shim/ ── patched libgal ───────────────────────────────┐
+ ┌─ shim/ ── patched libgal ────────────────────────────────┐
  │ registers Google's Navigation + MediaPlaybackStatus      │
- │ endpoints itself; writes maneuver/road/distance +        │
- │ track Title/Artist/Album to /dev/shmem/aa_nav + aa_media  │
+ │ endpoints itself and asks the phone for AA protocol 1.7; │
+ │ writes the maneuver, road, distance, lane guidance and   │
+ │ destination distance + ETA to /dev/shmem/aa_nav, and the │
+ │ now-playing track to /dev/shmem/aa_media                 │
  └──────────────────────────────────────────────────────────┘
       ▼
  ┌─ jar/ ── HMI Java mod (-Xbootclasspath/p) ───────────────┐
- │ reads the shmem files and renders them: on a non-nav      │
- │ cluster into the media now-playing widget, on a           │
- │ nav-capable one into the real navsd Navigation menu       │
- │ (picked at runtime by ClusterCaps.isNavCapable())         │
+ │ reads the shmem files and renders them: on a non-nav     │
+ │ cluster into the media now-playing widget, on a          │
+ │ nav-capable one into the real navsd Navigation menu      │
+ │ (arrow, distance, street, lane row, destination ETA)     │
+ │ — picked at runtime by ClusterCaps.isNavCapable()        │
  └──────────────────────────────────────────────────────────┘
       ▼
  Instrument cluster shows the live maneuver / track
@@ -193,7 +198,6 @@ The defaults just work. All build-time switches live in one file —
   on a monochrome cluster). Requires `SHOW_MEDIA`. Default off.
 - `SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is active"*
   cluster placeholder. Default on.
-- `PROBE_ENABLED` — diagnostic cluster-layout probe; keep off for normal builds.
 - `LOG_LEVEL` — log verbosity (`TRACE` … `SILENT`).
 
 Deeper build notes: [`docs/`](docs/) and [`shim/README.md`](shim/README.md).

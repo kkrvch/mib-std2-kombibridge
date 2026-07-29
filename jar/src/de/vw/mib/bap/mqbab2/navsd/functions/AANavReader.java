@@ -10,6 +10,7 @@ import org.dsi.ifc.androidauto2.Constants;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
+import java.util.StringTokenizer;
 
 /**
  * Single Android-Auto turn-by-turn reader + output router.
@@ -28,10 +29,11 @@ import java.io.FileReader;
  * foreign thread. Started once from AndroidAutoTarget (which exists on every AA-capable unit), so it
  * does not depend on whether the navsd shadows were constructed.
  *
- * IPC line (the shim rewrites the whole line on each event, O_TRUNC):
+ * IPC line 1 (the shim rewrites the whole file on each event, O_TRUNC):
  *   seq status event side angle number dist time unit connected session road
- * status = GAL NavigationStatus (0=UNAVAILABLE, 1=ACTIVE, 2=INACTIVE); event = AA NextTurnEnum;
- * side = AA TurnSide (1=LEFT, 2=RIGHT, 3=UNSPECIFIED). AA proto enums == DSI Constants 1:1.
+ * status = AA NavigationState (0=UNAVAILABLE, 1=ACTIVE, 2=INACTIVE, 3=REROUTING, 1.7 only);
+ * event = AA NextTurnEnum; side = AA TurnSide (1=LEFT, 2=RIGHT, 3=UNSPECIFIED); AA proto enums ==
+ * DSI Constants 1:1. The tagged lines after it: see readLines().
  *
  * Java 1.4 (cf48): no generics, no autoboxing, no enhanced-for. Must never throw into the HMI.
  */
@@ -39,6 +41,10 @@ public final class AANavReader implements Runnable {
 
     private static final String PATH = "/dev/shmem/aa_nav";
     private static final long POLL_MS = 300L;
+    private static final int[] NO_LANES = new int[]{ 0 };
+    // English, like the manoeuvre words on the media path: the firmware's own strings are not
+    // reachable from here, and a mixed-language line would read worse than a consistent one.
+    private static final String REROUTING_TEXT = "Rerouting...";
 
     private static volatile boolean started = false;
     private static AANavReader instance = null;
@@ -114,7 +120,8 @@ public final class AANavReader implements Runnable {
     }
 
     private void processOnce() {
-        String line = readLine();
+        String[] lines = readLines();
+        String line = (lines != null) ? lines[0] : null;
         if (line == null || line.length() == 0) {
             maybeClearStale();
             return;
@@ -183,31 +190,43 @@ public final class AANavReader implements Runnable {
             MIBLogger.getInstance().debug("aa_nav seq=" + seq + " st=" + status + " conn=" + connected
                     + " sess=" + session + " event=" + event + " side=" + side + " angle=" + angle
                     + " number=" + number + " dist=" + dist + " time=" + time + " unit=" + unit
+                    + " dest=" + taggedLine(lines, '4')   // raw line: this runs before it is applied
                     + " q4='" + quaternaryFor(event, number) + "' road=" + road);
         }
 
-        // status != ACTIVE -> guidance stopped (arrived / route paused) though the channel is open.
-        if (status != 1) {
-            if (status != lastStatus && handler != null) {
+        // status: 1 ACTIVE, 3 REROUTING (1.7 only) -> guiding; anything else means guidance stopped
+        // (arrived / route paused) though the channel is open. Rerouting MUST count as guiding: the
+        // phone flips 1<->3 on every recalculation, several times a trip, and treating 3 as "stopped"
+        // would blank the cluster each time.
+        boolean rerouting = (status == 3);
+        boolean guiding = (status == 1) || rerouting;
+        // Track the NORMALISED status, so the 1<->3 flapping is not an edge: on the media path an
+        // edge re-grabs the navigation focus, and doing that mid-recalculation would be gratuitous.
+        int norm = guiding ? 1 : status;
+        if (!guiding) {
+            if (norm != lastStatus && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_NATIVE); } catch (Throwable t) {}
             }
-            lastStatus = status;
+            lastStatus = norm;
             clearActive();
             return;
         }
 
-        boolean statusEdge = (status != lastStatus);
-        lastStatus = status;
+        boolean statusEdge = (norm != lastStatus);
+        lastStatus = norm;
         cleared = false;
+        NavState.lanes = packLanes(taggedLine(lines, '2'));   // only for a frame we are about to publish
+        String distText = taggedLine(lines, '3');  // phone-rendered distance, 1.7 only; null on 1.3
+        applyDestination(taggedLine(lines, '4'));  // distance/time to destination, 1.7 only
 
         // Router: one parse, exactly one output, chosen by the runtime cluster type.
         if (navCapable()) {
-            publishNavsd(event, side, angle, number, road, dist);
+            publishNavsd(event, side, angle, number, streetFor(rerouting, road), dist);
         } else {
             if (statusEdge && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
             }
-            publishMedia(event, side, number, road, dist);
+            publishMedia(event, side, number, streetFor(rerouting, road), dist, distText);
         }
     }
 
@@ -218,6 +237,18 @@ public final class AANavReader implements Runnable {
             return de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.isActive();
         }
         return ClusterCaps.isNavCapable();
+    }
+
+    /**
+     * The street line while the phone recalculates — on both cluster paths, and only that line: the
+     * glyph and the countdown stay the old route's, because a recalculation is over in a second or
+     * two and blanking them would flicker on every one of the several per trip.
+     */
+    static String streetFor(boolean rerouting, String road) {
+        if (rerouting) {
+            return REROUTING_TEXT;
+        }
+        return road;
     }
 
     // ===== nav-capable path: NavState + navsd shadows ==========================================
@@ -236,6 +267,9 @@ public final class AANavReader implements Runnable {
         ManeuverDescriptor.poke();
         DistanceToNextManeuver.poke();
         TurnToInfo.poke();
+        LaneGuidance.poke();                 // fn 24
+        DistanceToDestination.poke();        // fn 21
+        TimeToDestination.poke();            // fn 22
         // PQ navsd shadows (no-op on MQB; PQ has no ActiveRgType/RGStatus):
         de.vw.mib.bap.mqbpq.navsd.functions.RouteGuidanceStatus.poke();
         de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.poke();
@@ -335,13 +369,17 @@ public final class AANavReader implements Runnable {
     }
 
     // ===== non-nav path: media now-playing widget =============================================
-    private void publishMedia(int event, int side, int number, String road, int dist) {
+    private void publishMedia(int event, int side, int number, String road, int dist, String distText) {
         // Cluster layout (top->bottom): secondary, tertiary, PRIMARY(big), quaternary.
         //   PRIMARY = arrow + distance ("> 300 m"); secondary = street; tertiary = maneuver word.
         String arrow = arrowForManeuver(event, side);
         String word = wordFor(event, side);
         String street = (road != null && road.length() > 0) ? road : "";
-        String distStr = formatDistance(dist);
+        // Prefer the phone's own string: it is already rounded the way the driver sees it on the
+        // phone and, unlike ours, follows the phone's units (miles/yards). We only format the raw
+        // metres when 1.3 or a 1.7 frame without the string leaves us nothing else. The nav-capable
+        // path deliberately does NOT do this — there the cluster's own formatter owns the units.
+        String distStr = (distText != null && distText.length() > 0) ? distText : formatDistance(dist);
         CurrentStationInfo.navPrimary = (distStr.length() > 0) ? (arrow + " " + distStr) : arrow;
         CurrentStationInfo.navSecondary = street;
         CurrentStationInfo.navTertiary = word;
@@ -445,6 +483,14 @@ public final class AANavReader implements Runnable {
                 ManeuverDescriptor.poke();
                 DistanceToNextManeuver.poke();
                 TurnToInfo.poke();
+                NavState.lanes = NO_LANES;
+                LaneGuidance.poke();
+                // Zero before poking: a stale destination outliving its route would otherwise be the
+                // one number on the cluster nobody can tell is stale.
+                NavState.destinationMeters = 0;
+                NavState.destinationSeconds = 0;
+                DistanceToDestination.poke();
+                TimeToDestination.poke();
                 de.vw.mib.bap.mqbpq.navsd.functions.RouteGuidanceStatus.poke();
                 de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.poke();
                 de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
@@ -482,17 +528,146 @@ public final class AANavReader implements Runnable {
         return out;
     }
 
-    private String readLine() {
+    /**
+     * Line 1 is the manoeuvre (the shim normalises both protocol generations into it). The lines
+     * after it are 1.7 extras, each tagged with its own marker and written only when it has content,
+     * so they are matched by marker rather than by position: "2 " = lane guidance, "3 " = the phone's
+     * own distance string, "4 " = distance/time to the destination. Any element may be null.
+     */
+    private String[] readLines() {
         BufferedReader br = null;
         try {
             br = new BufferedReader(new FileReader(PATH));
-            return br.readLine();
+            String[] out = new String[4];
+            for (int i = 0; i < out.length; i++) {
+                out[i] = br.readLine();
+            }
+            return out;
         } catch (Exception ex) {
             return null; // file absent yet / transient -> ignore
         } finally {
             if (br != null) {
                 try { br.close(); } catch (Exception ex) {}
             }
+        }
+    }
+
+    /** The extra line tagged with `marker`, without its 2-char prefix, or null if it isn't there. */
+    static String taggedLine(String[] lines, char marker) {
+        for (int i = 1; i < lines.length; i++) {
+            String l = lines[i];
+            if (l != null && l.length() > 2 && l.charAt(0) == marker && l.charAt(1) == ' ') {
+                return l.substring(2);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Line 2 is "2 &lt;count&gt; &lt;lane0&gt; ...", each lane packed by the shim as
+     * shape*2 + isHighlighted. The argument is the PAYLOAD taggedLine() already stripped the "2 "
+     * marker from, i.e. "&lt;count&gt; &lt;lane0&gt; ...". Anything else clears the lanes.
+     *
+     * Angles are NOT clamped: laneDirection is a plain byte with no enumerated value set (unlike
+     * laneType/guidanceInfo), and the stock navigation drives the full arrow family on a colour cluster.
+     */
+    static int[] packLanes(String payload) {
+        int[] packed = null;
+        int n = 0;
+        if (payload != null && payload.length() > 0) {
+            try {
+                StringTokenizer st = new StringTokenizer(payload, " ");
+                int count = Integer.parseInt(st.nextToken());
+                if (count > NavState.MAX_LANES) {
+                    count = NavState.MAX_LANES;                   // shim caps at 8; be defensive
+                }
+                if (count > 0) {
+                    packed = new int[1 + 2 * count];
+                    while (n < count && st.hasMoreTokens()) {
+                        int lane = Integer.parseInt(st.nextToken());
+                        packed[1 + 2 * n] = laneShapeToDirection(lane >> 1);
+                        // AA gives a boolean per lane and several can be set at once, so "the single
+                        // best" is not expressible: every highlighted lane becomes BEST_RECOMMENDATION.
+                        packed[2 + 2 * n] = ((lane & 1) != 0) ? 2 : 0;
+                        n++;
+                    }
+                }
+            } catch (Exception ex) {
+                n = 0;                                            // malformed -> treat as "no lanes"
+            }
+        }
+        if (n == 0) {
+            return NO_LANES;
+        }
+        packed[0] = n;
+        return packed;
+    }
+
+    /**
+     * Line 4, payload "&lt;metres&gt; &lt;seconds&gt;" (the marker is already stripped): distance and
+     * remaining travel time to the destination. Absent on 1.3 and whenever the phone has not said —
+     * then both go to 0 and the two cluster functions report themselves invalid, which is what the
+     * cluster shows when its own navigation has no route either.
+     */
+    static int[] packDestination(String payload) {
+        int meters = 0;
+        int seconds = 0;
+        if (payload != null && payload.length() > 0) {
+            try {
+                StringTokenizer st = new StringTokenizer(payload, " ");
+                meters = Integer.parseInt(st.nextToken());
+                seconds = Integer.parseInt(st.nextToken());
+                if (meters < 0 || seconds < 0) {
+                    meters = 0;
+                    seconds = 0;
+                }
+            } catch (Exception ex) {
+                meters = 0;                                   // malformed -> "not known"
+                seconds = 0;
+            }
+        }
+        return new int[]{ meters, seconds };
+    }
+
+    private void applyDestination(String payload) {
+        int[] d = packDestination(payload);
+        NavState.destinationMeters = d[0];
+        NavState.destinationSeconds = d[1];
+    }
+
+    /**
+     * Remaining travel time in seconds -&gt; the {hour, minute} pair TimeToDestination sends. Rounded
+     * to the nearest minute the way a nav engine counts down, and clamped: TimeInfo.serialize pushes
+     * both as a single byte, and a route long enough to overflow that is not one this line is meant
+     * to show.
+     */
+    static int[] remainingHoursMinutes(int seconds) {
+        if (seconds <= 0) {
+            return new int[]{ 0, 0 };
+        }
+        int minutes = (seconds + 30) / 60;
+        int hours = minutes / 60;
+        minutes = minutes - hours * 60;
+        if (hours > 99) {
+            hours = 99;
+            minutes = 59;
+        }
+        return new int[]{ hours, minutes };
+    }
+
+    /** AA lane shape -&gt; VW laneDirection, the same 0..255 CCW scale the manoeuvre arrow uses. */
+    static int laneShapeToDirection(int shape) {
+        switch (shape) {
+            case 1:  return 0;      // STRAIGHT
+            case 2:  return 32;     // SLIGHT_LEFT
+            case 3:  return 224;    // SLIGHT_RIGHT
+            case 4:  return 64;     // NORMAL_LEFT
+            case 5:  return 192;    // NORMAL_RIGHT
+            case 6:  return 96;     // SHARP_LEFT
+            case 7:  return 160;    // SHARP_RIGHT
+            case 8:  return 114;    // U_TURN_LEFT
+            case 9:  return 146;    // U_TURN_RIGHT
+            default: return 0;      // UNKNOWN
         }
     }
 }

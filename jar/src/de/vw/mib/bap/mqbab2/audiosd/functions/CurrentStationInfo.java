@@ -98,7 +98,7 @@ ExboxServiceListener {
     // the GAL MediaPlaybackStatus (position) / MediaPlaybackMetadata (duration).
     public static volatile int mediaPosSec = 0;
     public static volatile int mediaDurSec = 0;
-    // AAtoKombi feature switches (SHOW_NAV / SHOW_MEDIA / PROBE_ENABLED) live in de.aatokombi.Config.
+    // AAtoKombi feature switches (SHOW_NAV / SHOW_MEDIA / ...) live in de.aatokombi.Config.
     private static CurrentStationInfo INSTANCE = null;
 
     public static void pokeNav() {
@@ -426,22 +426,6 @@ ExboxServiceListener {
                 n = 0;
             }
         }
-        // AAtoKombi DIAGNOSTIC PROBE (Config.PROBE_ENABLED): with AA connected, fill ALL FOUR lines
-        // with distinct markers (types 0) and return early. On the cluster you can then read how many
-        // lines the media widget actually draws, in what top-to-bottom order the slots map, and
-        // whether the *_Type icons render at all.
-        if (Config.PROBE_ENABLED && connType == 3) {
-            currentStationInfo_Status.secondaryInformation.setContent("S2");
-            currentStationInfo_Status.si_Type = 0;
-            currentStationInfo_Status.tertiaryInformation.setContent("T3");
-            currentStationInfo_Status.ti_Type = 0;
-            currentStationInfo_Status.quaternaryInformation.setContent("Q4");
-            currentStationInfo_Status.qi_Type = 0;
-            currentStationInfo_Status.primaryInformation.setContent("P1");
-            currentStationInfo_Status.pi_Type = 0;
-            MIBLogger.getInstance().debug("CurrentStationInfo: LAYOUT PROBE (P1/S2/T3/Q4, types 0)");
-            return;
-        }
         // AAtoKombi: while AA (connType==3) is connected, override the static "Android Auto" label
         // with live nav (route guidance active) or the now-playing track. The whole injection is
         // wrapped: if ANY of our code throws — or a string would overflow the BAPString and break the
@@ -458,9 +442,9 @@ ExboxServiceListener {
                 //   Q4 = exit # or, when there's none, the now-playing title (see below).
                 // (*_Type don't drive font/icons here — positional; the big font is the PRIMARY slot.)
                 string = clampLine(navPrimary);
-                // pi_Type=0 (like the PROBE_ENABLED layout, which DID render all four lines incl. Q4).
-                // pi_Type=72 (the "Android Auto" label type) appears to select a 3-line layout that
-                // drops the quaternary slot, so time/exit in Q4 was never shown.
+                // pi_Type=0 renders all four lines including Q4 (measured on the cluster with a
+                // four-marker layout). pi_Type=72 (the "Android Auto" label type) selects a 3-line
+                // layout that drops the quaternary slot, so time/exit in Q4 was never shown.
                 n = 0;
                 currentStationInfo_Status.secondaryInformation.setContent(clampLine(navSecondary));
                 currentStationInfo_Status.si_Type = 0;

@@ -7,9 +7,11 @@ classes shadow the stock ones with the same fully-qualified names.
 
 Our own code:
 - `de/aatokombi/Config.java` — the single file of compile-time switches (`SHOW_NAV`, `SHOW_MEDIA`,
-  `SHOW_MEDIA_PROGRESS`, `SHOW_COVER_ART`, `SUPPRESS_NAV_ACTIVE_PLACEHOLDER`, `PROBE_ENABLED`,
+  `SHOW_MEDIA_PROGRESS`, `SHOW_COVER_ART`, `SUPPRESS_NAV_ACTIVE_PLACEHOLDER`,
   `AA_STALE_BACKSTOP_MS`, `LOG_LEVEL`). Every gate is a compile-time constant, so a disabled
-  feature is dead-code-eliminated and leaves no bytecode behind.
+  feature is dead-code-eliminated and leaves no bytecode behind. Parts of the turn-by-turn feed that
+  the runtime already gates — the lane row and the destination distance / travel time (nav-capable
+  cluster only), the rerouting notice (protocol 1.7 only) — deliberately have no switch of their own.
 - `de/adi961/miblogger/MIBLogger.java` — logger (also mirrors to `/dev/shmem/aatokombi.log`).
 - `de/vw/mib/bap/mqbab2/navsd/functions/AANavReader.java` — polls `/dev/shmem/aa_nav`
   (written by the shim), maps the maneuver/street/distance, and drives **both** outputs: the
@@ -32,6 +34,11 @@ MQB (`mqbab2`):
 - `…/navsd/functions/{ActiveRgType,RGStatus,ManeuverDescriptor,DistanceToNextManeuver,TurnToInfo}.java`
   — the navsd BAP nav functions that draw the cluster Navigation menu (arrow + distance + street)
   on a nav-capable cluster. See [../docs/NAVIGATION_VIA_NAVSD.md](../docs/NAVIGATION_VIA_NAVSD.md).
+- `…/navsd/functions/{LaneGuidance,DistanceToDestination,TimeToDestination}.java` — the rest of that
+  menu, fed by the protocol-1.7 fields: the lane row (fn 24 — a BAP *Array*, not a Property, so it
+  diffs against the previous list and the cluster pulls with `getArray()`), and the distance (fn 21)
+  and remaining travel time (fn 22) to the destination. Each keeps its stock body for the unit's own
+  navigation and takes the AA branch only while `NavState.ACTIVE`.
 - `…/audiosd/functions/CurrentStationInfo.java` — the audio "now playing" BAP function the
   **cluster reads**. We inject the nav text in place of the "Android Auto" label when AA route
   guidance is active (the fallback output on a non-nav cluster).
