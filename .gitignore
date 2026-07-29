@@ -2,6 +2,7 @@
 **/build/
 *.o
 *.class
+*.dylib
 
 # firmware-derived inputs
 jar/lib/*.jar
@@ -21,6 +22,9 @@ jar/reference/
 
 # some logs
 *.log
+
+# some misc info
+misc/
 
 # some trash
 **__pycache__

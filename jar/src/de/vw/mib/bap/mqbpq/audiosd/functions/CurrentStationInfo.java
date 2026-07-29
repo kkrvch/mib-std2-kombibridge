@@ -8,7 +8,6 @@
 package de.vw.mib.bap.mqbpq.audiosd.functions;
 
 import de.aatokombi.Config;
-import de.adi961.miblogger.MIBLogger;
 import de.vw.mib.asl.internal.androidauto.target.NavigationHandler;
 import de.vw.mib.asl.api.bap.timer.Timer;
 import de.vw.mib.asl.api.bap.timer.TimerNotifier;
@@ -432,16 +431,6 @@ implements TimerNotifier {
             default: {
                 string = "";
             }
-        }
-        // Diagnostic probe (Config.PROBE_ENABLED): with AA connected, fill the 3 lines with the
-        // markers L1/L2/L3 so the physical top-to-bottom order and relative sizing can be read off
-        // a real PQ cluster (the head unit fixes only the wire order infotext_1/2/3; placement is a
-        // cluster-side decision). MUST be off for normal builds.
-        if (Config.PROBE_ENABLED && connType == 3) {
-            currentStationInfo_Status.infotext_1.setContent("L1");
-            currentStationInfo_Status.infotext_2.setContent("L2");
-            currentStationInfo_Status.infotext_3.setContent("L3");
-            return;
         }
         // While AA (connType==3) is connected, show live nav or the now-playing track in the 3
         // lines instead of the "Android Auto" label. Everything routes through the media widget,

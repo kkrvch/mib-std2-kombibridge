@@ -29,6 +29,12 @@ LIBGAL="${1:-${LIBGAL:-lib/libext.google.gal.receiver.so}}"
 CLANG="${CLANG:-clang}"
 LLD="${LLD:-ld.lld}"
 
+# We always advertise AA protocol 1.7 — the phone then sends NavigationState (manoeuvres, lane
+# guidance, destination distance and travel time) and stops sending the legacy turn events, which the
+# shim no longer parses at all. The firmware's original 1.3 is not a build option any more; it is a
+# `git revert` away if it is ever needed again.
+AA_PROTOCOL_MINOR=7
+
 FLAGS="-target armv7-none-eabi -marm -mfloat-abi=soft -ffreestanding -nostdlib \
  -fno-exceptions -fno-rtti -fno-builtin -fno-stack-protector -Os -fPIC \
  -fno-jump-tables -ffunction-sections -fdata-sections"
@@ -48,6 +54,7 @@ echo "[2/3] link     -> build/navshim.so (self-contained ET_DYN, R_ARM_RELATIVE 
 $LLD -shared -Bsymbolic -z max-page-size=0x1000 --gc-sections -o build/navshim.so build/navshim.o
 
 echo "[3/3] inject   into a copy of $(basename "$LIBGAL")"
-python3 inject.py "$LIBGAL" build/navshim.so -o build/libext.google.gal.receiver.so --write
+python3 inject.py "$LIBGAL" build/navshim.so -o build/libext.google.gal.receiver.so --write \
+        --aa-protocol-minor $AA_PROTOCOL_MINOR
 
 echo "OK -> $(cd build && pwd)/libext.google.gal.receiver.so"

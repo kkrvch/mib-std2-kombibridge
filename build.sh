@@ -74,3 +74,24 @@ echo "OK. Two files ready in $OUT :"
 echo "  AAtoKombi.jar                  -> SD custom/java/AAtoKombi.jar"
 echo "  libext.google.gal.receiver.so  -> SD custom/sal/libext.google.gal.receiver.so"
 echo "Then on the unit: Toolbox -> Customisation -> Navi -> Enable AAtoKombi -> reboot."
+
+# --- what this build actually IS -------------------------------------------------------------
+echo
+echo "Build configuration:"
+echo "  AA protocol advertised .......... 1.7 (NavigationState: manoeuvres, lane guidance,"
+echo "                                    destination distance / travel time, rerouting notice)"
+# Every compile-time constant that went into the jar, read back out of the source that produced it.
+# The values are baked in and unreadable afterwards, so printing them here is the only record of what
+# a given pair of artifacts actually does — and the cheapest way to catch a flag left flipped from
+# the previous build. Names are ALL_CAPS by convention; the value is taken verbatim, so a symbolic
+# one (LOG_LEVEL = MIBLogger.INFO) prints as written rather than as a number nobody remembers.
+CONSTANTS="$(sed -n 's/^[[:space:]]*public static final [A-Za-z][A-Za-z0-9_]*[[:space:]]\{1,\}\([A-Z][A-Z0-9_]*\)[[:space:]]*=[[:space:]]*\([^;]*\);.*/\1 \2/p' \
+                 jar/src/de/aatokombi/Config.java 2>/dev/null)"
+if [ -n "$CONSTANTS" ]; then
+  echo "  Config.java:"
+  printf '%s\n' "$CONSTANTS" \
+    | while read -r name value; do printf "    %-32s %s\n" "$name" "$value"; done
+else
+  # Silence here would read as "no switches", which is never true — say it is the reader that broke.
+  echo "  Config.java: could not read the constants (declaration style changed? see build.sh)"
+fi

@@ -101,17 +101,18 @@ static void resolve_libc(){
   }
 }
 
-// ===== IPC: a dumb pipe of raw fields for the HMI jar (ShmemNavReader does the semantics) =====
+// ===== IPC: a dumb pipe of raw fields for the HMI jar (AANavReader does the semantics) =====
 // /dev/shmem is a RAM fs on this QNX (the SAL itself writes iap2_carplay.log there) → no flash.
-// Line format (rewritten with O_TRUNC on every event):
+// The whole file is rewritten with O_TRUNC on every event. Line 1 is always present:
 //   seq status event side angle number dist time unit connected session road
+// The tagged lines that may follow it are described at ipc_flush().
 static const char IPC_PATH[] = "/dev/shmem/aa_nav";
 // Field map (from the device libgal parser):
 //   NextTurnEvent listener args = Road(str), TurnSide, Event, Image(str), TurnAngle, TurnNumber
 //   DistanceEvent              = DistanceMeters, TimeToTurnSeconds, field3, DisplayUnit
 //   Status                     = status
-struct NavState{ u32 seq,status,event,side,dist,time,unit; i32 angle,number; char road[64]; };
-static NavState g_st;
+#define NAVSHIM_TYPES_DEFINED 1
+#include "navproto.h"   // NavState/g_st, lane state, and both wire decoders (host-unit-tested)
 
 // ===== connection state =====================================================================
 // g_session: bumped once per AA session in gal_nav_inject (each GalReceiver::init = new session).
@@ -124,19 +125,25 @@ static u32 g_session   = 0;
 static u32 g_navConn   = 0;
 static u32 g_mediaConn = 0;
 
-// Write a buffer to a file via stdio (mode "w" = create/truncate).
-static void write_file(const char* path, const char* buf, usize len){
+// Write a buffer to a file via stdio. mode "w" = create/truncate (the state files, which are always
+// rewritten whole), "a" = append (the message-id census, which is a timeline and must survive the
+// session teardown it is meant to explain).
+static void write_file_mode(const char* path, const char* buf, usize len, const char* mode){
   if(!p_fopen||!p_fwrite||!p_fclose) return;
-  void* f=p_fopen(path,"w");
+  void* f=p_fopen(path,mode);
   if(f){ (void)p_fwrite(buf,1,len,f); p_fclose(f); }
+}
+static void write_file(const char* path, const char* buf, usize len){
+  write_file_mode(path,buf,len,"w");
 }
 
 static void ipc_flush(){
   if(!p_fopen) return;
   // format: seq status event side angle number dist time unit connected session road
   // connected/session are inserted BEFORE road (road is the space-remainder field, may hold spaces).
-  // Worst case ~123 numeric bytes + road[63] + '\n' -> 256 leaves comfortable headroom.
-  char b[256]; char* o=b;
+  // Worst case ~123 numeric bytes + road[63] + '\n', plus the three tagged lines below (lanes ~40,
+  // distance text ~20, destination ~24) -> 384 leaves comfortable headroom.
+  char b[384]; char* o=b;
   o=u2dec(o,g_st.seq);   *o++=' ';
   o=u2dec(o,g_st.status);*o++=' ';
   o=u2dec(o,g_st.event); *o++=' ';
@@ -150,6 +157,30 @@ static void ipc_flush(){
   o=u2dec(o,g_session);  *o++=' ';   // session epoch
   { usize n=my_strlen(g_st.road); for(usize i=0;i<n;i++) *o++=g_st.road[i]; }
   *o++='\n';
+  // Lines 2+ (1.7 only), each tagged with its own leading marker and omitted when it has nothing to
+  // say — the jar dispatches on the marker, so absence of one never shifts the other.
+  //   "2 <n> <lane0> ..."  lanes; absent = no lanes, clear the row
+  //   "3 <text>"           the phone's own distance string; absent = format the metres ourselves
+  //   "4 <metres> <secs>"  to the DESTINATION; absent = unknown, the cluster fields stay invalid
+  if(g_nLane){
+    *o++='2'; *o++=' ';
+    o=u2dec(o,g_nLane);
+    for(u32 i=0;i<g_nLane && i<MAX_LANES;i++){ *o++=' '; o=u2dec(o,g_lane[i]); }
+    *o++='\n';
+  }
+  if(g_st.distText[0]){
+    *o++='3'; *o++=' ';
+    { usize n=my_strlen(g_st.distText); for(usize i=0;i<n;i++) *o++=g_st.distText[i]; }
+    *o++='\n';
+  }
+  // Absent until the phone has said something: the jar then leaves the two destination functions
+  // reporting themselves invalid, which is what the cluster shows with no route of its own either.
+  if(g_st.destDist||g_st.destTime){
+    *o++='4'; *o++=' ';
+    o=u2dec(o,g_st.destDist); *o++=' ';
+    o=u2dec(o,g_st.destTime);
+    *o++='\n';
+  }
   write_file(IPC_PATH, b, (usize)(o-b));
 }
 
@@ -163,7 +194,13 @@ static void rd_str_to(void* strObj, char* dst, int cap){
 // ===== listener: vtable as libgal expects (+4 dtor, +8 status, +0xc nextturn, +0x10 dist) =====
 // NavigationStatus enum: UNAVAILABLE=0, ACTIVE=1, INACTIVE=2
 static void l_dtor(void*){}
-static void l_status(void*, u32 s){ g_navConn=1; g_st.status=s; g_st.seq++; ipc_flush(); }  // data flowing => channel up
+// The three legacy callbacks below are UNREACHABLE now: they are invoked from inside the stock
+// dispatcher, which we no longer call. They stay because the endpoint still advertises the listener
+// pointer at +0x2c and we have not proved that no other stock path reads it — a valid pointer to
+// these costs nothing, a dangling one would cost the SAL.
+static void l_status(void*, u32 s){
+  g_navConn=1; g_st.status=s; g_st.seq++; ipc_flush();
+}
 // onNextTurn(self, Road*, TurnSide, Event, Image*, TurnAngle, TurnNumber)
 static void l_nextturn(void*, void* road, u32 turnSide, u32 event, void* /*image*/, i32 angle, i32 number){
   g_navConn=1; g_st.side=turnSide; g_st.event=event; g_st.angle=angle; g_st.number=number;
@@ -272,6 +309,145 @@ static const MediaVT g_mediaVT = { 0, m_dtor, m_status, m_metadata };
 struct MediaListener{ const MediaVT* vt; };
 static MediaListener g_mediaListener = { &g_mediaVT };
 
+// ===== census of the messages we swallow =====================================================
+// Bypassing the stock dispatcher throws away the only record of what else the phone sends here, and
+// that list is what decides which ids deserve a parser of our own. Append-only, reads as a timeline:
+//     sess 5                     <- session started
+//     8003 2 08 01               <- id, length, payload; written on first sighting and on CHANGE
+//     end 5  8003 214            <- totals, written when THAT session is torn down
+// Nothing is written in steady state — per-message file I/O on this thread is the other thing we
+// suspect of stalling the link.
+static const char IDS_PATH[] = "/dev/shmem/aa_msgids";
+enum { MAX_IDS = 16 };
+static u16 g_idSeen[MAX_IDS];
+static u32 g_idCnt[MAX_IDS];
+static u32 g_nIds, g_idOverflow;
+
+static char* u2hex(char* o,u32 v){
+  const char* h="0123456789abcdef";
+  int sh=28; while(sh>0 && !((v>>sh)&0xf)) sh-=4;
+  for(; sh>=0; sh-=4) *o++=h[(v>>sh)&0xf];
+  *o=0; return o;
+}
+
+// Totals for the session that is ending. One write per session, so nothing here runs per message.
+static void ids_close_session(){
+  if(!g_nIds && !g_idOverflow) return;
+  char b[320]; char* o=b;
+  *o++='e'; *o++='n'; *o++='d'; *o++=' '; o=u2dec(o,g_session);
+  for(u32 i=0;i<g_nIds;i++){
+    *o++=' '; *o++=' '; o=u2hex(o,g_idSeen[i]); *o++=' '; o=u2dec(o,g_idCnt[i]);
+  }
+  if(g_idOverflow){ *o++=' '; *o++='+'; o=u2dec(o,g_idOverflow); }   // more distinct ids than the table holds
+  *o++='\n';
+  write_file_mode(IDS_PATH, b, (usize)(o-b), "a");
+}
+
+static void ids_open_session(){
+  char b[32]; char* o=b;
+  *o++='s'; *o++='e'; *o++='s'; *o++='s'; *o++=' '; o=u2dec(o,g_session); *o++='\n';
+  write_file_mode(IDS_PATH, b, (usize)(o-b), "a");
+}
+
+// Dump on a CHANGE of content, not on the first N sightings: a status message repeats itself while
+// nothing happens, so counting sightings would record three copies of "guidance started" and miss
+// the one frame that says it ended. Fingerprint = length + first bytes, which for a message this
+// small is all of it. Bounded per id per session, so this can stay in the shipped build.
+enum { IDS_DUMP_MAX = 8, IDS_DUMP_BYTES = 24, IDS_FP = 8 };
+static u8 g_idFp[MAX_IDS][IDS_FP];
+static u8 g_idDumps[MAX_IDS];
+static void note_swallowed(u32 id,const u8* payload,u32 len){
+  u32 slot = ~0u;
+  for(u32 i=0;i<g_nIds;i++){
+    if(g_idSeen[i]==(u16)id){ g_idCnt[i]++; slot = i; break; }
+  }
+  if(slot==~0u){
+    if(g_nIds>=MAX_IDS){ g_idOverflow++; return; }    // table full: counted, not named
+    slot = g_nIds;
+    g_idSeen[slot]=(u16)id; g_idCnt[slot]=1; g_idDumps[slot]=0;
+    for(u32 k=0;k<IDS_FP;k++) g_idFp[slot][k]=0xff;   // cannot collide with a real fingerprint
+    g_nIds++;
+  }
+  u8 fp[IDS_FP];
+  fp[0] = (u8)(len>255 ? 255 : len);
+  for(u32 k=1;k<IDS_FP;k++) fp[k] = (payload && k-1<len) ? payload[k-1] : 0;
+  int same = 1;
+  for(u32 k=0;k<IDS_FP;k++) if(g_idFp[slot][k]!=fp[k]){ same = 0; break; }
+  if(same) return;                                   // nothing new to say
+  for(u32 k=0;k<IDS_FP;k++) g_idFp[slot][k]=fp[k];
+  if(g_idDumps[slot]>=IDS_DUMP_MAX) return;          // a flapping message must not become a log flood
+  g_idDumps[slot]++;
+  char b[16+3*IDS_DUMP_BYTES]; char* o=b;
+  o=u2hex(o,id); *o++=' '; o=u2dec(o,len);
+  if(payload){
+    u32 n = len<IDS_DUMP_BYTES ? len : IDS_DUMP_BYTES;
+    for(u32 i=0;i<n;i++){
+      const char* h="0123456789abcdef";
+      *o++=' '; *o++=h[payload[i]>>4]; *o++=h[payload[i]&0xf];
+    }
+  }
+  *o++='\n';
+  write_file_mode(IDS_PATH, b, (usize)(o-b), "a");
+}
+
+// ===== protocol 1.7: NavigationState (0x8006) / NavigationCurrentPosition (0x8007) ===========
+// The stock routeMessage knows only 0x8003/0x8004/0x8005 and answers everything else with an
+// "unexpected message" frame. We advertise 1.7, so this parser is the sole source of manoeuvres —
+// the legacy generation is not merely unused, the phone stops sending it.
+// Payload extraction mirrors the stock prologue:
+// IoBuffer* = *(bufref+4); data = buf[0]+buf[2]+2, len = buf[3]-buf[2]-2 (2 bytes = the message id).
+// We speak AA 1.7 and own this endpoint completely: the stock dispatcher is never called, not even
+// for the ids we do not use. It is a 1.3-era parser, and handed a 1.7 payload under an id it thinks
+// it knows it eventually fails and answers the phone "unexpected message" — which the phone answers
+// by tearing the session down, once per route recalculation. Observed on the car; silence the phone
+// tolerates, an error frame it does not.
+extern "C" __attribute__((used))
+// self/channel stay in the signature: this is a vtable slot, its shape is fixed by libgal.
+int nav_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
+  u32 id = msgId & 0xffff;
+  // Payload extraction, once, for both branches — the census needs the bytes too. Mirrors the stock
+  // prologue: IoBuffer* = *(bufref+4); data = buf[0]+buf[2]+2, len = buf[3]-buf[2]-2 (2 = the id).
+  const u8* payload = 0; u32 plen = 0;
+  {
+    const u32* io = bufref ? *(const u32* const*)((const u8*)bufref+4) : 0;
+    if(io){
+      const u8* base=(const u8*)io[0]; u32 off=io[2], size=io[3];
+      if(base && size>off+2 && (size-off-2)<0x40000){ payload = base+off+2; plen = size-off-2; }
+    }
+  }
+  if(id==0x8006 || id==0x8007){
+    if(payload){
+      if(id==0x8006){
+        // A parsed step doubles as "a route is running": the stock status callback is gone with the
+        // stock dispatcher. 1 = ACTIVE, the same value that callback used to set.
+        if(parse_navstate(payload,plen)) g_st.status=1;
+      } else {
+        parse_curpos(payload,plen);
+      }
+      g_navConn=1; g_st.seq++; ipc_flush();
+    }
+    return 0;                                    // handled (0 = ok, as the stock handlers return)
+  }
+  // 0x8003 is the guidance lifecycle, once the stock handler behind the status callback. We read it
+  // ourselves — that is what makes "guidance ended" an event again instead of a timeout. It stays in
+  // the census too: one line per state CHANGE is exactly the transition worth seeing.
+  if(id==0x8003 && payload){
+    int st = parse_navstatus(payload,plen);
+    if(st>=0){
+      // Guidance really stopped (0 UNAVAILABLE / 2 INACTIVE; 3 REROUTING is still guiding) -> drop
+      // the destination. Unlike the manoeuvre it is not restated on every frame, so otherwise the
+      // finished trip's distance and travel time would still be in the file when the NEXT route
+      // starts, and the jar would publish them until that route's first 0x8007 lands. This used to
+      // live in the legacy status callback, which nothing reaches any more.
+      if(st!=1 && st!=3){ g_st.destDist=0; g_st.destTime=0; }
+      g_navConn=1; g_st.status=(u32)st; g_st.seq++; ipc_flush();
+    }
+  }
+  note_swallowed(id,payload,plen);               // the census is the only record left of these
+  return 0;
+}
+static u32 g_navVT[10] __attribute__((aligned(8)));   // private copy of the 40-byte stock vtable
+
 // ===== endpoint objects (layout from RE, sizeof ~0x30 → reserve 0x40) =====
 static u8 g_navEp[0x40]   __attribute__((aligned(8)));
 static u8 g_mediaEp[0x40] __attribute__((aligned(8)));
@@ -306,14 +482,26 @@ extern "C" __attribute__((used)) void gal_nav_inject(void* receiver){
   // Flush the reset (connected=0 + empty content + new epoch) NOW, before registration, so a stale
   // nav/track from the previous session clears immediately on replug; the data callbacks re-assert
   // connected=1 as soon as the phone starts streaming again.
+  // Close the census of the session that just died BEFORE bumping the epoch, so its totals carry the
+  // number of the session they describe; then start the new one's list.
+  ids_close_session();
   g_session++; g_navConn=0; g_mediaConn=0;
   ipc_flush();
   media_flush();
+  g_nIds=0; g_idOverflow=0;
+  ids_open_session();
 
   u32 router = (u32)receiver + 4;                 // MessageRouter is embedded at receiver+4
   u8 id = pick_free_id(router);
   if(id==0xff){ return; }
-  *(u32*)(g_navEp+0x00) = ref(R_NAV_VTABLE) + 8;  // vptr = vtable+8
+  // Private copy of the stock 40-byte vtable with slot 7 (vptr+0x14 = routeMessage) swapped for
+  // ours; the stock table is left alone so libgal's own endpoints keep working. Slot offsets come
+  // from its .rel.dyn entries: +0x00/+0x04 dtor, +0x08/+0x0c/+0x10 channel hooks, +0x14 routeMessage,
+  // +0x18 handleRawMessage, +0x1c addDiscoveryInfo.
+  { const u32* svt=(const u32*)ref(R_NAV_VTABLE);
+    for(int i=0;i<10;i++) g_navVT[i]=svt[i];
+    g_navVT[7]=(u32)&nav_route; }
+  *(u32*)(g_navEp+0x00) = (u32)g_navVT + 8;       // vptr = our table + 8
   *(u32*)(g_navEp+0x08) = router;                 // MessageRouter*
   g_navEp[0x0c] = id;                             // service id
   g_navEp[0x05] = id;                             // channel

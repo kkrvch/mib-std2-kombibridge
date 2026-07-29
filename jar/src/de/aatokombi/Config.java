@@ -60,14 +60,6 @@ public final class Config {
     // Both SHOW_NAV and SHOW_MEDIA false -> AAtoKombi feeds nothing to the cluster (stock label,
     // stock navsd).
 
-    // ===== diagnostics =====================================================================
-    /**
-     * DIAGNOSTIC layout probe. When true, the AA media widget is replaced with line markers
-     * P1/S2/T3/Q4 (all four lines, types 0) so the cluster's real line count / order / icon
-     * rendering can be read on the unit. MUST be false for normal builds.
-     */
-    public static final boolean PROBE_ENABLED = false;
-
     // ===== nav-active placeholder ==========================================================
     /**
      * Suppress the stock "Navigation on the mobile device is active" cluster placeholder.
