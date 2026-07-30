@@ -117,19 +117,8 @@ ExboxServiceListener {
         return s.length() > 72 ? s.substring(0, 72) : s;
     }
 
-    // The cluster's Q4 slot shows ~24 chars. Scroll a longer now-playing title as a marquee, advanced
-    // by the nav poll timer (AANavReader) via marqueeTick. Short titles are returned unchanged so there
-    // is no scrolling and no extra BAP traffic for them.
-    public static final int Q4_WIDTH = 24;
-    public static volatile int marqueeTick = 0;
-    private static String marqueeQ4(String s) {
-        if (s == null) return "";
-        if (s.length() <= Q4_WIDTH) return s;
-        String ring = s + "   -   ";              // gap so the wrap point is visible
-        int len = ring.length();
-        int off = ((marqueeTick % len) + len) % len;
-        return (ring + ring).substring(off, off + Q4_WIDTH);
-    }
+    // The cluster's Q4 slot shows ~24 characters — everything we put there has to fit unscrolled.
+    private static final int Q4_WIDTH = 24;
 
     // Scrubber-style progress for the Q4 slot, e.g. "1:23 -----|------ 3:45": a uniform '-' track with
     // a single '|' play-marker at the current position, elapsed/total on the sides. Constant rendered
@@ -438,8 +427,9 @@ ExboxServiceListener {
                     && de.vw.mib.asl.internal.androidauto.target.NavigationHandler.aaRouteGuidanceActive
                     && navPrimary != null && navPrimary.length() > 0) {
                 // Cluster renders top->bottom: secondary(S2), tertiary(T3), PRIMARY(P1,big), quaternary(Q4).
-                //   P1 = arrow + distance ("► 300 m") ; S2 = street ; T3 = maneuver word ;
-                //   Q4 = exit # or, when there's none, the now-playing title (see below).
+                //   S2 = street, or the lane row of the junction ahead while the phone sends one ;
+                //   T3 = maneuver word (+ roundabout exit #) ; P1 = arrow + distance ("► 300 m") ;
+                //   Q4 = distance + time to the destination.  AANavReader.publishMedia composes all four.
                 // (*_Type don't drive font/icons here — positional; the big font is the PRIMARY slot.)
                 string = clampLine(navPrimary);
                 // pi_Type=0 renders all four lines including Q4 (measured on the cluster with a
@@ -450,14 +440,11 @@ ExboxServiceListener {
                 currentStationInfo_Status.si_Type = 0;
                 currentStationInfo_Status.tertiaryInformation.setContent(clampLine(navTertiary));
                 currentStationInfo_Status.ti_Type = 0;
-                // Q4: roundabout exit number (navQuaternary) takes priority; otherwise surface the
-                // now-playing track title so music stays visible during route guidance. The nav layout
-                // is pi_Type=0 (4-line) so Q4 renders, and this is recomputed on every media/nav update
-                // so the title follows song changes. mediaTitle is null when the track feature is off.
-                String navQ4 = (navQuaternary != null && navQuaternary.length() > 0)
-                        ? navQuaternary
-                        : marqueeQ4(mediaTitle);
-                currentStationInfo_Status.quaternaryInformation.setContent(clampLine(navQ4));
+                // Q4 belongs to the route: distance and time to the destination. The now-playing
+                // title used to scroll here as a marquee and no longer does -- the route wants all
+                // four rows, and music is fully visible whenever no route is guiding.
+                String navQ4 = clampLine(navQuaternary);          // null-safe -> ""
+                currentStationInfo_Status.quaternaryInformation.setContent(navQ4);
                 currentStationInfo_Status.qi_Type = 0;
                 if (Config.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "' q4='" + navQ4 + "'");
             }

@@ -70,7 +70,7 @@ functions instead of `CurrentStationInfo` — see [NAVIGATION_VIA_NAVSD.md](NAVI
 
 ## What Android Auto actually projects (and what it does not)
 
-The full nav surface in the GAL receiver:
+The GAL receiver's *legacy* nav surface — everything protocol 1.3 could carry:
 
 ```
 NavigationNextTurnEvent          → Event, TurnSide, TurnAngle, TurnNumber, Road, Image
@@ -78,10 +78,15 @@ NavigationNextTurnDistanceEvent  → DistanceMeters, TimeToTurnSeconds, DisplayD
 NavigationStatus                 → Status
 ```
 
-So we can show: maneuver type, side, road name, distance/time **to the next turn**. There is
-**no ETA-to-destination / distance-to-destination** field anywhere — Android Auto keeps the
-route ETA on the phone/head-unit screen and does not project it to the car. This is a protocol
-limitation, the same on factory units.
+That is maneuver type, side, road name and distance/time **to the next turn**, and nothing else —
+no lanes, no ETA, no distance to the destination.
+
+**This is no longer the whole story.** The shim now advertises protocol **1.7**, where the phone
+sends one `NavigationState` (0x8006) snapshot plus a `NavigationCurrentPosition` (0x8007) instead
+of the legacy events, and that snapshot *does* carry the lanes of the junction ahead and the
+distance/time to the destination. The bump is not additive: at 1.7 the legacy events stop
+entirely, so it is a full migration of the maneuver source. See `misc/LANE_GUIDANCE.md` for the
+wire format and the reverse-engineering behind it.
 
 Note on distance: the device's `handleNavigationDistanceEvent` forwards `DistanceMeters` plus
 `TimeToTurnSeconds` and a display-unit field to the listener. `DistanceMeters` reads 0 while
@@ -89,11 +94,47 @@ stationary but populates while driving (confirmed on a drive log); `TimeToTurnSe
 even on the road. The distance is run through the cluster's own formatter so the value + unit
 match what it expects.
 
+## The media widget's four lines
+The one free-form canvas on a non-nav cluster. The slots do **not** render in declaration order —
+measured on the cluster, top to bottom:
+
+| row | BAP field | route guidance active | Android Auto connected, no route |
+|---|---|---|---|
+| 1 | `secondaryInformation` | street, `Rerouting...`, or the **lane row** while there is one | artist |
+| 2 | `tertiaryInformation` | maneuver word + roundabout exit | album |
+| 3 | `primaryInformation` (**big font**) | arrow glyph + distance to the turn | track title |
+| 4 | `quaternaryInformation` | distance + time to the destination | progress bar (`SHOW_MEDIA_PROGRESS`) |
+
+```
+| x | x | ► |         <- lanes, only in the last few hundred metres
+Turn right
+► 300 m
+36 min / 11 km
+```
+
+`pi_Type` acts as a **layout selector** rather than a content tag here: `0` renders all four rows,
+`72` (the type the stock "Android Auto" label uses) selects a 3-row layout that drops row 4. The
+other `*_Type` fields appear inert in this widget — the big font is the primary slot positionally.
+
+**Why the lane row sits in row 1.** It went in row 4 first and was unreadable on the car: the cells
+have to be padded (`| x | x | ► |`, six lanes = 25 characters) and row 4 measures about 24, in a
+proportional font whose bar glyph is narrow. Row 1 is the widest — long street names live there —
+so that is where it goes. Losing the street name for the last few hundred metres is the deliberate
+trade: at that point the junction is in sight and which lane matters far more than what it is
+called. The rerouting notice still wins the row, since row 1 is the only place that notice appears
+and lanes carried over from a route being recalculated are stale anyway.
+
+The now-playing title used to scroll in row 4 as a marquee and no longer does — the route wants all
+four rows, and music is fully visible whenever no route is guiding.
+
+Glyphs: only `◄ ► ▲ ▼ ○ ★` are known to render in this font. Everything else we emit is plain
+ASCII (`x` for a lane that does not carry the route, `|` cell separators, `/` in the trip row) —
+an unknown character draws as a box.
+
 ## Media now-playing (built)
 The same recipe also registers `MediaPlaybackStatusEndpoint`: the shim writes the real track to
 `/dev/shmem/aa_media` (`seq Song\tArtist\tAlbum`) and the jar shows it in the media widget when no
-route guidance is active. During guidance the maneuver takes precedence, but the track title is
-still surfaced in the widget's fourth line (Q4) as a marquee so music stays visible.
+route guidance is active. During guidance the route owns all four rows.
 
 ## Other endpoints (researched, not built)
 The same library exposes more endpoints the SAL likewise ignores:

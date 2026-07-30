@@ -10,13 +10,16 @@ Our own code:
   `SHOW_MEDIA_PROGRESS`, `SHOW_COVER_ART`, `SUPPRESS_NAV_ACTIVE_PLACEHOLDER`,
   `AA_STALE_BACKSTOP_MS`, `LOG_LEVEL`). Every gate is a compile-time constant, so a disabled
   feature is dead-code-eliminated and leaves no bytecode behind. Parts of the turn-by-turn feed that
-  the runtime already gates — the lane row and the destination distance / travel time (nav-capable
-  cluster only), the rerouting notice (protocol 1.7 only) — deliberately have no switch of their own.
+  the runtime already gates — the lane row and the destination distance / travel time (present only
+  when the phone sends them), the rerouting notice (protocol 1.7 only) — deliberately have no switch
+  of their own.
 - `de/adi961/miblogger/MIBLogger.java` — logger (also mirrors to `/dev/shmem/aatokombi.log`).
 - `de/vw/mib/bap/mqbab2/navsd/functions/AANavReader.java` — polls `/dev/shmem/aa_nav`
-  (written by the shim), maps the maneuver/street/distance, and drives **both** outputs: the
-  navsd cluster Navigation menu on a nav-capable cluster, or the media now-playing widget
-  otherwise. Replaces the two former readers (`ShmemNavReader` / `NavShmemReader`).
+  (written by the shim), maps the maneuver/street/distance/lanes/destination, and drives **both**
+  outputs: the navsd cluster Navigation menu on a nav-capable cluster, or the media now-playing
+  widget otherwise. Also owns the text renderers the media path needs (`laneRow`, `destinationRow`)
+  and `selectLanes`, the six-lane clamp both paths share. Replaces the two former readers
+  (`ShmemNavReader` / `NavShmemReader`).
 - `…/navsd/functions/{NavState,ClusterCaps}.java` — the shared `NavState` carrier and
   `ClusterCaps` (runtime nav-capable detection via `ConfigurationService`).
 - `…/target/ShmemMediaReader.java` — polls `/dev/shmem/aa_media` (written by the shim) and feeds
@@ -41,7 +44,10 @@ MQB (`mqbab2`):
   navigation and takes the AA branch only while `NavState.ACTIVE`.
 - `…/audiosd/functions/CurrentStationInfo.java` — the audio "now playing" BAP function the
   **cluster reads**. We inject the nav text in place of the "Android Auto" label when AA route
-  guidance is active (the fallback output on a non-nav cluster).
+  guidance is active (the fallback output on a non-nav cluster). Four rows: street — replaced by the
+  lane row of the junction ahead while the phone sends one / maneuver word + roundabout exit / arrow
+  + distance (big) / distance + time to the destination. Row layout, the glyph set and why the lanes
+  live in the street row are documented in [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 - `…/audiosd/functions/CurrentStationHandle.java` — synthesises a valid station handle for the AA
   source so the centred cover-art view binds (gated on `SHOW_COVER_ART`; a no-op otherwise).
 - `…/common/api/androidauto/AndroidAutoASLDataAdapter.java` — forces
