@@ -450,7 +450,11 @@ implements TimerNotifier {
                     && connType == 3
                     && NavigationHandler.aaRouteGuidanceActive
                     && navPrimary != null && navPrimary.length() > 0) {
-                // 3 lines: arrow+distance / street / maneuver word (+roundabout exit #).
+                // 3 lines: arrow+distance / street (replaced by the lane row of the junction ahead
+                // while the phone sends one) / maneuver word, already carrying the roundabout exit
+                // number, plus what MQB puts in its fourth slot -- the distance and time to the
+                // destination. PQ has no fourth line, so those two share this one; PQ_LINE_MAX
+                // keeps the result inside the field.
                 String line3 = navTertiary != null ? navTertiary : "";
                 if (navQuaternary != null && navQuaternary.length() > 0) {
                     line3 = (line3.length() > 0) ? (line3 + " " + navQuaternary) : navQuaternary;

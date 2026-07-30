@@ -252,47 +252,38 @@ NavigationServiceListener {
         BAPArrayData bAPArrayData = laneGuidance_ChangedArray.getArrayData();
         int[] lanes = NavState.lanes;                    // one volatile read: count + pairs
         int total = (lanes != null && lanes.length > 0) ? lanes[0] : 0;
-        if (total > (lanes.length - 1) / 2) {
+        if (lanes == null || total > (lanes.length - 1) / 2) {
             total = 0;
         }
-        int drop = Math.max(total - 6, 0);
-        boolean droppedHead = false;
-        boolean droppedTail = false;
-        int placed = 0;
-        int seen = 0;
-        for (int i = 0; i < total; i++) {
+        // Which six of them the driver gets, and in what order — the six-lane clamp and the
+        // drop-NOT_RECOMMENDED-off-the-head rule live in AANavReader because the media widget's
+        // text lane row applies the very same one. Two copies of it would let a single AA frame
+        // render one way here and another way there.
+        int[] keep = AANavReader.selectLanes(lanes);
+        for (int i = 0; i < keep.length; i++) {
             LaneGuidance_LaneGuidance e = new LaneGuidance_LaneGuidance(laneGuidance_ChangedArray.getArrayHeader());
-            e.laneDirection = lanes[1 + 2 * i];
+            e.laneDirection = lanes[1 + 2 * keep[i]];
             e.laneSidestreets.setEmptyString();
             e.laneType = 1;                              // NORMAL_LANE
             e.laneMarking_left = 0;
             e.laneMarking_right = 0;
             e.laneDescription = 0;                       // LANE_AVAILABLE
-            e.guidanceInfo = lanes[2 + 2 * i];
-            if (placed == 0 && drop > 0 && e.guidanceInfo == 0) {
-                droppedHead = true;
-                --drop;
-                continue;
-            }
-            if (seen++ < 6) {
-                e.setPos(placed++);
-                bAPArrayData.add(e);
-                continue;
-            }
-            droppedTail = true;
+            e.guidanceInfo = lanes[2 + 2 * keep[i]];
+            e.setPos(i);
+            bAPArrayData.add(e);
         }
-        if (total > 6) {
-            if (droppedHead) {
+        if (total > 6 && keep.length > 0) {
+            if (keep[0] > 0) {
                 ((LaneGuidance_LaneGuidance)bAPArrayData.getFirst()).laneType = 23;   // more to the left
             }
-            if (droppedTail) {
+            if (keep[keep.length - 1] < total - 1) {
                 ((LaneGuidance_LaneGuidance)bAPArrayData.getLast()).laneType = 24;    // more to the right
             }
         }
         // Stock gates on own guidance running, which it is not while AA drives — so gate on having
         // lanes instead, but keep honouring the driver's setup item (datapool 731).
         int on = 0;
-        if (placed > 0) {
+        if (keep.length > 0) {
             boolean setup = true;
             try { setup = this.getNavigationService().isSetupLaneGuidanceActive(); } catch (Throwable t) {}
             on = setup ? 1 : 0;

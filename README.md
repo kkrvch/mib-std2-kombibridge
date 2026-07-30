@@ -85,11 +85,11 @@ protocol.
  └──────────────────────────────────────────────────────────┘
       ▼
  ┌─ jar/ ── HMI Java mod (-Xbootclasspath/p) ───────────────┐
- │ reads the shmem files and renders them: on a non-nav     │
- │ cluster into the media now-playing widget, on a          │
- │ nav-capable one into the real navsd Navigation menu      │
- │ (arrow, distance, street, lane row, destination ETA)     │
- │ — picked at runtime by ClusterCaps.isNavCapable()        │
+ │ reads the shmem files and renders them: on a nav-capable │
+ │ cluster into the real navsd Navigation menu, on a        │
+ │ non-nav one as text in the media now-playing widget      │
+ │ (arrow, distance, street, lane row, destination ETA —    │
+ │ both ways) — picked at runtime by ClusterCaps            │
  └──────────────────────────────────────────────────────────┘
       ▼
  Instrument cluster shows the live maneuver / track

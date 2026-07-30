@@ -57,7 +57,6 @@ public final class AANavReader implements Runnable {
     private long lastSeqChangeMs = 0L;
     private long lastSession = -1L;   // AA session epoch from the shim; change => phone reconnected
     private boolean cleared = true;
-    private String lastMarqueeTitle = null;   // Q4 now-playing marquee: detect song change -> restart
 
     private AANavReader(NavigationHandler handler) {
         this.handler = handler;
@@ -86,37 +85,9 @@ public final class AANavReader implements Runnable {
     public void run() {
         try {
             processOnce();
-            tickMarquee();
         } catch (Throwable t) {
             // never let the poll disturb the HMI
         }
-    }
-
-    // Drive the Q4 now-playing marquee on the media path: advance the scroll one step per poll and
-    // refresh, but only while guidance is active and a long title actually occupies Q4 (i.e. no
-    // roundabout exit number there). Resets to the start when the song changes. Cheap no-op otherwise,
-    // so short titles cost nothing.
-    private void tickMarquee() {
-        if (cleared || navCapable()) {
-            return;
-        }
-        String q = CurrentStationInfo.navQuaternary;
-        if (q != null && q.length() > 0) {
-            return;                                   // roundabout exit owns Q4 -> no marquee
-        }
-        String t = CurrentStationInfo.mediaTitle;
-        if (t == null || t.length() <= CurrentStationInfo.Q4_WIDTH) {
-            CurrentStationInfo.marqueeTick = 0;
-            lastMarqueeTitle = t;
-            return;                                   // fits in Q4 -> nothing to scroll
-        }
-        if (!t.equals(lastMarqueeTitle)) {
-            lastMarqueeTitle = t;
-            CurrentStationInfo.marqueeTick = 0;       // new song -> start from the beginning
-        } else {
-            CurrentStationInfo.marqueeTick++;
-        }
-        CurrentStationInfo.pokeNav();
     }
 
     private void processOnce() {
@@ -371,7 +342,8 @@ public final class AANavReader implements Runnable {
     // ===== non-nav path: media now-playing widget =============================================
     private void publishMedia(int event, int side, int number, String road, int dist, String distText) {
         // Cluster layout (top->bottom): secondary, tertiary, PRIMARY(big), quaternary.
-        //   PRIMARY = arrow + distance ("> 300 m"); secondary = street; tertiary = maneuver word.
+        //   secondary = street, or the lane row while there is one; tertiary = maneuver word
+        //   (+ roundabout exit); PRIMARY = arrow + distance ("> 300 m"); quaternary = destination.
         String arrow = arrowForManeuver(event, side);
         String word = wordFor(event, side);
         String street = (road != null && road.length() > 0) ? road : "";
@@ -381,9 +353,25 @@ public final class AANavReader implements Runnable {
         // path deliberately does NOT do this — there the cluster's own formatter owns the units.
         String distStr = (distText != null && distText.length() > 0) ? distText : formatDistance(dist);
         CurrentStationInfo.navPrimary = (distStr.length() > 0) ? (arrow + " " + distStr) : arrow;
-        CurrentStationInfo.navSecondary = street;
-        CurrentStationInfo.navTertiary = word;
-        CurrentStationInfo.navQuaternary = quaternaryFor(event, number);  // Q4: roundabout exit #
+        // The lane row takes the STREET line while the phone is sending lanes -- it is the widest
+        // row (long street names live here), and the padded cells do not fit anywhere narrower. The
+        // trade is deliberate: AA only sends lanes in the last few hundred metres, where the driver
+        // can already see the junction and needs to know which lane far more than what it is called.
+        // Exception: the rerouting notice keeps the row, because this is the one line that carries
+        // it, and lanes held over from the route being recalculated are stale anyway.
+        String lanes = laneRow(NavState.lanes);
+        CurrentStationInfo.navSecondary =
+                (lanes.length() > 0 && !REROUTING_TEXT.equals(street)) ? lanes : street;
+        // The roundabout exit number rides with the manoeuvre word: "Roundabout exit 3" reads as one
+        // phrase, and the exit is not worth a line of its own. (The PQ widget has always
+        // concatenated the two into its third line, so this only makes MQB agree with it.)
+        String exit = quaternaryFor(event, number);
+        CurrentStationInfo.navTertiary = (exit.length() == 0) ? word
+                : (word.length() > 0 ? (word + " " + exit) : exit);
+        // How far the whole trip still has to go -- already parsed for this frame (processOnce), on
+        // this path as much as on the nav-capable one; until now nothing read it here.
+        CurrentStationInfo.navQuaternary =
+                destinationRow(NavState.destinationMeters, NavState.destinationSeconds);
         CurrentStationInfo.pokeNav();
     }
 
@@ -439,8 +427,129 @@ public final class AANavReader implements Runnable {
         return "";
     }
 
+    /**
+     * Which lanes of a packed {@link NavState#lanes} array actually reach the driver, as indices
+     * into it. The cluster shows at most six, and the stock navsd list thins an over-long row by
+     * dropping NOT_RECOMMENDED lanes off the head first and the rest off the tail. Shared by both
+     * output paths on purpose: one AA frame must not produce a six-element BAP array and a
+     * differently-clamped text row. Empty when there are no lanes, or when the count disagrees with
+     * the array length (a torn read that never happens, since the array is published whole).
+     */
+    static int[] selectLanes(int[] lanes) {
+        int total = (lanes != null && lanes.length > 0) ? lanes[0] : 0;
+        if (lanes == null || total > (lanes.length - 1) / 2) {
+            total = 0;
+        }
+        int[] keep = new int[total < 6 ? total : 6];
+        int drop = total - 6;
+        int placed = 0;
+        for (int i = 0; i < total; i++) {
+            if (placed == 0 && drop > 0 && lanes[2 + 2 * i] == 0) {
+                --drop;
+                continue;                              // non-recommended lane off the head
+            }
+            if (placed < keep.length) {
+                keep[placed++] = i;
+            }
+        }
+        if (placed == keep.length) {
+            return keep;
+        }
+        int[] out = new int[placed];
+        System.arraycopy(keep, 0, out, 0, placed);
+        return out;
+    }
+
+    /**
+     * The lanes of the junction ahead as one text row: {@code "| x | x | > |"}. A lane that carries
+     * the route shows its direction glyph, one that does not shows an {@code x}, and the bars read
+     * as a cross-section of the road. "" when there are no lanes, so the caller can keep whatever
+     * the row normally holds.
+     *
+     * The cells are padded. Without the spaces the glyphs and bars ran together into an unreadable
+     * smear on the cluster (tried on the car 2026-07-30) — this font is proportional and its bar is
+     * narrow. Six padded lanes come to 25 characters, which is why this goes in the street row
+     * rather than the fourth slot: that one measures about 24.
+     */
+    static String laneRow(int[] lanes) {
+        int[] keep = selectLanes(lanes);
+        if (keep.length == 0) {
+            return "";
+        }
+        StringBuffer b = new StringBuffer(4 * keep.length + 1);
+        b.append('|');
+        for (int i = 0; i < keep.length; i++) {
+            int idx = keep[i];
+            b.append(' ');
+            b.append(lanes[2 + 2 * idx] != 0 ? laneGlyph(lanes[1 + 2 * idx]) : "x");
+            b.append(" |");
+        }
+        return b.toString();
+    }
+
+    // Lane direction angle -> one of the four glyphs this font is known to render; the inverse of
+    // laneShapeToDirection. The three sharpness levels per side collapse, because slight/normal/
+    // sharp are not tellable apart in a one-character cell anyway. UNKNOWN packs to 0 exactly like
+    // STRAIGHT, so it draws as an up triangle: the two are no longer distinguishable once packed,
+    // and widening NavState for that alone would disturb the working navsd path.
+    private static String laneGlyph(int direction) {
+        switch (direction) {
+            case 32: case 64: case 96:    return A_LEFT;
+            case 160: case 192: case 224: return A_RIGHT;
+            case 114: case 146:           return A_DOWN;
+            default:                      return A_UP;     // 0 = STRAIGHT / UNKNOWN
+        }
+    }
+
+    /**
+     * The whole trip rather than the next manoeuvre — "36 min / 32 km" — for the media widget's
+     * fourth slot whenever there are no lanes to put there. Plain ASCII separator on purpose: only
+     * the six glyphs above are known to render in this font, and an unknown character draws as a
+     * box. "" when the phone has said neither (protocol 1.3, or guidance that has just started).
+     *
+     * The distance is metric whatever the phone's units are: this is our own formatter, and the
+     * phone's pre-rendered string (IPC line 3) is the distance to the next TURN, not to the
+     * destination. The nav-capable path avoids the question entirely by handing raw metres to the
+     * cluster's own formatter (see DistanceToDestination).
+     */
+    static String destinationRow(int meters, int seconds) {
+        String time = formatRemaining(seconds);
+        String dist = formatTripDistance(meters);
+        if (time.length() == 0) {
+            return dist;
+        }
+        if (dist.length() == 0) {
+            return time;
+        }
+        return time + " / " + dist;
+    }
+
+    /**
+     * How far the whole trip still has to go: "850 m" / "9,4 km" / "32 km". The tenth of a kilometre
+     * that {@link #formatDistance} keeps is right for a manoeuvre a few hundred metres ahead and
+     * noise on a number this size, so it is dropped past 10 km.
+     */
+    static String formatTripDistance(int meters) {
+        if (meters >= 10000) {
+            return ((meters + 500) / 1000) + " km";
+        }
+        return formatDistance(meters);
+    }
+
+    /** Remaining travel time as "36 min" / "1 h 25 min"; "" when unknown. */
+    static String formatRemaining(int seconds) {
+        if (seconds <= 0) {
+            return "";
+        }
+        int[] hm = remainingHoursMinutes(seconds);
+        if (hm[0] > 0) {
+            return hm[0] + " h " + hm[1] + " min";
+        }
+        return hm[1] + " min";
+    }
+
     /** "300 m" / "1,2 km" / "" when unknown. */
-    private String formatDistance(int dist) {
+    static String formatDistance(int dist) {
         if (dist <= 0) {
             return "";
         }
@@ -504,6 +613,12 @@ public final class AANavReader implements Runnable {
                 CurrentStationInfo.navSecondary = null;
                 CurrentStationInfo.navTertiary = null;
                 CurrentStationInfo.navQuaternary = null;
+                // The fourth slot is fed from NavState now, so clear that too -- for the same
+                // reason the nav-capable branch does: a destination that outlives its route is the
+                // one number on the cluster nobody can tell is stale.
+                NavState.lanes = NO_LANES;
+                NavState.destinationMeters = 0;
+                NavState.destinationSeconds = 0;
                 NavigationHandler.aaRouteGuidanceActive = false;
                 CurrentStationInfo.pokeNav();
             } catch (Throwable t) {

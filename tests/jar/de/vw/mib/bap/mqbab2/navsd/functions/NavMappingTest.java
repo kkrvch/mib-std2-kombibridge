@@ -89,6 +89,87 @@ public final class NavMappingTest {
                         new String[]{ file[0], "3 90 m", null }, '2'))[0], 0);
     }
 
+    // ---- packed lanes -> the media widget's text lane row ---------------------------------------
+    // Built from code points rather than written out, so the expectations cannot turn on how this
+    // file happens to be decoded at compile time. Same four glyphs AANavReader draws.
+    private static final String L = String.valueOf((char) 0x25C4);   // left pointer
+    private static final String R = String.valueOf((char) 0x25BA);   // right pointer
+    private static final String U = String.valueOf((char) 0x25B2);   // up triangle (straight)
+    private static final String D = String.valueOf((char) 0x25BC);   // down triangle (u-turn)
+
+    private static void laneRow() {
+        // packed = { count, dir0, guidance0, dir1, guidance1, ... }
+        eq("exit right out of three",
+                AANavReader.laneRow(new int[]{ 3, 0,0, 0,0, 192,2 }), "| x | x | " + R + " |");
+        eq("two left lanes carry the route",
+                AANavReader.laneRow(new int[]{ 4, 64,2, 64,2, 0,0, 192,0 }), "| " + L + " | " + L + " | x | x |");
+        eq("straight",
+                AANavReader.laneRow(new int[]{ 2, 0,2, 192,0 }), "| " + U + " | x |");
+        eq("u-turn lane",
+                AANavReader.laneRow(new int[]{ 2, 114,2, 0,0 }), "| " + D + " | x |");
+        // Sharpness collapses: slight/normal/sharp left all draw the same cell.
+        eq("sharpness collapses",
+                AANavReader.laneRow(new int[]{ 3, 32,2, 64,2, 96,2 }), "| " + L + " | " + L + " | " + L + " |");
+        eq("nothing recommended",
+                AANavReader.laneRow(new int[]{ 2, 0,0, 192,0 }), "| x | x |");
+
+        // No lanes must be "" and not "||", so the caller can tell "nothing to show" and leave the
+        // street name in the row.
+        eq("no lanes",        AANavReader.laneRow(new int[]{ 0 }), "");
+        eq("null array",      AANavReader.laneRow(null), "");
+        eq("count exceeds the array", AANavReader.laneRow(new int[]{ 5, 0,2 }), "");
+
+        // Over six lanes: NOT_RECOMMENDED ones come off the head first, then the tail is cut. Same
+        // rule the BAP array uses (selectLanes is shared) — six cells either way.
+        String eight = AANavReader.laneRow(new int[]{ 8, 0,0, 0,0, 0,2, 0,2, 192,0, 192,0, 192,0, 192,0 });
+        eq("eight lanes, head dropped", eight,
+                "| " + U + " | " + U + " | x | x | x | x |");
+        // Nothing to drop off the head (lane 0 carries the route), so the two extra go off the tail.
+        String headKept = AANavReader.laneRow(new int[]{ 8, 0,2, 192,0, 192,0, 192,0, 192,0, 192,0, 192,2, 192,2 });
+        eq("eight lanes, head recommended -> tail cut", headKept,
+                "| " + U + " | x | x | x | x | x |");
+        eq("six is the cap", AANavReader.selectLanes(
+                new int[]{ 8, 0,0, 0,0, 0,2, 0,2, 192,0, 192,0, 192,0, 192,0 }).length, 6);
+
+        // Width is the whole reason this row lives in the street line: the unpadded version smeared
+        // on the car, and the padded worst case does not fit the ~24-character fourth slot. If this
+        // ever grows again, it has to be re-measured on the cluster, not assumed.
+        eq("six padded lanes", eight.length(), 25);
+
+        // The join, exactly as processOnce() wires it — the half that broke last time.
+        String[] file = {
+            "89 1 12 2 0 0 92 13 1 1 2 Example Road / Second Ring",
+            "2 3 8 3 3",
+            "3 90 m"
+        };
+        eq("lane row off a whole file",
+                AANavReader.laneRow(AANavReader.packLanes(AANavReader.taggedLine(file, '2'))),
+                "| x | " + U + " | " + U + " |");
+        eq("no lane line -> empty row",
+                AANavReader.laneRow(AANavReader.packLanes(AANavReader.taggedLine(
+                        new String[]{ file[0], "3 90 m", null }, '2'))), "");
+    }
+
+    // ---- destination -> the row that fills the slot when there are no lanes ---------------------
+    private static void destinationRow() {
+        eq("the DHU capture",  AANavReader.destinationRow(11460, 2170), "36 min / 11 km");
+        eq("under 10 km keeps the decimal", AANavReader.destinationRow(9430, 600), "10 min / 9,4 km");
+        eq("nearly there",     AANavReader.destinationRow(850, 90), "2 min / 850 m");
+        eq("over an hour",     AANavReader.destinationRow(32000, 5100), "1 h 25 min / 32 km");
+
+        // Either half may be missing; the row then carries the other one alone rather than a
+        // dangling separator.
+        eq("time only",        AANavReader.destinationRow(0, 2170), "36 min");
+        eq("distance only",    AANavReader.destinationRow(11460, 0), "11 km");
+        eq("phone said neither", AANavReader.destinationRow(0, 0), "");
+        eq("negatives",        AANavReader.destinationRow(-1, -1), "");
+
+        eq("trip distance rounds to whole km", AANavReader.formatTripDistance(32499), "32 km");
+        eq("trip distance rounds up",          AANavReader.formatTripDistance(32500), "33 km");
+        eq("10 km is the switch",              AANavReader.formatTripDistance(10000), "10 km");
+        eq("just under it",                    AANavReader.formatTripDistance(9999), "9,9 km");
+    }
+
     // ---- destination line -> distance / remaining travel time ----------------------------------
     private static void destination() {
         int[] d = AANavReader.packDestination("11460 2170");   // the DHU capture, "11 km / 36 min"
@@ -219,17 +300,20 @@ public final class NavMappingTest {
     }
 
     public static void main(String[] args) {
-        String[] names = { "lane shapes", "lane packing", "destination", "rerouting", "main elements",
+        String[] names = { "lane shapes", "lane packing", "lane row", "destination",
+                           "destination row", "rerouting", "main elements",
                            "directions", "roundabout angles" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
                 case 0: laneShapes(); break;
                 case 1: lanePacking(); break;
-                case 2: destination(); break;
-                case 3: rerouting(); break;
-                case 4: mainElements(); break;
-                case 5: directions(); break;
+                case 2: laneRow(); break;
+                case 3: destination(); break;
+                case 4: destinationRow(); break;
+                case 5: rerouting(); break;
+                case 6: mainElements(); break;
+                case 7: directions(); break;
                 default: angles(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));

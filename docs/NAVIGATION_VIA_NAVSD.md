@@ -66,6 +66,9 @@ regardless, and every stock-service call is wrapped so a non-routing engine can 
 | `ManeuverDescriptor` | 23 | the arrow: `mainElement` + `direction` (+ a roundabout exit spoke in `sidestreets`) | GAL event + side/angle/exit number |
 | `DistanceToNextManeuver` | 18 | distance to the turn + the approach-segment bargraph | GAL dist |
 | `TurnToInfo` | 20 | the "turn into <street>" line | GAL road |
+| `LaneGuidance` | 24 | the lane row of the junction ahead (a BAP **array**, max 6 lanes, not a property) | `NavState.lanes` |
+| `DistanceToDestination` | 21 | distance to the destination | `NavState.destinationMeters` |
+| `TimeToDestination` | 22 | remaining travel time (a duration, **not** an arrival clock) | `NavState.destinationSeconds` |
 
 `ActiveRgType.rgtype = 0` is the real gate (the analogue of the property-732 path on non-nav units,
 but on the correct producer).
@@ -91,8 +94,15 @@ but on the correct producer).
   `TurnToInfo`). It is left empty for ordinary maneuvers. For roundabouts only, `AANavReader`
   synthesizes one EXIT-road spoke at the taken-exit bearing (`buildRingSideStreets`) so the cluster
   draws the correct exit.
-- Distance-to-destination and route ETA are not available — Android Auto does not project them to
-  the car, the same as on a factory unit.
+- Lanes and the destination distance/time arrive only on protocol **1.7** (`NavigationState` /
+  `NavigationCurrentPosition`), which the shim now advertises. The three functions above are gated
+  on `NavState` rather than on `getRouteGuidanceState() == 1`: the unit's own route guidance is not
+  running while AA drives, and trusting it is what kept the lane row empty the first time round.
+- The travel time is the phone's *remaining seconds*, not its pre-rendered ETA string, so no
+  timezone or clock-skew question arises.
+- The six-lane clamp and the drop-NOT_RECOMMENDED-off-the-head rule live in
+  `AANavReader.selectLanes`, shared with the non-nav media widget's text lane row — one AA frame
+  must not render two different rows.
 - `NavState` starts inactive; set `ACTIVE = true` (and e.g. `street`, `mainElement`, `direction`)
   for a static bench plate with no phone connected.
 
