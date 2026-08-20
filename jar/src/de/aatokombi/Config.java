@@ -20,7 +20,24 @@ public final class Config {
      * the cluster (navsd stays stock, the media widget shows only the track / stock label).
      */
     public static final boolean SHOW_NAV = true;
-
+	
+    /**
+     * On a nav-capable cluster (Amundsen/AID), what the CENTRAL cluster screen shows while
+     * Android Auto guides:
+     *   false -> the arrow-based maneuver display this mod builds from BAP (ManeuverDescriptor /
+     *            TurnToInfo / ...), the original AAtoKombi behaviour.
+     *   true  -> the stock map instead (ActiveRgType.rgtype = 3 / MOST_MAP). This is the car's OWN
+     *            navigation map (current position, stock rendering) -- it does NOT draw the AA
+     *            route. So this trades the turn arrows for a plain "where am I" map. It only makes
+	 *            sense on an AID cluster.
+     * Independent of this flag, the stock "Map" button in the HU's Navigation menu (the one that
+	 * switches map output between the HU and the cluster) keeps working exactly as it always does -
+	 * this flag only picks the STARTING state for a given AA guidance session;
+     * the driver can still switch either way afterwards through the normal stock mechanism.	 
+	 * Requires SHOW_NAV.
+     */
+    public static final boolean FORCE_MAP_ON_KOMBI = false;
+	
     /**
      * Show the now-playing track (song / artist / album) in the media widget when no route guidance
      * is active. false -> the cluster keeps the stock "Android Auto" label instead.
@@ -55,7 +72,7 @@ public final class Config {
      *
      * Requires SHOW_MEDIA. Default OFF: experimental, verifiable only on an AID-equipped car.
      */
-    public static final boolean SHOW_COVER_ART = false;
+    public static final boolean SHOW_COVER_ART = true;
 
     // Both SHOW_NAV and SHOW_MEDIA false -> AAtoKombi feeds nothing to the cluster (stock label,
     // stock navsd).

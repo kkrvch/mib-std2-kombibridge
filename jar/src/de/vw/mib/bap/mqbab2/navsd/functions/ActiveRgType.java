@@ -43,6 +43,17 @@ ConfigurationServiceListener {
         if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
     }
 
+	/**
+     * Called once by AANavReader, at the moment AA route guidance STARTS (NavState.ACTIVE
+     * false->true), to pick the starting BAP rgtype for this guidance session: arrows (0) or the
+     * stock map (3, MOST_MAP) per Config.FORCE_MAP_ON_KOMBI.
+     */
+    public static void primeForAAStart(boolean wantMap) {
+        ActiveRgType i = INSTANCE;
+        if (i == null) return;
+        try { i.setCurrentRgType(wantMap ? 3 : 0); } catch (Throwable t) {}
+    }
+
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
         // navsd-shadow delta: detect the cluster at runtime (ClusterCaps) instead of a static
         // per-build NAV_CAPABLE flag. On a nav-capable cluster we register the stock nav/config
@@ -160,14 +171,7 @@ ConfigurationServiceListener {
     }
 
     private void setCurrentRGType(ActiveRgType_Status activeRgType_Status) {
-        // navsd-shadow delta: overlay AA ONLY on a nav-capable cluster. While AA guides there, force
-        // RG_TYPE_RGI_FROM_BAP_FUNCTION_MANEUVER_DESCRIPTOR (0) so the cluster draws OUR
-        // ManeuverDescriptor (3 = MOST_MAP waits for a map video we cannot supply).
-        if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
-            activeRgType_Status.rgtype = 0;
-            return;
-        }
-        // Otherwise behave exactly like stock: AA-inactive on a nav cluster (own nav keeps its gate),
+        // Behave exactly like stock: AA-inactive on a nav cluster (own nav keeps its gate),
         // AND the whole non-nav case -- where the media path owns the output and we must not hijack
         // navsd. Wrapped so a non-routing engine can never crash navsd.
         try {

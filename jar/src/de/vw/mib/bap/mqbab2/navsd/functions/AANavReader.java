@@ -192,6 +192,12 @@ public final class AANavReader implements Runnable {
 
         // Router: one parse, exactly one output, chosen by the runtime cluster type.
         if (navCapable()) {
+            if (statusEdge) {
+                // Must run BEFORE publishNavsd() below, so the very first ActiveRgType.poke() of
+                // this guidance session already reports the right rgtype instead of whatever was
+                // left over from a previous session.
+                ActiveRgType.primeForAAStart(Config.FORCE_MAP_ON_KOMBI);
+            }
             publishNavsd(event, side, angle, number, streetFor(rerouting, road), dist);
         } else {
             if (statusEdge && handler != null) {
