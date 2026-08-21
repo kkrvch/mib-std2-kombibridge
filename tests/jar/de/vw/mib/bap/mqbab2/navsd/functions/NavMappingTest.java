@@ -299,10 +299,37 @@ public final class NavMappingTest {
         }
     }
 
+    // ---- when the manoeuvre replaces "follow the street" ---------------------------------------
+    // 0 means "not said" on both fields; read as "zero away" it would show the manoeuvre all route.
+    private static void imminence() {
+        int m = de.aatokombi.Config.MANEUVER_NEAR_METERS;
+        int s = de.aatokombi.Config.MANEUVER_NEAR_SECONDS;
+
+        yes("at the metre gate",        AANavReader.maneuverImminent(m, 0));
+        yes("inside the metre gate",    AANavReader.maneuverImminent(m - 1, 0));
+        no ("beyond the metre gate",    AANavReader.maneuverImminent(m + 1, 0));
+        yes("at the time gate",         AANavReader.maneuverImminent(50000, s));
+        yes("inside the time gate",     AANavReader.maneuverImminent(50000, s - 1));
+        no ("beyond both gates",        AANavReader.maneuverImminent(5000, 300));
+        yes("time gate saves the exit", AANavReader.maneuverImminent(800, 26));   // 110 km/h
+
+        no ("far, no countdown",        AANavReader.maneuverImminent(5000, 0));
+        yes("nothing known at all",     AANavReader.maneuverImminent(0, 0));
+        yes("negative = not known",     AANavReader.maneuverImminent(-1, -1));
+    }
+
+    private static void yes(String what, boolean got) {
+        if (!got) { failed++; System.out.println("  FAIL " + what + ": expected the manoeuvre"); }
+    }
+
+    private static void no(String what, boolean got) {
+        if (got) { failed++; System.out.println("  FAIL " + what + ": expected follow-street"); }
+    }
+
     public static void main(String[] args) {
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
-                           "directions", "roundabout angles" };
+                           "directions", "roundabout angles", "imminence" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -314,7 +341,8 @@ public final class NavMappingTest {
                 case 5: rerouting(); break;
                 case 6: mainElements(); break;
                 case 7: directions(); break;
-                default: angles(); break;
+                case 8: angles(); break;
+                default: imminence(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));
         }

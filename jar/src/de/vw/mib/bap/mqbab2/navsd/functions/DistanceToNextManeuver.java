@@ -156,7 +156,9 @@ NavigationServiceListener {
                         distanceToNextManeuver_Status.distanceToNextManeuver.distance = NavState.distanceMeters;
                         distanceToNextManeuver_Status.distanceToNextManeuver.unit = 0;
                     }
-                    distanceToNextManeuver_Status.bargraphInfo.bargraphOnOff = 1;
+                    // The bargraph is the approach signal, not a permanent gauge: stock enables it
+                    // for real manoeuvre elements only (verifiedBapBargraphSetting below).
+                    distanceToNextManeuver_Status.bargraphInfo.bargraphOnOff = NavState.approaching ? 1 : 0;
                     distanceToNextManeuver_Status.bargraphInfo.bargraph = Math.min(100, NavState.distanceMeters * 100 / 300);
                     distanceToNextManeuver_Status.validityInformation.distanceToNextManeuverValid = true;
                 } else {

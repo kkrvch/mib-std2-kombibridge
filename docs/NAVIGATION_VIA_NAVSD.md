@@ -87,6 +87,26 @@ but on the correct producer).
   (`getFixFormatter().cnvDistance2KilometersExt`) so the value + unit match what the cluster
   expects; writing raw metres displays roughly 1/10 of the real distance.
 
+## When the maneuver appears (distance gating)
+
+AA names the next maneuver as soon as it is next on the route, so unfiltered the cluster holds a
+right-turn arrow for the five kilometres before the turn (`AANavReader.maneuverImminent`):
+
+| `dist` / `time` to the maneuver | `mainElement` | bargraph |
+|---|---|---|
+| `<= MANEUVER_NEAR_METERS` **or** `<= MANEUVER_NEAR_SECONDS` | the real maneuver | on |
+| further than both | `FOLLOW_STREET`, `direction = 0` | off |
+
+Two gates because 400 m is half a minute in town but twelve seconds on a motorway; the countdown is
+the phone's `time_to_step_seconds` (IPC field 8, protocol 1.7), and `0` on either field means "not
+said". Only the glyph waits — street, countdown and destination keep running.
+
+Stock does the same, which is where the shape comes from: its enum carries `FOLLOW_STREET` (11) and
+`PREPARE_*` (28..31) beside the real maneuvers, and `verifiedBapBargraphSetting` enables the bargraph
+only for the real ones (`{3,4,5,13..27,32..35}`) — the bargraph *is* the approach signal. The stock
+thresholds are in the native nav engine (Java only forwards the DSI array in
+`HsmTargetBap.dsiNavigationUpdateBapManeuverDescriptor`), so the two numbers above are ours.
+
 ## Notes / limits
 
 - `ManeuverDescriptor.maneuver_1.sidestreets` is junction side-road **geometry**, not a label —

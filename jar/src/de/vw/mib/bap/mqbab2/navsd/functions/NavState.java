@@ -16,6 +16,8 @@ public final class NavState {
     public static volatile String  street         = "";     // next-turn road -> TurnToInfo (fid 20)
     public static volatile String  sideStreets    = "";     // roundabout exit-road geometry (SIDE_STREET_* glyph byte) -> ManeuverDescriptor col3; "" for non-roundabouts
     public static volatile int     distanceMeters = 0;
+    // On the approach segment, i.e. the real manoeuvre is drawn, not FOLLOW_STREET -> bargraph on.
+    public static volatile boolean approaching    = false;
 
     // Lane guidance (1.7 only), fn 24. ONE packed array published in a single volatile write, so a
     // reader can never pair a fresh direction with a stale highlight:
