@@ -57,6 +57,7 @@ public final class AANavReader implements Runnable {
     private long lastSeqChangeMs = 0L;
     private long lastSession = -1L;   // AA session epoch from the shim; change => phone reconnected
     private boolean cleared = true;
+    private boolean lastImminent = true;   // log only the edges (see publishNavsd)
 
     private AANavReader(NavigationHandler handler) {
         this.handler = handler;
@@ -198,7 +199,7 @@ public final class AANavReader implements Runnable {
                 // left over from a previous session.
                 ActiveRgType.primeForAAStart(Config.FORCE_MAP_ON_KOMBI);
             }
-            publishNavsd(event, side, angle, number, streetFor(rerouting, road), dist);
+            publishNavsd(event, side, angle, number, streetFor(rerouting, road), dist, time);
         } else {
             if (statusEdge && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
@@ -228,13 +229,41 @@ public final class AANavReader implements Runnable {
         return road;
     }
 
+    static final int MAIN_ELEMENT_FOLLOW_STREET = 11;
+
+    /**
+     * Whether the manoeuvre is close enough to draw; further out the cluster gets FOLLOW_STREET,
+     * because AA names the manoeuvre as soon as it is next on the route — kilometres early.
+     * 0 on either field means "the phone has not said"; neither known -> show it, as before.
+     */
+    static boolean maneuverImminent(int dist, int time) {
+        if (time > 0 && time <= Config.MANEUVER_NEAR_SECONDS) {
+            return true;
+        }
+        if (dist > 0 && dist <= Config.MANEUVER_NEAR_METERS) {
+            return true;
+        }
+        return dist <= 0 && time <= 0;
+    }
+
     // ===== nav-capable path: NavState + navsd shadows ==========================================
-    private void publishNavsd(int event, int side, int angle, int number, String road, int dist) {
+    private void publishNavsd(int event, int side, int angle, int number, String road, int dist, int time) {
+        // Only the glyph waits: street, countdown and destination keep running meanwhile.
+        boolean imminent = maneuverImminent(dist, time);
+        if (imminent != lastImminent) {
+            // Whether the phone sends a countdown at all cannot be read off the cluster.
+            lastImminent = imminent;
+            MIBLogger.getInstance().info("nav maneuver " + (imminent ? "shown" : "deferred (follow street)")
+                    + ": dist=" + dist + "m time=" + time + "s");
+        }
         int effAngle = effectiveAngle(event, angle, number);    // real bearing (Maps) or synth from exit number (Yandex)
-        NavState.mainElement    = mapMainElement(event, side);
-        NavState.direction      = mapDirection(event, side, effAngle);
+        NavState.mainElement    = imminent ? mapMainElement(event, side) : MAIN_ELEMENT_FOLLOW_STREET;
+        NavState.direction      = imminent ? mapDirection(event, side, effAngle) : 0;
         NavState.street         = (road != null) ? road : "";   // next-turn road -> TurnToInfo
-        NavState.sideStreets    = buildRingSideStreets(event, effAngle);  // exit-road spoke on a roundabout, "" otherwise
+        // Exit-road spoke on a roundabout, "" otherwise; also "" while far, or the junction geometry
+        // would draw around a plain follow-street arrow.
+        NavState.sideStreets    = imminent ? buildRingSideStreets(event, effAngle) : "";
+        NavState.approaching    = imminent;
         NavState.distanceMeters = dist;                          // raw metres (stock formatter in the shadow)
         NavState.zLevelGuidance = 0;
         NavState.ACTIVE         = true;
@@ -252,6 +281,7 @@ public final class AANavReader implements Runnable {
         de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.poke();
         de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
         de.vw.mib.bap.mqbpq.navsd.functions.TurnToInfo.poke();
+        de.vw.mib.bap.mqbpq.navsd.functions.DistanceTimeToDestination.poke();   // PQ merges fn 21+22
     }
 
     // GAL (AA) NextTurnEnum + TurnSide -> VW navsd MAIN_ELEMENT (ASLNavSDConstants values). [FW-TUNE]
@@ -593,6 +623,7 @@ public final class AANavReader implements Runnable {
         if (navCapable()) {
             try {
                 NavState.ACTIVE = false;
+                NavState.approaching = false;
                 ActiveRgType.poke();
                 RGStatus.poke();
                 ManeuverDescriptor.poke();
@@ -610,6 +641,7 @@ public final class AANavReader implements Runnable {
                 de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.poke();
                 de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
                 de.vw.mib.bap.mqbpq.navsd.functions.TurnToInfo.poke();
+                de.vw.mib.bap.mqbpq.navsd.functions.DistanceTimeToDestination.poke();
             } catch (Throwable t) {
                 // ignore
             }
@@ -762,7 +794,7 @@ public final class AANavReader implements Runnable {
      * both as a single byte, and a route long enough to overflow that is not one this line is meant
      * to show.
      */
-    static int[] remainingHoursMinutes(int seconds) {
+    public static int[] remainingHoursMinutes(int seconds) {   // public: the PQ shadow lives in another package
         if (seconds <= 0) {
             return new int[]{ 0, 0 };
         }

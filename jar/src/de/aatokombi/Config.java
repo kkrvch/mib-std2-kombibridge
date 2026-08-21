@@ -92,6 +92,15 @@ public final class Config {
      */
     public static final boolean SUPPRESS_NAV_ACTIVE_PLACEHOLDER = true;
 
+    // ===== when the manoeuvre becomes THE manoeuvre =========================================
+    /**
+     * How close the manoeuvre must be before the cluster draws it; further than BOTH gates it draws
+     * FOLLOW_STREET (see AANavReader.maneuverImminent). Two gates because 400 m is half a minute in
+     * town but twelve seconds on a motorway. MAX_VALUE = always show, as before.
+     */
+    public static final int MANEUVER_NEAR_METERS = 400;
+    public static final int MANEUVER_NEAR_SECONDS = 30;
+
     // ===== disconnect handling =============================================================
     /**
      * Backstop timeout (ms) for the ONE disconnect case the GAL library gives no signal for:
