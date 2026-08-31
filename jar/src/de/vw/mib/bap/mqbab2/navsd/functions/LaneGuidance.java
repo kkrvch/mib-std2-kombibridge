@@ -250,7 +250,8 @@ NavigationServiceListener {
     /** The Android Auto source for the list above. */
     private void computeFromAndroidAuto(LaneGuidance_ChangedArray laneGuidance_ChangedArray) {
         BAPArrayData bAPArrayData = laneGuidance_ChangedArray.getArrayData();
-        int[] lanes = NavState.lanes;                    // one volatile read: count + pairs
+        NavState.LaneState laneState = NavState.laneState; // one volatile read: primary + all directions
+        int[] lanes = laneState.lanes;
         int total = (lanes != null && lanes.length > 0) ? lanes[0] : 0;
         if (lanes == null || total > (lanes.length - 1) / 2) {
             total = 0;
@@ -263,7 +264,12 @@ NavigationServiceListener {
         for (int i = 0; i < keep.length; i++) {
             LaneGuidance_LaneGuidance e = new LaneGuidance_LaneGuidance(laneGuidance_ChangedArray.getArrayHeader());
             e.laneDirection = lanes[1 + 2 * keep[i]];
-            e.laneSidestreets.setEmptyString();
+            String alternatives = AANavReader.laneSideStreets(laneState, keep[i]);
+            if (alternatives.length() > 0) {
+                e.laneSidestreets.setContent(alternatives);
+            } else {
+                e.laneSidestreets.setEmptyString();
+            }
             e.laneType = 1;                              // NORMAL_LANE
             e.laneMarking_left = 0;
             e.laneMarking_right = 0;

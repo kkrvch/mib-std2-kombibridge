@@ -38,7 +38,8 @@ static Buf lane(int shape,int hi,int shape2=-1,int hi2=0){
   return ln;
 }
 
-static void reset(){ std::memset(&g_st,0,sizeof g_st); g_nLane=0; std::memset(g_lane,0,sizeof g_lane); }
+static void reset(){ std::memset(&g_st,0,sizeof g_st); g_nLane=0; std::memset(g_lane,0,sizeof g_lane);
+                     std::memset(g_laneDirs,0,sizeof g_laneDirs); std::memset(g_laneDirCount,0,sizeof g_laneDirCount); }
 
 // ---- golden frame 1: "Use the 2nd from the right lane to turn right", 5 lanes ------------------
 static void test_five_lanes(){
@@ -85,7 +86,7 @@ static void test_roundabout(){
   for(int i=0;i<3 && g_nLane==3;i++) CHECK(g_lane[i]==want[i], "lane[%d]=%u want %u", i, g_lane[i], want[i]);
 }
 
-// ---- a lane that allows several directions: the routed one wins --------------------------------
+// ---- a lane that allows several directions: primary is routed, complete list is retained --------
 static void test_multi_direction_lane(){
   reset();
   Buf step; step.m(3,lane(4,0, 1,1));            // NORMAL_LEFT (no) + STRAIGHT (highlighted)
@@ -93,6 +94,9 @@ static void test_multi_direction_lane(){
   parse_navstate(st.b,(u32)st.n);
   CHECK(g_nLane==1, "nLane=%u want 1", g_nLane);
   CHECK(g_lane[0]==((1<<1)|1), "lane[0]=%u want %u (STRAIGHT, highlighted)", g_lane[0], (1<<1)|1);
+  CHECK(g_laneDirCount[0]==2, "lane[0] directions=%u want 2", g_laneDirCount[0]);
+  CHECK(g_laneDirs[0][0]==((4<<1)|0), "lane[0] first=%u want NORMAL_LEFT", g_laneDirs[0][0]);
+  CHECK(g_laneDirs[0][1]==((1<<1)|1), "lane[0] second=%u want STRAIGHT highlighted", g_laneDirs[0][1]);
 }
 
 // ---- lane count is capped, and a lane-less frame CLEARS the previous lanes ---------------------

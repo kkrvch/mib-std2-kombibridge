@@ -26,6 +26,20 @@ public final class NavMappingTest {
         }
     }
 
+    private static void eqNull(String what, Object got) {
+        if (got != null) {
+            failed++;
+            System.out.println("  FAIL " + what + ": got '" + got + "', want null");
+        }
+    }
+
+    private static void notNull(String what, Object got) {
+        if (got == null) {
+            failed++;
+            System.out.println("  FAIL " + what + ": got null, want non-null");
+        }
+    }
+
     // ---- lane shape -> VW arrow angle ---------------------------------------------------------
     private static void laneShapes() {
         eq("shape UNKNOWN",      AANavReader.laneShapeToDirection(0), 0);
@@ -87,6 +101,21 @@ public final class NavMappingTest {
         eq("no lane line -> row cleared",
                 AANavReader.packLanes(AANavReader.taggedLine(
                         new String[]{ file[0], "3 90 m", null }, '2'))[0], 0);
+
+        // Current shim encoding: each physical lane carries every direction the phone supplied.
+        // The primary remains the highlighted one so the established media cell stays one glyph.
+        NavState.LaneState combined = AANavReader.packLaneState("v 2 2 2 9 1 7");
+        eq("v2 lane count", combined.lanes[0], 2);
+        eq("v2 combined primary", combined.lanes[1], 64);       // NORMAL_LEFT, highlighted
+        eq("v2 combined guidance", combined.lanes[2], 2);
+        eq("v2 combined directions", combined.directions[0].length, 2);
+        eq("v2 combined second direction", combined.directions[0][1], 64); // NORMAL_LEFT
+        eq("v2 plain primary", combined.lanes[3], 224);          // SLIGHT_RIGHT
+        eq("v2 primary compatibility", AANavReader.packLanes("v 2 2 2 9 1 7")[0], 2);
+
+        String[] v2file = { file[0], "2v 2 2 2 9 1 7", null };
+        eq("v2 lane payload off a whole file", AANavReader.packLaneState(
+                AANavReader.taggedLine(v2file, '2')).directions[0].length, 2);
     }
 
     // ---- packed lanes -> the media widget's text lane row ---------------------------------------
@@ -316,6 +345,142 @@ public final class NavMappingTest {
         no ("far, no countdown",        AANavReader.maneuverImminent(5000, 0));
         yes("nothing known at all",     AANavReader.maneuverImminent(0, 0));
         yes("negative = not known",     AANavReader.maneuverImminent(-1, -1));
+	}
+	
+    // ---- multi-spoke junction schematic (this class itself has no idea what cluster it runs on --
+    // the NavCapable gate lives entirely in AANavReader.publishNavsd(), which is exactly why these
+    // are plain, host-testable functions of their inputs) ---------------------------------------
+    //
+    // JunctionSchematic.snapToNearest()/circularDistance() now take an explicit table argument (see
+    // Config.JUNCTION_SCHEMATIC_FINE_ANGLES): tested here directly against hand-picked tables, so
+    // these tests don't change meaning depending on which grid the compiled Config picks. buildRoundabout()
+    // and buildOrdinary() are tested against their ACTUAL compiled behaviour (i.e. whatever
+    // Config.JUNCTION_SCHEMATIC_FINE_ANGLES currently says) -- the expected values below match the
+    // coarse (default, false) grid; flipping that constant and re-running this file is the intended
+    // way to sanity-check the fine grid too, since the constant is compiled in, not test-selectable.
+    private static void junctionSchematic() {
+        // -- snapToNearest / circularDistance: the shared angle-quantization primitive ------------
+        int[] a45 = { 0, 32, 64, 96, 160, 192, 224 };
+        int[] a22 = { 0, 16, 32, 48, 64, 80, 96, 112, 144, 160, 176, 192, 208, 224, 240 };
+
+        eq("snap exact 0",   JunctionSchematic.snapToNearest(0, a45), 0);
+        eq("snap exact 64",  JunctionSchematic.snapToNearest(64, a45), 64);
+        eq("snap near 100 -> 96 (not 160)", JunctionSchematic.snapToNearest(100, a45), 96);
+        // A tie between two equidistant table entries must resolve deterministically (lower one),
+        // not flap between builds/JIT states.
+        eq("snap tie 16 -> lower neighbour (0)",  JunctionSchematic.snapToNearest(16, a45), 0);
+        eq("snap 128 on the coarse grid",         JunctionSchematic.snapToNearest(128, a45), 96);
+        eq("snap 128 on the fine grid",           JunctionSchematic.snapToNearest(128, a22), 112);
+        // Wraparound across the 0/256 seam.
+        eq("snap wraparound 250 -> 0",            JunctionSchematic.snapToNearest(250, a45), 0);
+        // The result is always one of the table's own entries -- the primitive must not invent a
+        // value that isn't in the table it was given.
+        for (int v = 0; v < 256; v++) {
+            int s = JunctionSchematic.snapToNearest(v, a45);
+            boolean inTable = false;
+            for (int i = 0; i < a45.length; i++) {
+                if (a45[i] == s) { inTable = true; break; }
+            }
+            if (!inTable) {
+                failed++;
+                System.out.println("  FAIL snapToNearest(" + v + ", a45) = " + s + " is not one of a45's own entries");
+            }
+        }
+        eq("circularDistance same",     JunctionSchematic.circularDistance(0, 0), 0);
+        eq("circularDistance opposite", JunctionSchematic.circularDistance(0, 128), 128);
+        eq("circularDistance wraps",    JunctionSchematic.circularDistance(10, 250), 16);
+
+        // -- buildRoundabout (default grid: coarse, Config.JUNCTION_SCHEMATIC_FINE_ANGLES=false) ---
+        // First exit taken (nothing passed): exactly one spoke, at the taken exit's own bearing.
+        String r1 = JunctionSchematic.buildRoundabout(180, 1);
+        eq("roundabout exit1 spoke count", r1.length(), 1);
+        eq("roundabout exit1 spoke value", (int) r1.charAt(0), 0);
+
+        // Third exit taken: the raw (pre-snap) synthetic spokes land off the coarse grid and two of
+        // the three collapse onto the same nearest slot -- this is exactly the 2026-09 field-test
+        // case (Google Maps roundabout, effAngle=270 exit=3), which on the OLD fine grid sent three
+        // distinct spokes {0x70,0x50,0x40} and rendered no visible extra exit; on the coarse grid it
+        // sends two {0x60,0x40}. The taken exit's own snapped bearing is always last.
+        String r3 = JunctionSchematic.buildRoundabout(270, 3);
+        eq("roundabout exit3 (coarse grid)", r3, charStr(96, 64));
+        eq("roundabout exit3 taken spoke is last", (int) r3.charAt(r3.length() - 1), 64);
+
+        // The OTHER 2026-09 field-test case (Yandex roundabout, effAngle synthesised from exit=2):
+        // both spokes already sit exactly on the coarse grid, so this is byte-for-byte what was
+        // actually logged on the car ({0xc0,0x00}) and reportedly rendered correctly.
+        String r2 = JunctionSchematic.buildRoundabout(180, 2);
+        eq("roundabout exit2 (matches the field log)", r2, charStr(192, 0));
+
+        // No usable bearing at all (angle out of AA's 1..360 range, e.g. AND no exit number to
+        // synthesize one from) -> base-only schematic, i.e. an empty spoke string, never a throw.
+        eq("roundabout no angle (0)",   JunctionSchematic.buildRoundabout(0, 3), "");
+        eq("roundabout no angle (361)", JunctionSchematic.buildRoundabout(361, 3), "");
+
+        // A huge / garbled exit number must still terminate (MAX_PASSED_EXITS clamp) and produce a
+        // string within the BAPString(17) capacity, never an exception or a runaway loop.
+        String huge = JunctionSchematic.buildRoundabout(270, 999);
+        if (huge.length() > 17) {
+            failed++;
+            System.out.println("  FAIL roundabout huge exit number overflowed BAPString(17): len=" + huge.length());
+        }
+        eqNoThrowRoundabout(-5, -3);   // negative inputs must not throw either
+
+        // -- buildOrdinary --------------------------------------------------------------------------
+        // Fewer than two known roads -> not worth a schematic -> null, and mainElement must be left
+        // completely alone by the caller (buildOrdinary never reports one back -- there is nothing
+        // to report; it only ever attaches spokes to the mainElement it was given).
+        eqNull("ordinary: no lanes at all",
+                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, null));
+        eqNull("ordinary: one lane only",
+                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, new int[]{ 1, 64, 2 }));
+        eqNull("ordinary: malformed count",
+                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, new int[]{ 5, 64, 0 }));
+
+        // A mainElement this class does not attach spokes to (e.g. SQUARE_TRS_LEFT, which this mod
+        // does not produce, or an arbitrary other value) -> null regardless of how much lane data
+        // there is. This is the point-2 fix: no mainElement is ever chosen or overridden in here.
+        eqNull("ordinary: unsupported mainElement (23, SQUARE_TRS_RIGHT)",
+                JunctionSchematic.buildOrdinary(23, new int[]{ 2, 64, 0, 192, 2 }));
+        eqNull("ordinary: unsupported mainElement (21, ROUNDABOUT_TRS_RIGHT)",
+                JunctionSchematic.buildOrdinary(21, new int[]{ 2, 64, 0, 192, 2 }));
+
+        // Two lanes so close together they snap onto the SAME spoke collapse to one char, which is
+        // just as "not worth it" as only ever having seen one direction.
+        eqNull("ordinary/TURN: lanes collapse to one spoke",
+                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, new int[]{ 2, 0, 2, 16, 0 }));
+
+        // TURN: two genuinely distinct roads -> a 2-spoke schematic, mainElement untouched (there is
+        // no output parameter to touch any more).
+        String turn2 = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, new int[]{ 2, 64, 0, 192, 2 });
+        eq("ordinary/TURN: two distinct lanes", turn2, charStr(64, 192));
+
+        // TURN: three distinct roads, including one that continues straight across (0 is a legal
+        // TURN position too).
+        String turn3 = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, new int[]{ 3, 0, 2, 32, 0, 96, 0 });
+        eq("ordinary/TURN: three distinct lanes", turn3, charStr(0, 32, 96));
+
+        // One physical lane may legally carry several directions. The selected/highlighted direction
+        // remains its BAP primary arrow, but the complete list must reach the junction geometry.
+        NavState.LaneState combined = AANavReader.packLaneState("v 1 2 2 9");
+        eq("combined lane primary", combined.lanes[1], 64);
+        eq("combined lane BAP alternative", AANavReader.laneSideStreets(combined, 0), charStr(0));
+        eq("ordinary/TURN: one combined lane supplies two roads",
+                JunctionSchematic.buildOrdinaryFromLaneState(AANavReader.MAIN_ELEMENT_TURN, combined),
+                charStr(0, 64));
+
+        // TURN_ON_MAINROAD shares TURN's exact table.
+        String mainroad = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN_ON_MAINROAD, new int[]{ 2, 64, 0, 192, 2 });
+        eq("ordinary/TURN_ON_MAINROAD: same table as TURN", mainroad, charStr(64, 192));
+
+        // FOLLOW_STREET on the default (coarse) grid only has TWO legal positions (64, 192) -- an
+        // oblique lane at 48 deg (SLIGHT_LEFT) and one at 80 deg (NORMAL_LEFT-ish) both collapse onto
+        // the same 64 slot, so two DIFFERENT raw lane values can still fail the "2 distinct" bar.
+        eqNull("ordinary/FOLLOW: two lanes, same coarse slot",
+                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_FOLLOW_STREET, new int[]{ 2, 48, 0, 64, 2 }));
+        // ...but a lane on each side of the road (48-ish left, 176-ish right) still resolves to two
+        // distinct coarse spokes.
+        String follow2 = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_FOLLOW_STREET, new int[]{ 2, 80, 0, 176, 2 });
+        eq("ordinary/FOLLOW: obliques on both sides", follow2, charStr(64, 192));
     }
 
     private static void yes(String what, boolean got) {
@@ -326,10 +491,33 @@ public final class NavMappingTest {
         if (got) { failed++; System.out.println("  FAIL " + what + ": expected follow-street"); }
     }
 
+    // char values as a String, matching what JunctionSchematic itself builds (a plain StringBuffer
+    // of raw char codes -- no printable text, so this beats writing hand-escaped literals at every
+    // call site above).
+    private static String charStr(int a) {
+        return String.valueOf((char) a);
+    }
+    private static String charStr(int a, int b) {
+        return charStr(a) + charStr(b);
+    }
+    private static String charStr(int a, int b, int c) {
+        return charStr(a) + charStr(b) + charStr(c);
+    }
+
+    private static void eqNoThrowRoundabout(int effAngle, int exitNumber) {
+        try {
+            JunctionSchematic.buildRoundabout(effAngle, exitNumber);
+        } catch (Throwable t) {
+            failed++;
+            System.out.println("  FAIL buildRoundabout(" + effAngle + "," + exitNumber + ") threw: " + t);
+        }
+    }
+
     public static void main(String[] args) {
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
-                           "directions", "roundabout angles", "imminence" };
+                           "directions", "roundabout angles", "imminence",
+						   "junction schematic" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -342,7 +530,8 @@ public final class NavMappingTest {
                 case 6: mainElements(); break;
                 case 7: directions(); break;
                 case 8: angles(); break;
-                default: imminence(); break;
+                case 9: imminence(); break;
+                default: junctionSchematic(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));
         }

@@ -34,13 +34,16 @@ struct NavState{ u32 seq,status,event,side,dist,time,unit; i32 angle,number; cha
 static NavState g_st;
 
 // Lane guidance (1.7 only) goes out as IPC line 2, so line 1 stays byte-identical:
-//   "2 <count> <lane0> ..."   lane = shape*2 + isHighlighted
+//   "2v <count> <n0> <lane0> ... <n1> <lane...> ..."
+// Each lane keeps every direction Android Auto supplied; lane = shape*2 + isHighlighted.
 // shape: 0 UNKNOWN, 1 STRAIGHT, 2/3 SLIGHT_L/R, 4/5 NORMAL_L/R, 6/7 SHARP_L/R, 8/9 U_TURN_L/R.
 // The cluster shows at most 6 lanes; we cap at 8 and let the jar clamp.
-enum { MAX_LANES = 8 };
+enum { MAX_LANES = 8, MAX_LANE_DIRECTIONS = 3 };
 // Sanity bounds for the 1.7 distance/time fields — anything else means "the phone doesn't know".
 enum { MAX_DIST_M = 20000000, MAX_TIME_S = 1000000 };
-static u8  g_lane[MAX_LANES];
+static u8  g_lane[MAX_LANES];                                  // primary (highlighted else first)
+static u8  g_laneDirs[MAX_LANES][MAX_LANE_DIRECTIONS];
+static u8  g_laneDirCount[MAX_LANES];
 static u32 g_nLane;
 
 // ===== minimal protobuf reader ===============================================================
@@ -137,11 +140,12 @@ static void parse_maneuver(PB s){
   }
 }
 
-// A BAP lane element carries ONE arrow, but a lane may allow several directions ("left and
-// straight"). Take the highlighted one when there is one, else the first.
+// A lane may allow several directions ("left and straight"). Keep all of them for the IPC;
+// `g_lane` remains the highlighted direction when there is one, else the first, for the BAP
+// laneDirection field that can carry only one primary arrow.
 static void parse_lane(PB s){
   if(g_nLane>=MAX_LANES) return;
-  u32 f,w; int shape=0,hi=0,have=0;
+  u32 f,w; u8 dirs[MAX_LANE_DIRECTIONS]; int n=0,primary=0,hi=0;
   while(pb_tag(&s,&f,&w)){
     if(f==1&&w==2){
       PB d; if(!pb_sub(&s,&d)) break;
@@ -151,10 +155,25 @@ static void parse_lane(PB s){
         else if(df==2&&dw==0) h=pb_var(&d)?1:0;
         else pb_skip(&d,dw);
       }
-      if(!have || (h && !hi)){ shape=sh; hi=h; have=1; }
+      if(sh>=0 && sh<=9){
+        int packed=(sh<<1)|h, exists=-1;
+        for(int i=0;i<n;i++) if((dirs[i]>>1)==sh){ exists=i; break; }
+        if(exists>=0){
+          if(h) dirs[exists]=(u8)packed;            // preserve recommendation on duplicates
+        } else if(n<MAX_LANE_DIRECTIONS) {
+          dirs[n++]=(u8)packed;
+        }
+      }
     } else pb_skip(&s,w);
   }
-  if(have && shape>=0 && shape<=9) g_lane[g_nLane++]=(u8)((shape<<1)|hi);
+  if(n){
+    int selected=0;
+    for(int i=0;i<n;i++) if((dirs[i]&1) && !hi){ selected=i; hi=1; }
+    for(int i=0;i<n;i++) g_laneDirs[g_nLane][i]=dirs[i];
+    g_laneDirCount[g_nLane]=(u8)n;
+    g_lane[g_nLane]=dirs[selected];
+    g_nLane++;
+  }
 }
 
 // A step is a COMPLETE snapshot of the manoeuvre, so everything it owns is cleared before parsing:

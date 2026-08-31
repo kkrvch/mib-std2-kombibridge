@@ -153,6 +153,77 @@ def patch_protocol_version(e,raw,minor):
     if mov is None: sys.exit("ERROR: could not find the `mov r%d,#imm` feeding it"%reg)
     s32(raw,mov,0xE3A00000 | (reg<<12) | minor)
     print("AA protocol: advertise 1.%d instead of 1.%d (mov r%d @file 0x%x)"%(minor,cur,reg,mov))
+    return mov,reg,minor
+
+def bl_target(word,pc):
+    """Resolve an ARM-mode BL instruction at virtual address pc, or return None."""
+    if (word & 0x0f000000) != 0x0b000000 or ((word >> 28) & 0xf) == 0xf:
+        return None
+    imm=word & 0xffffff
+    if imm & 0x800000: imm-=0x1000000
+    return (pc+8+(imm<<2)) & 0xffffffff
+
+def verify_patched_output(path, expected):
+    """Fail closed if the written ELF is not exactly the patch layout we calculated.
+
+    This is deliberately independent of the in-memory bytearray used to create the output: a
+    successful write, an accidental short write, or a future change to placement cannot silently
+    produce an artifact whose branches/relocations point somewhere else.
+    """
+    raw=bytearray(open(path,'rb').read())
+    e=ELFFile(io.BytesIO(raw))
+    if e.elfclass != 32 or e['e_machine'] != 'EM_ARM' or e['e_type'] != 'ET_DYN':
+        raise ValueError("patched output is not an ELF32 ARM shared object")
+    loads=[s for s in e.iter_segments() if s['p_type']=='PT_LOAD']
+    new=[s for s in loads if s['p_vaddr']==expected['new_vaddr'] and s['p_offset']==expected['new_foff']]
+    if len(new)!=1:
+        raise ValueError("patched output has no unique injected PT_LOAD segment")
+    seg=new[0]
+    if (seg['p_filesz'],seg['p_memsz'],seg['p_align']) != (expected['seg_filesz'],expected['seg_memsz'],0x1000):
+        raise ValueError("injected PT_LOAD size/alignment differs from the calculated layout")
+    if (seg['p_flags'] & 7) != 7 or seg['p_offset'] % seg['p_align'] != seg['p_vaddr'] % seg['p_align']:
+        raise ValueError("injected PT_LOAD flags or file/virtual alignment are invalid")
+    for other in loads:
+        if other is seg:
+            continue
+        if not (seg['p_vaddr']+seg['p_memsz'] <= other['p_vaddr']
+                or other['p_vaddr']+other['p_memsz'] <= seg['p_vaddr']):
+            raise ValueError("injected PT_LOAD overlaps an existing load segment")
+        if not (seg['p_offset']+seg['p_filesz'] <= other['p_offset']
+                or other['p_offset']+other['p_filesz'] <= seg['p_offset']):
+            raise ValueError("injected PT_LOAD overlaps an existing segment in the file")
+
+    # Re-read the dynamic tags from the written file. DT_REL contains a virtual address, so use
+    # the ELF's load map rather than relying on the common-but-not-guaranteed VA==file-offset layout.
+    dyn=next(s for s in e.iter_segments() if s['p_type']=='PT_DYNAMIC')
+    tags={tag.entry.d_tag:tag.entry.d_val for tag in dyn.iter_tags()}
+    if tags.get('DT_REL') != expected['rel_vaddr'] or tags.get('DT_RELSZ') != expected['rel_sz'] \
+            or tags.get('DT_RELCOUNT') != expected['relcount']:
+        raise ValueError("DT_REL / DT_RELSZ / DT_RELCOUNT do not describe the injected relocation table")
+    v2f=vaddr_to_foff(e)
+    rel_off=v2f(expected['rel_vaddr'])
+    if rel_off != expected['rel_foff']:
+        raise ValueError("relocation table virtual/file mapping differs from the calculated layout")
+    for i,offset in enumerate(expected['new_reloc_offsets']):
+        roff=rel_off+(expected['old_relcount']+i)*8
+        r_offset,r_info=struct.unpack_from('<II',raw,roff)
+        if r_offset != offset or (r_info & 0xff) != R_RELATIVE or r_info >> 8:
+            raise ValueError("injected relocation %d is not the expected symbol-free R_ARM_RELATIVE"%i)
+
+    for label,foff,pc,target in (
+            ('init',expected['init_foff'],expected['init_pc'],expected['init_tramp']),
+            ('shutdown',expected['shutdown_foff'],expected['shutdown_pc'],expected['shutdown_tramp'])):
+        actual=bl_target(g32(raw,foff),pc)
+        if actual != target:
+            raise ValueError("%s BL resolves to %s, not injected trampoline 0x%x" %
+                             (label, 'non-BL' if actual is None else '0x%x'%actual, target))
+    minor_patch=expected.get('minor_patch')
+    if minor_patch is not None:
+        mov,reg,minor=minor_patch
+        if g32(raw,mov) != (0xE3A00000 | (reg<<12) | minor):
+            raise ValueError("advertised AA protocol minor patch was not written")
+    print("VERIFIED: ELF layout, both trampolines, %d injected relocations%s" %
+          (len(expected['new_reloc_offsets']), ', AA protocol 1.%d'%minor_patch[2] if minor_patch else ''))
 
 
 def blob_image_and_relocs(blob_path):
@@ -191,8 +262,9 @@ def main():
     a=ap.parse_args()
     raw=bytearray(open(a.gal,'rb').read())
     e=ELFFile(io.BytesIO(raw))
+    minor_patch=None
     if a.aa_protocol_minor is not None:
-        patch_protocol_version(e,raw,a.aa_protocol_minor)
+        minor_patch=patch_protocol_version(e,raw,a.aa_protocol_minor)
     # --- ELF header ---
     e_phoff=g32(raw,0x1c); e_phentsize=g16(raw,0x2a); e_phnum=g16(raw,0x2c)
     loads=[s for s in e.iter_segments() if s['p_type']=='PT_LOAD']
@@ -306,5 +378,15 @@ def main():
     out=a.o or (a.gal+'.patched')
     open(out,'wb').write(raw)
     print("WROTE",out,"size=0x%x"%len(raw))
+    verify_patched_output(out, {
+        'new_vaddr':new_vaddr, 'new_foff':new_foff,
+        'seg_filesz':seg_filesz, 'seg_memsz':seg_memsz,
+        'rel_vaddr':rel_vaddr, 'rel_foff':rel_new_foff, 'rel_sz':len(newrel),
+        'relcount':relcount+n_new, 'old_relcount':relcount,
+        'new_reloc_offsets':[new_vaddr+ro for ro in brelocs]+[new_vaddr+ro for ro in galrefs],
+        'init_foff':INIT_FOFF, 'init_pc':init_pc, 'init_tramp':init_tramp,
+        'shutdown_foff':SD_FOFF, 'shutdown_pc':sd_pc, 'shutdown_tramp':sd_tramp,
+        'minor_patch':minor_patch,
+    })
 
 if __name__=='__main__': main()

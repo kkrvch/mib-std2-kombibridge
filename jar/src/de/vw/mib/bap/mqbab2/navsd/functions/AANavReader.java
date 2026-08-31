@@ -35,13 +35,20 @@ import java.util.StringTokenizer;
  * event = AA NextTurnEnum; side = AA TurnSide (1=LEFT, 2=RIGHT, 3=UNSPECIFIED); AA proto enums ==
  * DSI Constants 1:1. The tagged lines after it: see readLines().
  *
+ * On a nav-capable cluster, publishNavsd() additionally builds a multi-spoke junction schematic
+ * (JunctionSchematic.buildRoundabout / buildOrdinary) instead of the single-glyph roundabout spoke
+ * -- see the `schematic` gate at the top of that method: Config.SHOW_JUNCTION_SCHEMATIC &&
+ * ClusterCaps.isNavCapable() (see Config.SHOW_JUNCTION_SCHEMATIC's own doc).
+ * Every time the schematic path actually fires it hex-dumps the resulting mainElement/sidestreets
+ * bytes via logSchematic(), at DEBUG (Config.LOG_LEVEL) -- the fastest way to check what a unit was
+ * actually sent, against what it renders, without a BAP sniffer.
+ *
  * Java 1.4 (cf48): no generics, no autoboxing, no enhanced-for. Must never throw into the HMI.
  */
 public final class AANavReader implements Runnable {
 
     private static final String PATH = "/dev/shmem/aa_nav";
     private static final long POLL_MS = 300L;
-    private static final int[] NO_LANES = new int[]{ 0 };
     // English, like the manoeuvre words on the media path: the firmware's own strings are not
     // reachable from here, and a mixed-language line would read worse than a consistent one.
     private static final String REROUTING_TEXT = "Rerouting...";
@@ -163,6 +170,7 @@ public final class AANavReader implements Runnable {
                     + " sess=" + session + " event=" + event + " side=" + side + " angle=" + angle
                     + " number=" + number + " dist=" + dist + " time=" + time + " unit=" + unit
                     + " dest=" + taggedLine(lines, '4')   // raw line: this runs before it is applied
+                    + " lanes=" + taggedLine(lines, '2')  // raw shim payload: "<count> <lane0> <lane1> ..."
                     + " q4='" + quaternaryFor(event, number) + "' road=" + road);
         }
 
@@ -187,7 +195,7 @@ public final class AANavReader implements Runnable {
         boolean statusEdge = (norm != lastStatus);
         lastStatus = norm;
         cleared = false;
-        NavState.lanes = packLanes(taggedLine(lines, '2'));   // only for a frame we are about to publish
+        NavState.laneState = packLaneState(taggedLine(lines, '2')); // only for a frame we are about to publish
         String distText = taggedLine(lines, '3');  // phone-rendered distance, 1.7 only; null on 1.3
         applyDestination(taggedLine(lines, '4'));  // distance/time to destination, 1.7 only
 
@@ -230,6 +238,8 @@ public final class AANavReader implements Runnable {
     }
 
     static final int MAIN_ELEMENT_FOLLOW_STREET = 11;
+    static final int MAIN_ELEMENT_TURN = 13;
+    static final int MAIN_ELEMENT_TURN_ON_MAINROAD = 14;
 
     /**
      * Whether the manoeuvre is close enough to draw; further out the cluster gets FOLLOW_STREET,
@@ -257,13 +267,47 @@ public final class AANavReader implements Runnable {
             MIBLogger.getInstance().info("nav maneuver " + (imminent ? "shown" : "deferred (follow street)")
                     + ": dist=" + dist + "m time=" + time + "s");
         }
+		
         int effAngle = effectiveAngle(event, angle, number);    // real bearing (Maps) or synth from exit number (Yandex)
-        NavState.mainElement    = imminent ? mapMainElement(event, side) : MAIN_ELEMENT_FOLLOW_STREET;
-        NavState.direction      = imminent ? mapDirection(event, side, effAngle) : 0;
-        NavState.street         = (road != null) ? road : "";   // next-turn road -> TurnToInfo
-        // Exit-road spoke on a roundabout, "" otherwise; also "" while far, or the junction geometry
+        int mainElement = imminent ? mapMainElement(event, side) : MAIN_ELEMENT_FOLLOW_STREET;
+        int direction = imminent ? mapDirection(event, side, effAngle) : 0;
+		// Exit-road spoke on a roundabout, "" otherwise; also "" while far, or the junction geometry
         // would draw around a plain follow-street arrow.
-        NavState.sideStreets    = imminent ? buildRingSideStreets(event, effAngle) : "";
+        String sideStreets = imminent ? buildRingSideStreets(event, effAngle) : "";
+		
+		if (imminent) {
+			// Multi-spoke junction schematic (JunctionSchematic) -- STRICTLY gated on top of the
+			// compile-time switch: only on a cluster that is nav-capable (navsd is actually driving
+			// this cluster at all).
+			boolean schematic = Config.SHOW_JUNCTION_SCHEMATIC
+					&& ClusterCaps.isNavCapable();
+
+			if (schematic && (event == 11 || event == 12 || event == 13)) {
+				// Roundabout: always meaningful here, since AA gives an exit number on every roundabout
+				// maneuver regardless of whether lane data is also available.
+				sideStreets = JunctionSchematic.buildRoundabout(effAngle, number);
+				logSchematic("roundabout", mainElement, direction, sideStreets);
+			} else if (schematic && (mainElement == MAIN_ELEMENT_FOLLOW_STREET
+					|| mainElement == MAIN_ELEMENT_TURN || mainElement == MAIN_ELEMENT_TURN_ON_MAINROAD)) {
+				// Ordinary follow/turn: attach side streets to the SAME mainElement mapMainElement()
+				// already picked -- deliberately NOT SQUARE_TRS_LEFT/RIGHT (VW's glyph for a large
+				// plaza/square-shaped junction, not an ordinary road crossing; see
+				// JunctionSchematic.buildOrdinary()). Only worth it once there are at least two distinct
+				// lane directions to draw (buildOrdinary returns null otherwise); until the phone starts
+				// sending lanes for this junction this falls through to the plain arrow, exactly as
+				// before -- mainElement itself is never touched either way.
+                String ordinary = JunctionSchematic.buildOrdinaryFromLaneState(mainElement, NavState.laneState);
+				if (ordinary != null) {
+					sideStreets = ordinary;
+					logSchematic("ordinary", mainElement, direction, sideStreets);
+				}
+			}
+		}
+
+        NavState.mainElement    = mainElement;
+        NavState.direction      = direction;
+        NavState.street         = (road != null) ? road : "";   // next-turn road -> TurnToInfo
+        NavState.sideStreets    = sideStreets;
         NavState.approaching    = imminent;
         NavState.distanceMeters = dist;                          // raw metres (stock formatter in the shadow)
         NavState.zLevelGuidance = 0;
@@ -283,6 +327,33 @@ public final class AANavReader implements Runnable {
         de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
         de.vw.mib.bap.mqbpq.navsd.functions.TurnToInfo.poke();
         de.vw.mib.bap.mqbpq.navsd.functions.DistanceTimeToDestination.poke();   // PQ merges fn 21+22
+    }
+
+    // Debug-only: logs the raw bytes that go into ManeuverDescriptor.sidestreets (plus mainElement
+    // and the arrow's own direction, which nothing else currently logs) whenever the schematic path
+    // actually fires (i.e. the `schematic` gate in publishNavsd() was true AND there was enough data
+    // to build one), so a first run on a new/untested unit shows exactly what was sent in
+    // aatokombi.log -- without needing a BAP sniffer -- to check against what actually renders on the
+    // cluster. Gated on Config.LOG_LEVEL like every other debug line in this class: the hex-dump is
+    // not built at all unless it will be printed, so this costs nothing on a normal (INFO) build.
+    private static void logSchematic(String kind, int mainElement, int direction, String sideStreets) {
+        if (Config.LOG_LEVEL > MIBLogger.DEBUG) {
+            return;
+        }
+        StringBuffer hex = new StringBuffer(3 * sideStreets.length());
+        for (int i = 0; i < sideStreets.length(); i++) {
+            if (i > 0) {
+                hex.append(' ');
+            }
+            int v = sideStreets.charAt(i) & 0xFF;
+            if (v < 16) {
+                hex.append('0');
+            }
+            hex.append(Integer.toHexString(v));
+        }
+        MIBLogger.getInstance().debug("junction schematic (" + kind + "): mainElement=" + mainElement
+                + " direction=" + direction
+                + " sidestreets[" + sideStreets.length() + "]={" + hex + "}");
     }
 
     // GAL (AA) NextTurnEnum + TurnSide -> VW navsd MAIN_ELEMENT (ASLNavSDConstants values). [FW-TUNE]
@@ -357,7 +428,10 @@ public final class AANavReader implements Runnable {
         return angle;
     }
 
-    // Roundabout exit-road geometry for the maneuver glyph (col3 sidestreets). One SIDE_STREET_*_EXIT
+    // Roundabout exit-road geometry for the maneuver glyph (col3 sidestreets), used when the
+    // JunctionSchematic path is off (Config.SHOW_JUNCTION_SCHEMATIC=false, or the `schematic` gate
+    // at the top of publishNavsd() is false) -- see JunctionSchematic.buildRoundabout() for the
+    // richer multi-spoke string this class normally builds instead. One SIDE_STREET_*
     // glyph at the taken-exit bearing; the cluster draws the entry leg itself, giving an entry+exit
     // ring. Non-roundabouts -> "" (no junction geometry). Glyph table = GuidanceModel.SIDE_STREET_*
     // exit codes per 22.5-deg compass position (entry at BASE/180): only the 45-deg slots carry an EXIT
@@ -397,7 +471,10 @@ public final class AANavReader implements Runnable {
         // can already see the junction and needs to know which lane far more than what it is called.
         // Exception: the rerouting notice keeps the row, because this is the one line that carries
         // it, and lanes held over from the route being recalculated are stale anyway.
-        String lanes = laneRow(NavState.lanes);
+        // The media widget deliberately stays one glyph per cell. Combined-lane alternatives are
+        // preserved for navsd geometry/BAP, but rendering several glyphs here makes the already
+        // tight six-cell row illegible.
+        String lanes = laneRow(NavState.laneState.lanes);
         CurrentStationInfo.navSecondary =
                 (lanes.length() > 0 && !REROUTING_TEXT.equals(street)) ? lanes : street;
         // The roundabout exit number rides with the manoeuvre word: "Roundabout exit 3" reads as one
@@ -539,6 +616,37 @@ public final class AANavReader implements Runnable {
         }
     }
 
+    /** All raw VW-angle directions for one lane, with a safe primary-only fallback. */
+    static int[] laneDirections(NavState.LaneState state, int laneIndex) {
+        if (state != null && state.directions != null && laneIndex >= 0
+                && laneIndex < state.directions.length && state.directions[laneIndex] != null
+                && state.directions[laneIndex].length > 0) {
+            return state.directions[laneIndex];
+        }
+        if (state != null && state.lanes != null && laneIndex >= 0
+                && 1 + 2 * laneIndex < state.lanes.length) {
+            return new int[]{ state.lanes[1 + 2 * laneIndex] };
+        }
+        return new int[0];
+    }
+
+    /** BAP laneSidestreets encoding for every alternative beyond laneDirection. */
+    static String laneSideStreets(NavState.LaneState state, int laneIndex) {
+        int[] directions = laneDirections(state, laneIndex);
+        if (directions.length < 2) {
+            return "";
+        }
+        int primary = (state != null && state.lanes != null && 1 + 2 * laneIndex < state.lanes.length)
+                ? state.lanes[1 + 2 * laneIndex] : directions[0];
+        StringBuffer out = new StringBuffer(directions.length - 1);
+        for (int i = 0; i < directions.length; i++) {
+            if (directions[i] != primary && out.toString().indexOf((char) directions[i]) < 0) {
+                out.append((char) directions[i]);
+            }
+        }
+        return out.toString();
+    }
+
     /**
      * The whole trip rather than the next manoeuvre — "36 min / 32 km" — for the media widget's
      * fourth slot whenever there are no lanes to put there. Plain ASCII separator on purpose: only
@@ -632,7 +740,7 @@ public final class AANavReader implements Runnable {
                 ManeuverDescriptor.poke();
                 DistanceToNextManeuver.poke();
                 TurnToInfo.poke();
-                NavState.lanes = NO_LANES;
+                NavState.laneState = NavState.NO_LANES;
                 LaneGuidance.poke();
                 // Zero before poking: a stale destination outliving its route would otherwise be the
                 // one number on the cluster nobody can tell is stale.
@@ -657,7 +765,7 @@ public final class AANavReader implements Runnable {
                 // The fourth slot is fed from NavState now, so clear that too -- for the same
                 // reason the nav-capable branch does: a destination that outlives its route is the
                 // one number on the cluster nobody can tell is stale.
-                NavState.lanes = NO_LANES;
+                NavState.laneState = NavState.NO_LANES;
                 NavState.destinationMeters = 0;
                 NavState.destinationSeconds = 0;
                 NavigationHandler.aaRouteGuidanceActive = false;
@@ -688,7 +796,9 @@ public final class AANavReader implements Runnable {
      * Line 1 is the manoeuvre (the shim normalises both protocol generations into it). The lines
      * after it are 1.7 extras, each tagged with its own marker and written only when it has content,
      * so they are matched by marker rather than by position: "2 " = lane guidance, "3 " = the phone's
-     * own distance string, "4 " = distance/time to the destination. Any element may be null.
+     * own distance string, "4 " = distance/time to the destination. Lane line "2v " is the current
+     * variable-direction encoding; "2 " remains accepted for a jar deployed with an older shim.
+     * Any element may be null.
      */
     private String[] readLines() {
         BufferedReader br = null;
@@ -712,39 +822,71 @@ public final class AANavReader implements Runnable {
     static String taggedLine(String[] lines, char marker) {
         for (int i = 1; i < lines.length; i++) {
             String l = lines[i];
-            if (l != null && l.length() > 2 && l.charAt(0) == marker && l.charAt(1) == ' ') {
-                return l.substring(2);
+            if (l != null && l.length() > 2 && l.charAt(0) == marker
+                    && (l.charAt(1) == ' ' || (marker == '2' && l.length() > 3
+                    && l.charAt(1) == 'v' && l.charAt(2) == ' '))) {
+                return (marker == '2' && l.charAt(1) == 'v') ? l.substring(1) : l.substring(2);
             }
         }
         return null;
     }
 
     /**
-     * Line 2 is "2 &lt;count&gt; &lt;lane0&gt; ...", each lane packed by the shim as
-     * shape*2 + isHighlighted. The argument is the PAYLOAD taggedLine() already stripped the "2 "
-     * marker from, i.e. "&lt;count&gt; &lt;lane0&gt; ...". Anything else clears the lanes.
+     * Backward-compatible primary-arrow view of {@link #packLaneState(String)}. Existing unit tests
+     * and callers that only understand one arrow per lane can keep using this helper.
      *
      * Angles are NOT clamped: laneDirection is a plain byte with no enumerated value set (unlike
      * laneType/guidanceInfo), and the stock navigation drives the full arrow family on a colour cluster.
+     *
      */
     static int[] packLanes(String payload) {
+        return packLaneState(payload).lanes;
+    }
+
+    /**
+     * IPC lane decoder. Old "2 count packed..." frames become one direction per lane. New frames
+     * are "2v count dirCount packed... dirCount packed...": `packed = shape*2 + highlighted`.
+     * The primary arrow is the highlighted direction when present, else the first; the complete list
+     * remains available to media, laneSidestreets and JunctionSchematic.
+     */
+    static NavState.LaneState packLaneState(String payload) {
         int[] packed = null;
+        int[][] directions = null;
         int n = 0;
         if (payload != null && payload.length() > 0) {
             try {
                 StringTokenizer st = new StringTokenizer(payload, " ");
-                int count = Integer.parseInt(st.nextToken());
+                String first = st.nextToken();
+                boolean v2 = "v".equals(first);
+                int count = Integer.parseInt(v2 ? st.nextToken() : first);
                 if (count > NavState.MAX_LANES) {
                     count = NavState.MAX_LANES;                   // shim caps at 8; be defensive
                 }
                 if (count > 0) {
                     packed = new int[1 + 2 * count];
+                    directions = new int[count][];
                     while (n < count && st.hasMoreTokens()) {
-                        int lane = Integer.parseInt(st.nextToken());
-                        packed[1 + 2 * n] = laneShapeToDirection(lane >> 1);
-                        // AA gives a boolean per lane and several can be set at once, so "the single
-                        // best" is not expressible: every highlighted lane becomes BEST_RECOMMENDATION.
-                        packed[2 + 2 * n] = ((lane & 1) != 0) ? 2 : 0;
+                        int dirCount = v2 ? Integer.parseInt(st.nextToken()) : 1;
+                        if (dirCount < 1 || dirCount > NavState.MAX_LANE_DIRECTIONS) {
+                            break;
+                        }
+                        int[] dirs = new int[dirCount];
+                        int primary = 0;
+                        boolean highlighted = false;
+                        for (int d = 0; d < dirCount; d++) {
+                            if (!st.hasMoreTokens()) {
+                                throw new NumberFormatException();
+                            }
+                            int lane = Integer.parseInt(st.nextToken());
+                            dirs[d] = laneShapeToDirection(lane >> 1);
+                            if (d == 0 || ((lane & 1) != 0 && !highlighted)) {
+                                primary = dirs[d];
+                                highlighted = (lane & 1) != 0;
+                            }
+                        }
+                        packed[1 + 2 * n] = primary;
+                        packed[2 + 2 * n] = highlighted ? 2 : 0;
+                        directions[n] = dirs;
                         n++;
                     }
                 }
@@ -753,10 +895,15 @@ public final class AANavReader implements Runnable {
             }
         }
         if (n == 0) {
-            return NO_LANES;
+            return NavState.NO_LANES;
         }
         packed[0] = n;
-        return packed;
+        if (n != directions.length) {
+            int[][] trimmed = new int[n][];
+            System.arraycopy(directions, 0, trimmed, 0, n);
+            directions = trimmed;
+        }
+        return new NavState.LaneState(packed, directions);
     }
 
     /**

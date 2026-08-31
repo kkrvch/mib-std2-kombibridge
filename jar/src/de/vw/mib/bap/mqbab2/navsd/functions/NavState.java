@@ -14,17 +14,35 @@ public final class NavState {
     public static volatile int     direction      = 192;    // VW direction angle 0..255 (192 = RIGHT), default
     public static volatile int     zLevelGuidance = 0;
     public static volatile String  street         = "";     // next-turn road -> TurnToInfo (fid 20)
-    public static volatile String  sideStreets    = "";     // roundabout exit-road geometry (SIDE_STREET_* glyph byte) -> ManeuverDescriptor col3; "" for non-roundabouts
+    // Junction-glyph geometry -> ManeuverDescriptor col3 (Maneuver_1.sidestreets, a BAPString(17)).
+    // On a nav-capable cluster this may be a MULTI-character schematic string (see JunctionSchematic)
+	// -- each character is an independent side-street spoke on the same 0..255 CCW scale as `direction`,
+	// decoded by the stock Guidance/GuidanceModel widget. Which form is written for a given frame is
+	// decided entirely by AANavReader.publishNavsd(); this field itself carries either one opaquely.
+    public static volatile String  sideStreets    = "";
     public static volatile int     distanceMeters = 0;
     // On the approach segment, i.e. the real manoeuvre is drawn, not FOLLOW_STREET -> bargraph on.
     public static volatile boolean approaching    = false;
 
-    // Lane guidance (1.7 only), fn 24. ONE packed array published in a single volatile write, so a
-    // reader can never pair a fresh direction with a stale highlight:
-    //   lanes[0] = count, then per lane: direction (0..255 CCW, as `direction`) and guidanceInfo
-    //   (0 NOT_RECOMMENDED, 2 BEST_RECOMMENDATION). count 0 = no lanes -> the cluster row goes off.
-    public static final int        MAX_LANES      = 8;      // shim cap; the cluster shows 6
-    public static volatile int[]   lanes          = new int[]{ 0 };
+    // Lane guidance (1.7 only), fn 24. A lane can carry several directions (for example straight
+    // OR left), so publish the display/BAP primary and the complete direction list as ONE immutable
+    // carrier. A reader can never pair a fresh primary arrow with stale alternatives.
+    //   lanes[0] = count, then per lane: primary direction (0..255 CCW) and guidanceInfo
+    //   directions[i] = every direction the phone supplied for lane i, primary included.
+    // count 0 = no lanes -> the cluster row goes off.
+    public static final int        MAX_LANES            = 8;      // shim cap; the cluster shows 6
+    public static final int        MAX_LANE_DIRECTIONS  = 3;      // bounded IPC / renderer payload
+    public static final class LaneState {
+        public final int[] lanes;
+        public final int[][] directions;
+
+        public LaneState(int[] lanes, int[][] directions) {
+            this.lanes = lanes;
+            this.directions = directions;
+        }
+    }
+    public static final LaneState  NO_LANES = new LaneState(new int[]{ 0 }, new int[0][]);
+    public static volatile LaneState laneState = NO_LANES;
 
     // Destination, i.e. the whole trip rather than the next manoeuvre (1.7 only, 0 = the phone has
     // not said). Two separate fields on purpose: they drive two separate cluster functions

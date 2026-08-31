@@ -30,14 +30,33 @@ public final class Config {
      *            navigation map (current position, stock rendering) -- it does NOT draw the AA
      *            route. So this trades the turn arrows for a plain "where am I" map. It only makes
 	 *            sense on an AID cluster.
+	 *
      * Independent of this flag, the stock "Map" button in the HU's Navigation menu (the one that
 	 * switches map output between the HU and the cluster) keeps working exactly as it always does -
 	 * this flag only picks the STARTING state for a given AA guidance session;
-     * the driver can still switch either way afterwards through the normal stock mechanism.	 
+     * the driver can still switch either way afterwards through the normal stock mechanism.	
+	 *
 	 * Requires SHOW_NAV.
      */
     public static final boolean FORCE_MAP_ON_KOMBI = false;
-	
+	 
+    /**
+     * Draw a multi-spoke junction schematic (several side-street glyphs positioned around the
+     * maneuver arrow, instead of at most one) on the navsd Navigation menu, for roundabouts (from
+     * the AA exit number/bearing) and for ordinary turns where Android Auto has sent lane data (from
+     * the distinct lane directions, attached to whichever of FOLLOW_STREET/TURN/TURN_ON_MAINROAD the
+     * maneuver already uses. Reverse-engineered from the stock Guidance/GuidanceModel widget in
+     * MIBHMI.jar — see JunctionSchematic and docs/NAVIGATION_VIA_NAVSD.md.
+     *
+     * This switch is a secondary, compile-time kill switch only. The REAL gate is at runtime, in
+     * AANavReader.publishNavsd() (`schematic`): ClusterCaps.isNavCapable() — the cluster type
+	 * actually driving navsd on a given build is already known, so a runtime capability
+     * probe on top of it is unneeded ceremony. Every nav-capable cluster gets the schematic.
+     *
+     * Requires SHOW_NAV.
+     */
+    public static final boolean SHOW_JUNCTION_SCHEMATIC = true;
+
     /**
      * Show the now-playing track (song / artist / album) when no route guidance is active,
      * or when music is selected with the wheel. false -> stock "Android Auto" label instead.
@@ -70,7 +89,7 @@ public final class Config {
      * MOST cover-art capability (datapool 1077026816). A monochrome cluster never requests it, so this
      * is inert (and harmless) there. Independent of the now-playing text path (CurrentStationInfo).
      *
-     * Requires SHOW_MEDIA. Default OFF: experimental, verifiable only on an AID-equipped car.
+     * Requires SHOW_MEDIA.
      */
     public static final boolean SHOW_COVER_ART = true;
 
@@ -98,8 +117,8 @@ public final class Config {
      * FOLLOW_STREET (see AANavReader.maneuverImminent). Two gates because 400 m is half a minute in
      * town but twelve seconds on a motorway. MAX_VALUE = always show, as before.
      */
-    public static final int MANEUVER_NEAR_METERS = 400;
-    public static final int MANEUVER_NEAR_SECONDS = 30;
+    public static final int MANEUVER_NEAR_METERS = 500;
+    public static final int MANEUVER_NEAR_SECONDS = 40;
 
     // ===== disconnect handling =============================================================
     /**
@@ -123,5 +142,5 @@ public final class Config {
      * Log verbosity, compiled into the jar: MIBLogger.TRACE | DEBUG | INFO | ERROR | SILENT.
      * This is the sole source of the level (the former /media/mp000/MIBLogger SD override is gone).
      */
-    public static final int LOG_LEVEL = MIBLogger.INFO;
+    public static final int LOG_LEVEL = MIBLogger.DEBUG;
 }

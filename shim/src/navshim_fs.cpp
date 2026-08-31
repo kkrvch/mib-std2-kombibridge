@@ -141,9 +141,9 @@ static void ipc_flush(){
   if(!p_fopen) return;
   // format: seq status event side angle number dist time unit connected session road
   // connected/session are inserted BEFORE road (road is the space-remainder field, may hold spaces).
-  // Worst case ~123 numeric bytes + road[63] + '\n', plus the three tagged lines below (lanes ~40,
-  // distance text ~20, destination ~24) -> 384 leaves comfortable headroom.
-  char b[384]; char* o=b;
+  // Worst case ~123 numeric bytes + road[63] + '\n', plus the three tagged lines below (variable
+  // lane directions ~100, distance text ~20, destination ~24) -> 480 leaves comfortable headroom.
+  char b[480]; char* o=b;
   o=u2dec(o,g_st.seq);   *o++=' ';
   o=u2dec(o,g_st.status);*o++=' ';
   o=u2dec(o,g_st.event); *o++=' ';
@@ -159,13 +159,18 @@ static void ipc_flush(){
   *o++='\n';
   // Lines 2+ (1.7 only), each tagged with its own leading marker and omitted when it has nothing to
   // say — the jar dispatches on the marker, so absence of one never shifts the other.
-  //   "2 <n> <lane0> ..."  lanes; absent = no lanes, clear the row
+  //   "2v <n> <dirCount> <packed> ..."  lanes; every combined-lane direction is preserved
   //   "3 <text>"           the phone's own distance string; absent = format the metres ourselves
   //   "4 <metres> <secs>"  to the DESTINATION; absent = unknown, the cluster fields stay invalid
   if(g_nLane){
-    *o++='2'; *o++=' ';
+    *o++='2'; *o++='v'; *o++=' ';
     o=u2dec(o,g_nLane);
-    for(u32 i=0;i<g_nLane && i<MAX_LANES;i++){ *o++=' '; o=u2dec(o,g_lane[i]); }
+    for(u32 i=0;i<g_nLane && i<MAX_LANES;i++){
+      *o++=' '; o=u2dec(o,g_laneDirCount[i]);
+      for(u32 d=0;d<g_laneDirCount[i] && d<MAX_LANE_DIRECTIONS;d++){
+        *o++=' '; o=u2dec(o,g_laneDirs[i][d]);
+      }
+    }
     *o++='\n';
   }
   if(g_st.distText[0]){
