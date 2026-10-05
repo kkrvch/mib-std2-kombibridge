@@ -3,6 +3,7 @@ package de.vw.mib.asl.internal.androidauto.target;
 import de.aatokombi.Config;
 import de.adi961.miblogger.MIBLogger;
 import de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo;
+import de.vw.mib.bap.mqbab2.audiosd.functions.SourceState;
 import de.vw.mib.asl.framework.internal.framework.ServiceManager;
 import de.vw.mib.timer.Timer;
 
@@ -15,7 +16,8 @@ import java.io.FileReader;
  * media widget via {@link CurrentStationInfo}. Gated by {@link Config#SHOW_MEDIA}.
  *
  * IPC line (the shim rewrites the whole line, O_TRUNC):
- *   seq &lt;Song&gt;\t&lt;Artist&gt;\t&lt;Album&gt;\t&lt;posSec&gt;\t&lt;durSec&gt;
+ *   seq &lt;Song&gt;\t&lt;Artist&gt;\t&lt;Album&gt;\t&lt;posSec&gt;\t&lt;durSec&gt;\t&lt;coverSeq&gt;\t&lt;coverLen&gt;
+ *       \t&lt;connected&gt;\t&lt;session&gt;\t&lt;state&gt;\t&lt;shuffle&gt;\t&lt;repeat&gt;\t&lt;repeatOne&gt;
  * The seq is separated by the first space; the text/number fields are tab-separated. posSec/durSec
  * feed the optional progress bar ({@link Config#SHOW_MEDIA_PROGRESS}); they are appended after the
  * three track strings so an older 3-field line still parses (pos/dur then default to 0 = no bar).
@@ -90,6 +92,7 @@ public class ShmemMediaReader implements Runnable {
 
         // Tab-split the remainder. Trailing fields are optional/appended over time.
         //   f: song artist album posSec durSec coverSeq coverLen connected session
+        //      state shuffle repeat repeatOne
         String rest = line.substring(sp + 1);
         String[] f = splitTabs(rest);
         // connected: present+valid => use it; absent (older shim) OR torn/garbage (partial read of the
@@ -133,7 +136,9 @@ public class ShmemMediaReader implements Runnable {
         if (Config.LOG_LEVEL <= MIBLogger.DEBUG) {
             MIBLogger.getInstance().debug("aa_media seq=" + seq + " conn=" + connected + " sess=" + session
                     + " song=" + song + " artist=" + artist + " album=" + album
-                    + " pos=" + posSec + " dur=" + durSec);
+                    + " pos=" + posSec + " dur=" + durSec
+                    + " state=" + (f.length > 9 ? f[9] : "-") + " shuffle=" + (f.length > 10 ? f[10] : "-")
+                    + " repeat=" + (f.length > 11 ? f[11] : "-") + " repeatOne=" + (f.length > 12 ? f[12] : "-"));
         }
 
         CurrentStationInfo.mediaTitle = song;
@@ -142,6 +147,13 @@ public class ShmemMediaReader implements Runnable {
         CurrentStationInfo.mediaPosSec = posSec;
         CurrentStationInfo.mediaDurSec = durSec;
         CurrentStationInfo.pokeNav();
+
+        // Shuffle / repeat (fields 10..12, appended by a newer shim; absent -> off). SourceState
+        // re-sends only on a change, so the ~1/s heartbeat costs nothing here.
+        SourceState.setAndroidAutoPlaybackMode(
+                parseIntSafe(f.length > 10 ? f[10] : null) == 1,
+                parseIntSafe(f.length > 11 ? f[11] : null) == 1,
+                parseIntSafe(f.length > 12 ? f[12] : null) == 1);
 
         // Cover art (AID only): fields 5=coverSeq, 6=coverLen (appended after pos/dur by the shim).
         // coverSeq advances on every metadata event (track switch); re-evaluate the cover only then,
@@ -213,6 +225,9 @@ public class ShmemMediaReader implements Runnable {
 
     /** Clear the now-playing override (and the AID cover) when playback stops / the phone disconnects. */
     private void clearNowPlaying() {
+        // Shuffle / repeat belong to the session as much as the track does. Outside the early return:
+        // the flags can be set before any title has arrived. A no-op when they are already off.
+        SourceState.setAndroidAutoPlaybackMode(false, false, false);
         if (CurrentStationInfo.mediaTitle == null) {
             return; // already clear
         }

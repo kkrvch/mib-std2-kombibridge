@@ -244,18 +244,21 @@ static Listener g_listener = { &g_listVT };
 // IPC for the jar: /dev/shmem/aa_media, rewritten on each media event (O_TRUNC). Fields after the
 // three track strings are appended so the older 3-field parser still finds song/artist/album:
 //   seq <Song>\t<Artist>\t<Album>\t<posSec>\t<durSec>\t<coverSeq>\t<coverLen>\t<connected>\t<session>
+//       \t<state>\t<shuffle>\t<repeat>\t<repeatOne>
+// state = MediaPlaybackStatus.State (0 not said yet, 1 STOPPED, 2 PLAYING, 3 PAUSED); the three
+// flags are 0/1. All four come from the ~1/s status heartbeat (m_status).
 static const char IPC_MEDIA[] = "/dev/shmem/aa_media";
 // AlbumArt (cover) raw bytes -> RAM file, O_TRUNC-overwritten on each metadata event. /dev/shmem is a
 // RAM fs (no flash wear). The HMI jar (AndroidAutoTarget.applyCoverArt) stages it and points TrackInfo
 // list-58's __cover at it; the stock CoverArt usecase blits it to the AID cluster. AID-only feature.
 static const char COVER_PATH[] = "/dev/shmem/aa_cover";
 struct MediaState{ u32 seq; u32 pos; u32 dur; char song[80]; char artist[80]; char album[80];
-                   u32 coverseq; u32 coverlen; };
+                   u32 coverseq; u32 coverlen; u32 state, shuffle, repeat, repeatOne; };
 static MediaState g_ms;
 
 static void media_flush(){
   if(!p_fopen) return;
-  // Worst case ~326 bytes (3×79 strings + 7 numeric fields) -> 420 leaves headroom.
+  // Worst case ~350 bytes (3×79 strings + 11 numeric fields) -> 420 leaves headroom.
   char b[420]; char* o=b;
   o=u2dec(o,g_ms.seq); *o++=' ';
   { const char* s=g_ms.song;   while(*s) *o++=*s++; } *o++='\t';
@@ -266,22 +269,39 @@ static void media_flush(){
   o=u2dec(o,g_ms.coverseq); *o++='\t';   // field 5: bumps per metadata event (track switch)
   o=u2dec(o,g_ms.coverlen); *o++='\t';   // field 6: cover byte length (0 = phone sent no art)
   o=u2dec(o,g_mediaConn);   *o++='\t';   // field 7: connected (media channel up, 0 = torn down)
-  o=u2dec(o,g_session);                  // field 8: session epoch
+  o=u2dec(o,g_session);     *o++='\t';   // field 8: session epoch
+  o=u2dec(o,g_ms.state);    *o++='\t';   // field 9: playback state (see the format above)
+  o=u2dec(o,g_ms.shuffle);  *o++='\t';   // field 10: shuffle
+  o=u2dec(o,g_ms.repeat);   *o++='\t';   // field 11: repeat (the list)
+  o=u2dec(o,g_ms.repeatOne);              // field 12: repeat one (the track)
   *o++='\n';
   write_file(IPC_MEDIA, b, (usize)(o-b));
 }
 
 // Listener vtable {s0, dtor, onStatus(+8), onMetadata(+0xc)}.
 static void m_dtor(void*){}
-// handleMediaPlaybackStatus → +8. Fires periodically (~1/s) while media plays, carrying the
-// PlaybackSeconds position (msg+0x18, the only 32-bit field) as the 7th arg (callee [sp+8]). Bumping
-// seq advances the position; disconnect is signalled explicitly via the connected flag (the
-// GalReceiver::shutdown hook), NOT inferred from a frozen seq, so a paused track no longer self-clears.
-//   arg index:  0=self 1=&src 2=repeat 3=repeatOne 4,5=src-temp-spill 6=PlaybackSeconds
-static void m_status(void* /*self*/, void* /*src*/, u32 /*repeat*/, u32 /*repeatOne*/,
-                     u32 /*a4*/, u32 /*a5*/, u32 playbackSeconds){
+// handleMediaPlaybackStatus → +8. Fires periodically (~1/s) while media plays. Bumping seq advances
+// the position; disconnect is signalled explicitly via the connected flag (the GalReceiver::shutdown
+// hook), NOT inferred from a frozen seq, so a paused track no longer self-clears.
+//
+// RE of handleMediaPlaybackStatus (0x83584 on the dev unit): it copies the message into a 16-byte
+// record built at the caller's sp, i.e. the callee's stack arguments, and calls the listener with
+// r0=listener r1=&record and r2/r3 = Repeat/RepeatOne (left in the argument registers). The record:
+//   [sp+0x0] State (msg+0x14)   [sp+0x4] MediaSource (CoW std::string, msg+0x10)
+//   [sp+0x8] PlaybackSeconds (msg+0x18)
+//   [sp+0xc] u8 Shuffle (msg+0x1c), [sp+0xd] u8 Repeat (+0x1d), [sp+0xe] u8 RepeatOne (+0x1e),
+//            [sp+0xf] padding (uninitialised -> masked off)
+// so as declared arguments: a4=State, a5=MediaSource, 6=PlaybackSeconds, 7=the packed flag bytes.
+// The flags are read from that one record word, not from r2/r3, so all three come from the same copy.
+static u32 flag01(u32 b){ return b==1 ? 1u : 0u; }      // a bool byte; anything else = not set
+static void m_status(void* /*self*/, void* /*rec*/, u32 /*repeat*/, u32 /*repeatOne*/,
+                     u32 state, u32 /*source*/, u32 playbackSeconds, u32 flags){
   g_mediaConn=1;                        // data flowing => channel up
   g_ms.pos = playbackSeconds;
+  g_ms.state     = (state<=3) ? state : 0u;   // 1 STOPPED, 2 PLAYING, 3 PAUSED; else "not said"
+  g_ms.shuffle   = flag01( flags        & 0xffu);
+  g_ms.repeat    = flag01((flags >>  8) & 0xffu);
+  g_ms.repeatOne = flag01((flags >> 16) & 0xffu);
   g_ms.seq++; media_flush();
 }
 // handleMediaPlaybackMetadata → +0xc. arr = 5 CoW std::string in the order the device builds them:
@@ -325,7 +345,7 @@ static void m_metadata(void* /*self*/, void* arr, u32 /*a2*/, u32 /*a3*/){
   }
   g_ms.seq++; media_flush();
 }
-struct MediaVT{ void* s0; void(*dtor)(void*); void(*status)(void*,void*,u32,u32,u32,u32,u32);
+struct MediaVT{ void* s0; void(*dtor)(void*); void(*status)(void*,void*,u32,u32,u32,u32,u32,u32);
                 void(*metadata)(void*,void*,u32,u32); };
 static const MediaVT g_mediaVT = { 0, m_dtor, m_status, m_metadata };
 struct MediaListener{ const MediaVT* vt; };

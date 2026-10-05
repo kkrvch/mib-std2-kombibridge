@@ -546,6 +546,23 @@ public final class NavMappingTest {
                 AANavReader.turnToStreet(AANavReader.streetFor(true, "Next St"), "Current St", false),
                 AANavReader.streetFor(true, "Next St"));
         eq("no roads at all", AANavReader.turnToStreet(null, null, false), "");
+
+    private static void playbackMode() {
+        // bit0 shuffle, bit1 repeat, bit2 repeat-one -> {stateInfo, stateInfo_Scope}
+        int[][] cases = {
+            { 0, 0, 0 },   // nothing
+            { 1, 2, 4 },   // shuffle            -> mix, the list
+            { 2, 3, 4 },   // repeat             -> repeat, the list
+            { 4, 3, 1 },   // repeat one         -> repeat, the track
+            { 3, 4, 4 },   // shuffle + repeat   -> repeat + mix, the list
+            { 5, 4, 1 },   // shuffle + one      -> repeat + mix, the track
+            { 6, 3, 1 },   // repeat + one       -> one wins (the narrower scope)
+        };
+        for (int i = 0; i < cases.length; i++) {
+            int[] r = de.vw.mib.bap.mqbab2.audiosd.functions.AAPlaybackMode.stateInfo(cases[i][0]);
+            eq("mode " + cases[i][0] + " stateInfo", r[0], cases[i][1]);
+            eq("mode " + cases[i][0] + " scope",     r[1], cases[i][2]);
+        }
     }
 
     private static void eqNoThrowRoundabout(int effAngle, int exitNumber) {
@@ -561,7 +578,8 @@ public final class NavMappingTest {
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
                            "directions", "roundabout angles", "imminence",
-						   "next maneuver", "current road", "junction schematic" };
+						   "next maneuver", "current road", 
+						   "playback mode", "junction schematic" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -577,6 +595,7 @@ public final class NavMappingTest {
                 case 9: imminence(); break;
                 case 10: nextManeuver(); break;
                 case 11: currentRoad(); break;
+                case 12: playbackMode(); break;
                 default: junctionSchematic(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));
