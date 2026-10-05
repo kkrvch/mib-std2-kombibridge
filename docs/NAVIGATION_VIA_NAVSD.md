@@ -63,7 +63,7 @@ regardless, and every stock-service call is wrapped so a non-routing engine can 
 |---|---|---|---|
 | `ActiveRgType` | 39 | the gate: `rgtype = 0` (RGI_FROM_BAP_FUNCTION_MANEUVER_DESCRIPTOR) so the cluster draws our maneuver; stock `3` (MOST_MAP) waits for a map video we cannot supply | `NavState.ACTIVE` |
 | `RGStatus` | 17 | route-guidance active flag | `NavState.ACTIVE` |
-| `ManeuverDescriptor` | 23 | the arrow: `mainElement` + `direction` (+ a roundabout exit spoke in `sidestreets`) | GAL event + side/angle/exit number |
+| `ManeuverDescriptor` | 23 | the arrow: `mainElement` + `direction` (+ a roundabout exit spoke in `sidestreets`); `maneuver_2` = the small "then" arrow (see below) | GAL event + side/angle/exit number; IPC line 5 |
 | `DistanceToNextManeuver` | 18 | distance to the turn + the approach-segment bargraph | GAL dist |
 | `TurnToInfo` | 20 | the "turn into <street>" line | GAL road |
 | `LaneGuidance` | 24 | the lane row of the junction ahead (a BAP **array**, max 6 lanes, not a property) | `NavState.lanes` |
@@ -106,6 +106,24 @@ Stock does the same, which is where the shape comes from: its enum carries `FOLL
 only for the real ones (`{3,4,5,13..27,32..35}`) — the bargraph *is* the approach signal. The stock
 thresholds are in the native nav engine (Java only forwards the DSI array in
 `HsmTargetBap.dsiNavigationUpdateBapManeuverDescriptor`), so the two numbers above are ours.
+
+## The second ("then") arrow — `maneuver_2`
+
+`ManeuverDescriptor` carries up to three manoeuvres; the stock navigation fills `maneuver_2` with
+the one that follows the current manoeuvre. With `Config.SHOW_NEXT_MANEUVER` (default on) the shim
+keeps AA's `steps[1]` (IPC line `5 <event> <side> <angle> <number>`) and `AANavReader.nextManeuverFor`
+picks what the second arrow shows:
+
+| phase | `maneuver_1` | `maneuver_2` |
+|---|---|---|
+| manoeuvre near (see above) | the manoeuvre | the one after it (`steps[1]`) |
+| manoeuvre still far | `FOLLOW_STREET` | the manoeuvre itself, as a preview |
+
+A second arrow that would only say "follow the street" is left out (`NO_SYMBOL`), and the field is
+rewritten on every send so a pooled status object never carries an old arrow over. AA gives no
+distance between the two manoeuvres, so unlike the stock engine this cannot be limited to closely
+spaced turns. Whether a given cluster draws `maneuver_2` at all is the cluster's business — it is
+the AID this is aimed at.
 
 ## Notes / limits
 

@@ -29,8 +29,12 @@ typedef unsigned long  usize;
 // opposed to dist/time which are to the next manoeuvre. Both stay 0 on 1.3 (the legacy feed has no
 // such fields), and 0 is also how "the phone has not said yet" is spelled — at 0 m / 0 s you have
 // arrived and guidance ends anyway, so the two are not worth telling apart.
+// next* = steps[1], the manoeuvre AFTER the current one (1.7 only): the cluster can draw it as the
+// small "then" arrow (navsd ManeuverDescriptor.maneuver_2). Same (event, side) vocabulary as the
+// current one; nextValid 0 = the phone sent no second step (or one we cannot name).
 struct NavState{ u32 seq,status,event,side,dist,time,unit; i32 angle,number; char road[64];
-                 char distText[16]; u32 destDist,destTime; };
+                 char distText[16]; u32 destDist,destTime;
+                 u32 nextValid,nextEvent,nextSide; i32 nextAngle,nextNumber; };
 static NavState g_st;
 
 // Lane guidance (1.7 only) goes out as IPC line 2, so line 1 stays byte-identical:
@@ -129,15 +133,29 @@ static const u8 g_mvmap[N_MANEUVER] = {
   MV(15,1), MV(15,2), MV(16,1), MV(16,2)      /* 47 FERRY_BOAT_L/R, FERRY_TRAIN_L/R */
 };
 
-static void parse_maneuver(PB s){
+// Writes through pointers so the current step and the follow-up step share one decoder.
+static void parse_maneuver_to(PB s,u32* event,u32* side,i32* number,i32* angle){
   u32 f,w;
   while(pb_tag(&s,&f,&w)){
     if(f==1&&w==0){ u32 t=pb_var(&s); u8 m=(t<N_MANEUVER)?g_mvmap[t]:g_mvmap[0];
-                    g_st.event=(u32)(m>>2); g_st.side=(u32)(m&3); }
-    else if(f==2&&w==0){ u32 v=pb_var(&s); g_st.number=(v>=1&&v<=99 )?(i32)v:0; }  // -1 => absent
-    else if(f==3&&w==0){ u32 v=pb_var(&s); g_st.angle =(v>=1&&v<=360)?(i32)v:0; }  // -1 => absent
+                    *event=(u32)(m>>2); *side=(u32)(m&3); }
+    else if(f==2&&w==0){ u32 v=pb_var(&s); *number=(v>=1&&v<=99 )?(i32)v:0; }  // -1 => absent
+    else if(f==3&&w==0){ u32 v=pb_var(&s); *angle =(v>=1&&v<=360)?(i32)v:0; }  // -1 => absent
     else pb_skip(&s,w);
   }
+}
+static void parse_maneuver(PB s){ parse_maneuver_to(s,&g_st.event,&g_st.side,&g_st.number,&g_st.angle); }
+
+// steps[1]: only its manoeuvre is kept — the cluster's "then" arrow has no street, lanes or distance
+// of its own. Called after parse_step, which has already cleared next* for this snapshot.
+static void parse_next_step(PB s){
+  u32 ev=0,sd=3; i32 num=0,ang=0; u32 f,w;
+  while(pb_tag(&s,&f,&w)){
+    if(f==1&&w==2){ PB d; if(!pb_sub(&s,&d)) break; parse_maneuver_to(d,&ev,&sd,&num,&ang); }
+    else pb_skip(&s,w);
+  }
+  if(ev==0) return;                              // unnamed / invalid type: nothing to draw
+  g_st.nextEvent=ev; g_st.nextSide=sd; g_st.nextNumber=num; g_st.nextAngle=ang; g_st.nextValid=1;
 }
 
 // A lane may allow several directions ("left and straight"). Keep all of them for the IPC;
@@ -186,6 +204,7 @@ static void parse_lane(PB s){
 static void parse_step(PB s){
   g_st.event=0; g_st.side=3;                     // 3 = TurnSide UNSPECIFIED, as the legacy feed sent
   g_st.number=0; g_st.angle=0; g_st.road[0]=0; g_nLane=0;
+  g_st.nextValid=0; g_st.nextEvent=0; g_st.nextSide=3; g_st.nextAngle=0; g_st.nextNumber=0;
   // The cluster's street line wants a road name, so road_info wins and the instruction is only the
   // fallback for a phone that omits it. Held aside rather than written straight into g_st.road,
   // because protobuf fields may arrive in any order and field 2 must not overwrite field 4.
@@ -212,17 +231,20 @@ static void parse_step(PB s){
   }
 }
 
-// Only the first step reaches the cluster; step[1] is the follow-up manoeuvre. The clearing of the
-// previous manoeuvre happens in parse_step, i.e. only once a step is actually there — see there.
+// steps[0] is the manoeuvre the cluster draws; steps[1] the follow-up one, kept only as the "then"
+// arrow (next*, see parse_next_step); anything after that is ignored. The clearing of the previous
+// manoeuvre happens in parse_step, i.e. only once a step is actually there — see there.
 //
 // Returns 1 when a step was actually parsed. The caller uses that as the "guidance is running"
 // signal: at 1.7 the stock dispatcher is bypassed entirely, so its status callback never fires and
 // this message is the only evidence that a route exists.
 static int parse_navstate(const u8* p,u32 len){
   PB s; s.p=p; s.e=p+len;
-  int first=1; u32 f,w;
+  int first=1,second=0; u32 f,w;
   while(pb_tag(&s,&f,&w)){
-    if(f==1&&w==2){ PB d; if(!pb_sub(&s,&d)) break; if(first){ parse_step(d); first=0; } }
+    if(f==1&&w==2){ PB d; if(!pb_sub(&s,&d)) break;
+                    if(first){ parse_step(d); first=0; }
+                    else if(!second){ parse_next_step(d); second=1; } }   // steps[2..] unused
     else pb_skip(&s,w);
   }
   return !first;

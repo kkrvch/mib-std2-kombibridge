@@ -141,8 +141,9 @@ static void ipc_flush(){
   if(!p_fopen) return;
   // format: seq status event side angle number dist time unit connected session road
   // connected/session are inserted BEFORE road (road is the space-remainder field, may hold spaces).
-  // Worst case ~123 numeric bytes + road[63] + '\n', plus the three tagged lines below (variable
-  // lane directions ~100, distance text ~20, destination ~24) -> 480 leaves comfortable headroom.
+  // Worst case ~123 numeric bytes + road[63] + '\n', plus the tagged lines below (variable lane
+  // directions ~100, distance text ~20, destination ~24, next manoeuvre ~40) -> 480 still leaves
+  // comfortable headroom.
   char b[480]; char* o=b;
   o=u2dec(o,g_st.seq);   *o++=' ';
   o=u2dec(o,g_st.status);*o++=' ';
@@ -162,6 +163,8 @@ static void ipc_flush(){
   //   "2v <n> <dirCount> <packed> ..."  lanes; every combined-lane direction is preserved
   //   "3 <text>"           the phone's own distance string; absent = format the metres ourselves
   //   "4 <metres> <secs>"  to the DESTINATION; absent = unknown, the cluster fields stay invalid
+  //   "5 <event> <side> <angle> <number>"  the manoeuvre AFTER the current one (steps[1]); absent =
+  //                        the phone sent none. Same vocabulary as line 1's event/side/angle/number.
   if(g_nLane){
     *o++='2'; *o++='v'; *o++=' ';
     o=u2dec(o,g_nLane);
@@ -184,6 +187,14 @@ static void ipc_flush(){
     *o++='4'; *o++=' ';
     o=u2dec(o,g_st.destDist); *o++=' ';
     o=u2dec(o,g_st.destTime);
+    *o++='\n';
+  }
+  if(g_st.nextValid){
+    *o++='5'; *o++=' ';
+    o=u2dec(o,g_st.nextEvent);  *o++=' ';
+    o=u2dec(o,g_st.nextSide);   *o++=' ';
+    o=i2dec(o,g_st.nextAngle);  *o++=' ';
+    o=i2dec(o,g_st.nextNumber);
     *o++='\n';
   }
   write_file(IPC_PATH, b, (usize)(o-b));
@@ -444,7 +455,7 @@ int nav_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
       // finished trip's distance and travel time would still be in the file when the NEXT route
       // starts, and the jar would publish them until that route's first 0x8007 lands. This used to
       // live in the legacy status callback, which nothing reaches any more.
-      if(st!=1 && st!=3){ g_st.destDist=0; g_st.destTime=0; }
+      if(st!=1 && st!=3){ g_st.destDist=0; g_st.destTime=0; g_st.nextValid=0; }
       g_navConn=1; g_st.status=(u32)st; g_st.seq++; ipc_flush();
     }
   }

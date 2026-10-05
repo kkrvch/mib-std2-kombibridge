@@ -503,6 +503,36 @@ public final class NavMappingTest {
         return charStr(a) + charStr(b) + charStr(c);
     }
 
+    private static void nextManeuver() {
+        // IPC line 5 payload
+        int[] n = AANavReader.packNextManeuver("4 1 0 0");
+        eq("line 5 event", n == null ? -1 : n[0], 4);
+        eq("line 5 side",  n == null ? -1 : n[1], 1);
+        eqNull("line 5 absent",    AANavReader.packNextManeuver(null));
+        eqNull("line 5 empty",     AANavReader.packNextManeuver(""));
+        eqNull("line 5 malformed", AANavReader.packNextManeuver("4 x"));
+        eqNull("line 5 truncated", AANavReader.packNextManeuver("4 1 0"));
+        eqNull("line 5 no event",  AANavReader.packNextManeuver("0 3 0 0"));
+
+        int follow = AANavReader.MAIN_ELEMENT_FOLLOW_STREET;
+        // far: maneuver_2 previews the current manoeuvre itself, whatever steps[1] says
+        NavState.NextManeuver f = AANavReader.nextManeuverFor(false, 13, 192, "", new int[]{ 4, 1, 0, 0 });
+        eq("far: previews the current main element", f == null ? -1 : f.mainElement, 13);
+        eq("far: previews the current direction",    f == null ? -1 : f.direction, 192);
+        eqNull("far: no preview of a follow-street",
+                AANavReader.nextManeuverFor(false, follow, 0, "", new int[]{ 4, 1, 0, 0 }));
+        // near: maneuver_2 = steps[1]
+        NavState.NextManeuver x = AANavReader.nextManeuverFor(true, 13, 192, "", new int[]{ 4, 1, 0, 0 });
+        eq("near: steps[1] main element", x == null ? -1 : x.mainElement, 13);
+        eq("near: steps[1] direction (left)", x == null ? -1 : x.direction, AANavReader.mapDirection(4, 1, 0));
+        eqNull("near: no steps[1]", AANavReader.nextManeuverFor(true, 13, 192, "", null));
+        eqNull("near: steps[1] is just straight on",
+                AANavReader.nextManeuverFor(true, 13, 192, "", new int[]{ 14, 3, 0, 0 }));
+        NavState.NextManeuver r = AANavReader.nextManeuverFor(true, 13, 192, "", new int[]{ 13, 2, 270, 2 });
+        eq("near: roundabout as steps[1]", r == null ? -1 : r.mainElement, AANavReader.mapMainElement(13, 2));
+        eq("near: roundabout keeps its exit spoke", r == null ? -1 : r.sideStreets.length(), 1);
+    }
+
     private static void eqNoThrowRoundabout(int effAngle, int exitNumber) {
         try {
             JunctionSchematic.buildRoundabout(effAngle, exitNumber);
@@ -516,7 +546,7 @@ public final class NavMappingTest {
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
                            "directions", "roundabout angles", "imminence",
-						   "junction schematic" };
+						   "next maneuver", "junction schematic" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -530,6 +560,7 @@ public final class NavMappingTest {
                 case 7: directions(); break;
                 case 8: angles(); break;
                 case 9: imminence(); break;
+                case 10: nextManeuver(); break;
                 default: junctionSchematic(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));

@@ -58,6 +58,20 @@ public final class Config {
     public static final boolean SHOW_JUNCTION_SCHEMATIC = true;
 
     /**
+     * Draw a second, smaller "then" arrow next to the main manoeuvre on the navsd Navigation menu
+     * (ManeuverDescriptor.maneuver_2), the way the stock navigation shows a manoeuvre that follows
+     * closely on the current one:
+     *   current manoeuvre near (see MANEUVER_NEAR_*) -> the manoeuvre AFTER it (AA steps[1]);
+     *   current manoeuvre still far (FOLLOW_STREET)  -> the current manoeuvre itself, as a preview.
+     * Nothing is drawn when that second arrow would just be another "follow the street". Needs the
+     * shim's IPC line 5 (protocol 1.7). Meant for the AID; a cluster that does not draw maneuver_2
+     * simply ignores it, as it does for the stock navigation.
+     *
+     * Requires SHOW_NAV.
+     */
+    public static final boolean SHOW_NEXT_MANEUVER = true;
+
+    /**
      * Show the now-playing track (song / artist / album) when no route guidance is active,
      * or when music is selected with the wheel. false -> stock "Android Auto" label instead.
      */

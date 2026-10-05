@@ -24,6 +24,23 @@ public final class NavState {
     // On the approach segment, i.e. the real manoeuvre is drawn, not FOLLOW_STREET -> bargraph on.
     public static volatile boolean approaching    = false;
 
+    // The small "then" arrow next to the main one (ManeuverDescriptor.maneuver_2, Config.SHOW_NEXT_MANEUVER).
+    // While the current manoeuvre is near, it is the one AFTER it (AA steps[1]); while it is still far
+    // and maneuver_1 shows FOLLOW_STREET, it is the current manoeuvre itself, as a preview. One
+    // immutable carrier published in a single volatile write; null = no second arrow.
+    public static final class NextManeuver {
+        public final int mainElement;
+        public final int direction;
+        public final String sideStreets;
+
+        public NextManeuver(int mainElement, int direction, String sideStreets) {
+            this.mainElement = mainElement;
+            this.direction = direction;
+            this.sideStreets = (sideStreets != null) ? sideStreets : "";
+        }
+    }
+    public static volatile NextManeuver nextManeuver = null;
+
     // Lane guidance (1.7 only), fn 24. A lane can carry several directions (for example straight
     // OR left), so publish the display/BAP primary and the complete direction list as ONE immutable
     // carrier. A reader can never pair a fresh primary arrow with stale alternatives.

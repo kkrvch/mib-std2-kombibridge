@@ -171,6 +171,7 @@ public final class AANavReader implements Runnable {
                     + " number=" + number + " dist=" + dist + " time=" + time + " unit=" + unit
                     + " dest=" + taggedLine(lines, '4')   // raw line: this runs before it is applied
                     + " lanes=" + taggedLine(lines, '2')  // raw shim payload: "<count> <lane0> <lane1> ..."
+                    + " next=" + taggedLine(lines, '5')   // raw shim payload: "<event> <side> <angle> <number>"
                     + " q4='" + quaternaryFor(event, number) + "' road=" + road);
         }
 
@@ -207,7 +208,8 @@ public final class AANavReader implements Runnable {
                 // left over from a previous session.
                 ActiveRgType.primeForAAStart(Config.FORCE_MAP_ON_KOMBI);
             }
-            publishNavsd(event, side, angle, number, streetFor(rerouting, road), dist, time);
+            publishNavsd(event, side, angle, number, streetFor(rerouting, road), dist, time,
+                    packNextManeuver(taggedLine(lines, '5')));
         } else {
             if (statusEdge && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
@@ -257,7 +259,8 @@ public final class AANavReader implements Runnable {
     }
 
     // ===== nav-capable path: NavState + navsd shadows ==========================================
-    private void publishNavsd(int event, int side, int angle, int number, String road, int dist, int time) {
+    private void publishNavsd(int event, int side, int angle, int number, String road, int dist, int time,
+                              int[] next) {
         de.aatokombi.MediaViewMode.guidance(false);
         // Only the glyph waits: street, countdown and destination keep running meanwhile.
         boolean imminent = maneuverImminent(dist, time);
@@ -269,13 +272,15 @@ public final class AANavReader implements Runnable {
         }
 		
         int effAngle = effectiveAngle(event, angle, number);    // real bearing (Maps) or synth from exit number (Yandex)
-        int mainElement = imminent ? mapMainElement(event, side) : MAIN_ELEMENT_FOLLOW_STREET;
-        int direction = imminent ? mapDirection(event, side, effAngle) : 0;
-		// Exit-road spoke on a roundabout, "" otherwise; also "" while far, or the junction geometry
-        // would draw around a plain follow-street arrow.
-        String sideStreets = imminent ? buildRingSideStreets(event, effAngle) : "";
+        // The manoeuvre's own glyph. It is what maneuver_1 shows once the manoeuvre is near; while it
+        // is still far, maneuver_1 shows FOLLOW_STREET and this glyph can only appear as the preview
+        // in maneuver_2 (Config.SHOW_NEXT_MANEUVER) -- so it is only worth building in those cases.
+        int mainElement = mapMainElement(event, side);
+        int direction = mapDirection(event, side, effAngle);
+		// Exit-road spoke on a roundabout, "" otherwise.
+        String sideStreets = buildRingSideStreets(event, effAngle);
 		
-		if (imminent) {
+		if (imminent || Config.SHOW_NEXT_MANEUVER) {
 			// Multi-spoke junction schematic (JunctionSchematic) -- STRICTLY gated on top of the
 			// compile-time switch: only on a cluster that is nav-capable (navsd is actually driving
 			// this cluster at all).
@@ -304,6 +309,15 @@ public final class AANavReader implements Runnable {
 			}
 		}
 
+        // Second, smaller arrow (maneuver_2): the manoeuvre after this one, or this one as a preview.
+        NavState.nextManeuver   = Config.SHOW_NEXT_MANEUVER
+                ? nextManeuverFor(imminent, mainElement, direction, sideStreets, next) : null;
+        if (!imminent) {
+            // Far: maneuver_1 is a plain "follow the street", with no junction geometry around it.
+            mainElement = MAIN_ELEMENT_FOLLOW_STREET;
+            direction = 0;
+            sideStreets = "";
+        }
         NavState.mainElement    = mainElement;
         NavState.direction      = direction;
         NavState.street         = (road != null) ? road : "";   // next-turn road -> TurnToInfo
@@ -327,6 +341,34 @@ public final class AANavReader implements Runnable {
         de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
         de.vw.mib.bap.mqbpq.navsd.functions.TurnToInfo.poke();
         de.vw.mib.bap.mqbpq.navsd.functions.DistanceTimeToDestination.poke();   // PQ merges fn 21+22
+    }
+
+    /**
+     * What the small second arrow (ManeuverDescriptor.maneuver_2) shows, or null for none.
+     *   far  -> the current manoeuvre itself (cur*), previewing what the FOLLOW_STREET arrow leads to;
+     *   near -> the manoeuvre after it (IPC line 5, i.e. AA steps[1]), as the stock "then" arrow.
+     * Another "follow the street" is never worth a second arrow, so that case is null too.
+     */
+    static NavState.NextManeuver nextManeuverFor(boolean imminent, int curMain, int curDir,
+                                                 String curSideStreets, int[] next) {
+        if (!imminent) {
+            if (curMain == MAIN_ELEMENT_FOLLOW_STREET) {
+                return null;
+            }
+            return new NavState.NextManeuver(curMain, curDir, curSideStreets);
+        }
+        if (next == null) {
+            return null;
+        }
+        int event = next[0];
+        int side = next[1];
+        int effAngle = effectiveAngle(event, next[2], next[3]);
+        int main = mapMainElement(event, side);
+        if (main == MAIN_ELEMENT_FOLLOW_STREET) {
+            return null;
+        }
+        return new NavState.NextManeuver(main, mapDirection(event, side, effAngle),
+                buildRingSideStreets(event, effAngle));
     }
 
     // Debug-only: logs the raw bytes that go into ManeuverDescriptor.sidestreets (plus mainElement
@@ -741,6 +783,7 @@ public final class AANavReader implements Runnable {
                 DistanceToNextManeuver.poke();
                 TurnToInfo.poke();
                 NavState.laneState = NavState.NO_LANES;
+                NavState.nextManeuver = null;
                 LaneGuidance.poke();
                 // Zero before poking: a stale destination outliving its route would otherwise be the
                 // one number on the cluster nobody can tell is stale.
@@ -796,7 +839,8 @@ public final class AANavReader implements Runnable {
      * Line 1 is the manoeuvre (the shim normalises both protocol generations into it). The lines
      * after it are 1.7 extras, each tagged with its own marker and written only when it has content,
      * so they are matched by marker rather than by position: "2 " = lane guidance, "3 " = the phone's
-     * own distance string, "4 " = distance/time to the destination. Lane line "2v " is the current
+     * own distance string, "4 " = distance/time to the destination, "5 " = the manoeuvre after the
+     * current one. Lane line "2v " is the current
      * variable-direction encoding; "2 " remains accepted for a jar deployed with an older shim.
      * Any element may be null.
      */
@@ -804,7 +848,9 @@ public final class AANavReader implements Runnable {
         BufferedReader br = null;
         try {
             br = new BufferedReader(new FileReader(PATH));
-            String[] out = new String[4];
+            // Line 1 plus every tagged line the shim may write (2v, 3, 4, 5, ...), with headroom: a
+            // marker that does not fit here would silently never be seen.
+            String[] out = new String[8];
             for (int i = 0; i < out.length; i++) {
                 out[i] = br.readLine();
             }
@@ -904,6 +950,30 @@ public final class AANavReader implements Runnable {
             directions = trimmed;
         }
         return new NavState.LaneState(packed, directions);
+    }
+
+    /**
+     * IPC line 5 (1.7 only): "&lt;event&gt; &lt;side&gt; &lt;angle&gt; &lt;number&gt;" of the manoeuvre AFTER the current
+     * one, in line 1's vocabulary. The argument is the payload taggedLine() stripped the "5 " from.
+     * Absent or malformed -> null (no next manoeuvre).
+     */
+    static int[] packNextManeuver(String payload) {
+        if (payload == null || payload.length() == 0) {
+            return null;
+        }
+        try {
+            StringTokenizer st = new StringTokenizer(payload, " ");
+            int event = Integer.parseInt(st.nextToken());
+            int side = Integer.parseInt(st.nextToken());
+            int angle = Integer.parseInt(st.nextToken());
+            int number = Integer.parseInt(st.nextToken());
+            if (event <= 0) {
+                return null;
+            }
+            return new int[]{ event, side, angle, number };
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     /**

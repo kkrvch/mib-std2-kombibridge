@@ -214,6 +214,27 @@ NavigationServiceListener {
                 maneuverDescriptor_Status.maneuver_1.mainElement = m.mainElement;
                 maneuverDescriptor_Status.maneuver_1.sidestreets.setContent(m.sidestreets);
                 maneuverDescriptor_Status.maneuver_1.zLevelGuidance = m.zLevelGuidance;
+                // maneuver_2 = the small second arrow (Config.SHOW_NEXT_MANEUVER; AANavReader decides
+                // what it shows). Written on EVERY send, empty when there is none: the status object
+                // is a pooled entity, so an untouched field would carry the previous value over.
+                NavState.NextManeuver next = NavState.nextManeuver;
+                if (next != null) {
+                    ManeuverDescriptor_Status$Maneuver_1 n2 = this.validateManeuverData(
+                            next.direction, next.mainElement, next.sideStreets, 0);
+                    maneuverDescriptor_Status.maneuver_2.direction = n2.direction;
+                    maneuverDescriptor_Status.maneuver_2.mainElement = n2.mainElement;
+                    maneuverDescriptor_Status.maneuver_2.sidestreets.setContent(n2.sidestreets);
+                    maneuverDescriptor_Status.maneuver_2.zLevelGuidance = n2.zLevelGuidance;
+                } else {
+                    maneuverDescriptor_Status.maneuver_2.direction = 0;
+                    maneuverDescriptor_Status.maneuver_2.mainElement = 0;   // MAIN_ELEMENT_NO_SYMBOL
+                    maneuverDescriptor_Status.maneuver_2.sidestreets.setEmptyString();
+                    maneuverDescriptor_Status.maneuver_2.zLevelGuidance = 0;
+                }
+                maneuverDescriptor_Status.maneuver_3.direction = 0;
+                maneuverDescriptor_Status.maneuver_3.mainElement = 0;
+                maneuverDescriptor_Status.maneuver_3.sidestreets.setEmptyString();
+                maneuverDescriptor_Status.maneuver_3.zLevelGuidance = 0;
             } else if (ClusterCaps.isNavCapable() && this.getNavigationService().getRouteGuidanceState() != 0) {
                 // nav-capable cluster, AA inactive: fall back to the unit's own nav engine (the stock
                 // path; reuses validateManeuverData), so the built-in navigation still draws.

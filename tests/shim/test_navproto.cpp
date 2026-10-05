@@ -73,7 +73,7 @@ static void test_roundabout(){
   Buf step; step.m(1,mv); step.m(4,rd);
   step.m(3,lane(4,1)); step.m(3,lane(4,0)); step.m(3,lane(1,0));
   Buf st; st.m(1,step);
-  Buf second; second.m(1,mv);                    // a follow-up step must be IGNORED
+  Buf second; second.m(1,mv);                    // follow-up step: must not touch the current one
   st.m(1,second);
   parse_navstate(st.b,(u32)st.n);
 
@@ -84,6 +84,49 @@ static void test_roundabout(){
   CHECK(g_nLane==3, "nLane=%u want 3 (only the first step)", g_nLane);
   const u8 want[3] = { (4<<1)|1, (4<<1)|0, (1<<1)|0 };
   for(int i=0;i<3 && g_nLane==3;i++) CHECK(g_lane[i]==want[i], "lane[%d]=%u want %u", i, g_lane[i], want[i]);
+  CHECK(g_st.nextValid==1 && g_st.nextEvent==13 && g_st.nextNumber==2 && g_st.nextAngle==270,
+        "next=%u/%u/%d/%d want 1/13/2/270 (steps[1] kept as the next manoeuvre)",
+        g_st.nextValid, g_st.nextEvent, g_st.nextNumber, g_st.nextAngle);
+}
+
+// ---- steps[1] -> the "then" manoeuvre; it is part of the snapshot like everything else ---------
+static void test_next_step(){
+  reset();
+  Buf mv1; mv1.v(1,8);                             // TURN_NORMAL_RIGHT
+  Buf rd;  rd.s(1,"First Street");
+  Buf step1; step1.m(1,mv1); step1.m(4,rd); step1.m(3,lane(4,1));
+  Buf mv2; mv2.v(1,7); mv2.neg1(2); mv2.neg1(3);   // TURN_NORMAL_LEFT, no roundabout fields
+  Buf rd2; rd2.s(1,"Second Street");
+  Buf step2; step2.m(1,mv2); step2.m(4,rd2); step2.m(3,lane(1,0)); step2.m(3,lane(1,0));
+  Buf mv3; mv3.v(1,39);                            // DESTINATION: a third step must be ignored
+  Buf step3; step3.m(1,mv3);
+  Buf st; st.m(1,step1); st.m(1,step2); st.m(1,step3);
+  parse_navstate(st.b,(u32)st.n);
+  CHECK(g_st.event==4 && g_st.side==2, "current=%u/%u want 4/2", g_st.event, g_st.side);
+  CHECK(std::strcmp(g_st.road,"First Street")==0, "road='%s' (steps[1] must not overwrite it)", g_st.road);
+  CHECK(g_nLane==1, "nLane=%u want 1 (steps[1]'s lanes must not leak into the current row)", g_nLane);
+  CHECK(g_st.nextValid==1, "nextValid=%u want 1", g_st.nextValid);
+  CHECK(g_st.nextEvent==4 && g_st.nextSide==1, "next=%u/%u want 4/1 (TURN LEFT)", g_st.nextEvent, g_st.nextSide);
+  CHECK(g_st.nextNumber==0 && g_st.nextAngle==0, "next number/angle=%d/%d want 0/0",
+        g_st.nextNumber, g_st.nextAngle);
+
+  // A snapshot with ONE step: the old next manoeuvre is gone with it.
+  Buf only; only.m(1,step1);
+  parse_navstate(only.b,(u32)only.n);
+  CHECK(g_st.nextValid==0, "nextValid=%u want 0 after a single-step snapshot", g_st.nextValid);
+
+  // A second step with an unnamed type (0 / out of range) is no next manoeuvre either.
+  Buf bad; bad.v(1,200);
+  Buf stepb; stepb.m(1,bad);
+  Buf st2; st2.m(1,step1); st2.m(1,stepb);
+  parse_navstate(st2.b,(u32)st2.n);
+  CHECK(g_st.nextValid==0, "nextValid=%u want 0 for an unknown follow-up type", g_st.nextValid);
+
+  // An empty frame keeps everything, the next manoeuvre included (same rule as the current one).
+  parse_navstate(st.b,(u32)st.n);
+  parse_navstate((const u8*)"",0);
+  CHECK(g_st.nextValid==1 && g_st.nextEvent==4, "empty frame dropped the next manoeuvre (%u/%u)",
+        g_st.nextValid, g_st.nextEvent);
 }
 
 // ---- a lane that allows several directions: primary is routed, complete list is retained --------
@@ -417,6 +460,7 @@ int main(){
   struct { const char* name; void(*fn)(); } tests[] = {
     {"five lanes (golden frame)",     test_five_lanes},
     {"roundabout exit + angle",       test_roundabout},
+    {"next manoeuvre (steps[1])",     test_next_step},
     {"multi-direction lane",          test_multi_direction_lane},
     {"lane cap + clearing",           test_caps_and_clearing},
     {"navstate reports a step",       test_navstate_reports_step},
