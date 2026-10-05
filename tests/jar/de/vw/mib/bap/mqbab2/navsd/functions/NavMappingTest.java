@@ -351,13 +351,11 @@ public final class NavMappingTest {
     // the NavCapable gate lives entirely in AANavReader.publishNavsd(), which is exactly why these
     // are plain, host-testable functions of their inputs) ---------------------------------------
     //
-    // JunctionSchematic.snapToNearest()/circularDistance() now take an explicit table argument (see
-    // Config.JUNCTION_SCHEMATIC_FINE_ANGLES): tested here directly against hand-picked tables, so
-    // these tests don't change meaning depending on which grid the compiled Config picks. buildRoundabout()
-    // and buildOrdinary() are tested against their ACTUAL compiled behaviour (i.e. whatever
-    // Config.JUNCTION_SCHEMATIC_FINE_ANGLES currently says) -- the expected values below match the
-    // coarse (default, false) grid; flipping that constant and re-running this file is the intended
-    // way to sanity-check the fine grid too, since the constant is compiled in, not test-selectable.
+    // JunctionSchematic.snapToNearest()/circularDistance() take an explicit table argument and are
+    // tested here directly against hand-picked tables. buildRoundabout() and buildOrdinary() are
+    // tested against the tables JunctionSchematic actually uses: the fine 22.5-deg roundabout grid
+    // (ROUNDABOUT_ANGLES, every multiple of 16 except 128), the 45-deg TURN grid (TURN_ANGLES) and
+    // the six oblique FOLLOW_STREET positions (FOLLOW_ANGLES: 48, 64, 80, 176, 192, 208).
     private static void junctionSchematic() {
         // -- snapToNearest / circularDistance: the shared angle-quantization primitive ------------
         int[] a45 = { 0, 32, 64, 96, 160, 192, 224 };
@@ -390,24 +388,23 @@ public final class NavMappingTest {
         eq("circularDistance opposite", JunctionSchematic.circularDistance(0, 128), 128);
         eq("circularDistance wraps",    JunctionSchematic.circularDistance(10, 250), 16);
 
-        // -- buildRoundabout (default grid: coarse, Config.JUNCTION_SCHEMATIC_FINE_ANGLES=false) ---
+        // -- buildRoundabout (fine 22.5-deg grid, ROUNDABOUT_ANGLES) ---------------------------------
         // First exit taken (nothing passed): exactly one spoke, at the taken exit's own bearing.
         String r1 = JunctionSchematic.buildRoundabout(180, 1);
         eq("roundabout exit1 spoke count", r1.length(), 1);
         eq("roundabout exit1 spoke value", (int) r1.charAt(0), 0);
 
-        // Third exit taken: the raw (pre-snap) synthetic spokes land off the coarse grid and two of
-        // the three collapse onto the same nearest slot -- this is exactly the 2026-09 field-test
-        // case (Google Maps roundabout, effAngle=270 exit=3), which on the OLD fine grid sent three
-        // distinct spokes {0x70,0x50,0x40} and rendered no visible extra exit; on the coarse grid it
-        // sends two {0x60,0x40}. The taken exit's own snapped bearing is always last.
+        // Third exit taken (the 2026-09 field-test case: Google Maps roundabout, effAngle=270 exit=3):
+        // the two passed exits are spread along the shorter arc from the entry (raw 107, 86) and,
+        // on the fine grid, each keeps its own slot -> three distinct spokes {0x70,0x50,0x40}.
+        // The taken exit's own snapped bearing is always last.
         String r3 = JunctionSchematic.buildRoundabout(270, 3);
-        eq("roundabout exit3 (coarse grid)", r3, charStr(96, 64));
+        eq("roundabout exit3 (fine grid)", r3, charStr(112, 80, 64));
         eq("roundabout exit3 taken spoke is last", (int) r3.charAt(r3.length() - 1), 64);
 
         // The OTHER 2026-09 field-test case (Yandex roundabout, effAngle synthesised from exit=2):
-        // both spokes already sit exactly on the coarse grid, so this is byte-for-byte what was
-        // actually logged on the car ({0xc0,0x00}) and reportedly rendered correctly.
+        // both spokes sit exactly on grid positions, so this is byte-for-byte what was actually
+        // logged on the car ({0xc0,0x00}).
         String r2 = JunctionSchematic.buildRoundabout(180, 2);
         eq("roundabout exit2 (matches the field log)", r2, charStr(192, 0));
 
@@ -472,15 +469,17 @@ public final class NavMappingTest {
         String mainroad = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN_ON_MAINROAD, new int[]{ 2, 64, 0, 192, 2 });
         eq("ordinary/TURN_ON_MAINROAD: same table as TURN", mainroad, charStr(64, 192));
 
-        // FOLLOW_STREET on the default (coarse) grid only has TWO legal positions (64, 192) -- an
-        // oblique lane at 48 deg (SLIGHT_LEFT) and one at 80 deg (NORMAL_LEFT-ish) both collapse onto
-        // the same 64 slot, so two DIFFERENT raw lane values can still fail the "2 distinct" bar.
-        eqNull("ordinary/FOLLOW: two lanes, same coarse slot",
-                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_FOLLOW_STREET, new int[]{ 2, 48, 0, 64, 2 }));
-        // ...but a lane on each side of the road (48-ish left, 176-ish right) still resolves to two
-        // distinct coarse spokes.
+        // FOLLOW_STREET has six legal oblique positions (48, 64, 80 on the left, 176, 192, 208 on the
+        // right), so two lanes 16 apart on the same side stay two distinct spokes...
+        String followSameSide = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_FOLLOW_STREET, new int[]{ 2, 48, 0, 64, 2 });
+        eq("ordinary/FOLLOW: two lanes, same side", followSameSide, charStr(48, 64));
+        // ...a lane on each side of the road keeps its own exact oblique...
         String follow2 = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_FOLLOW_STREET, new int[]{ 2, 80, 0, 176, 2 });
-        eq("ordinary/FOLLOW: obliques on both sides", follow2, charStr(64, 192));
+        eq("ordinary/FOLLOW: obliques on both sides", follow2, charStr(80, 176));
+        // ...and lanes that snap onto one FOLLOW position (straight ahead 0 and 32 both land on 48)
+        // are still "not worth a schematic".
+        eqNull("ordinary/FOLLOW: lanes collapse to one spoke",
+                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_FOLLOW_STREET, new int[]{ 2, 0, 0, 32, 2 }));
     }
 
     private static void yes(String what, boolean got) {
