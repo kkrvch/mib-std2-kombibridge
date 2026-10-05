@@ -533,6 +533,21 @@ public final class NavMappingTest {
         eq("near: roundabout keeps its exit spoke", r == null ? -1 : r.sideStreets.length(), 1);
     }
 
+    private static void currentRoad() {
+        eq("far: the current road captions FOLLOW_STREET",
+                AANavReader.turnToStreet("Next St", "Current St", false), "Current St");
+        eq("near: the road we turn into",
+                AANavReader.turnToStreet("Next St", "Current St", true), "Next St");
+        eq("far, current unknown: next road as before",
+                AANavReader.turnToStreet("Next St", "", false), "Next St");
+        eq("far, current null: next road as before",
+                AANavReader.turnToStreet("Next St", null, false), "Next St");
+        eq("rerouting notice wins even while far",
+                AANavReader.turnToStreet(AANavReader.streetFor(true, "Next St"), "Current St", false),
+                AANavReader.streetFor(true, "Next St"));
+        eq("no roads at all", AANavReader.turnToStreet(null, null, false), "");
+    }
+
     private static void eqNoThrowRoundabout(int effAngle, int exitNumber) {
         try {
             JunctionSchematic.buildRoundabout(effAngle, exitNumber);
@@ -546,7 +561,7 @@ public final class NavMappingTest {
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
                            "directions", "roundabout angles", "imminence",
-						   "next maneuver", "junction schematic" };
+						   "next maneuver", "current road", "junction schematic" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -561,6 +576,7 @@ public final class NavMappingTest {
                 case 8: angles(); break;
                 case 9: imminence(); break;
                 case 10: nextManeuver(); break;
+                case 11: currentRoad(); break;
                 default: junctionSchematic(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));

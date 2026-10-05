@@ -29,12 +29,15 @@ typedef unsigned long  usize;
 // opposed to dist/time which are to the next manoeuvre. Both stay 0 on 1.3 (the legacy feed has no
 // such fields), and 0 is also how "the phone has not said yet" is spelled — at 0 m / 0 s you have
 // arrived and guidance ends anyway, so the two are not worth telling apart.
+// curRoad = the road the car is on NOW (0x8007 current_road, 1.7 only), as opposed to road = the
+// road the next manoeuvre turns into. Empty = the phone did not say.
 // next* = steps[1], the manoeuvre AFTER the current one (1.7 only): the cluster can draw it as the
 // small "then" arrow (navsd ManeuverDescriptor.maneuver_2). Same (event, side) vocabulary as the
 // current one; nextValid 0 = the phone sent no second step (or one we cannot name).
 struct NavState{ u32 seq,status,event,side,dist,time,unit; i32 angle,number; char road[64];
                  char distText[16]; u32 destDist,destTime;
-                 u32 nextValid,nextEvent,nextSide; i32 nextAngle,nextNumber; };
+                 u32 nextValid,nextEvent,nextSide; i32 nextAngle,nextNumber;
+                 char curRoad[64]; };
 static NavState g_st;
 
 // Lane guidance (1.7 only) goes out as IPC line 2, so line 1 stays byte-identical:
@@ -94,7 +97,7 @@ static void pb_str(PB* s,char* dst,int cap){
 //   NavigationManeuver { type=1; roundabout_exit_number=2; roundabout_exit_angle=3; }
 //   NavigationLane  { repeated LaneDirection dir=1 }   LaneDirection { shape=1; is_highlighted=2; }
 //   NavigationCurrentPosition { NavigationStepDistance step=1; NavigationDestinationDistance dest=2;
-//                               NavigationRoad road=3 }
+//                               NavigationText current_road=3 }   (NavigationText { text=1 })
 //   NavigationStepDistance { NavigationDistance distance=1; time_to_step_seconds=2 }
 //   NavigationDestinationDistance { NavigationDistance distance=1; eta=2(string);
 //                                   time_to_arrival_seconds=3 }
@@ -271,6 +274,9 @@ static int parse_navstatus(const u8* p,u32 len){
 
 static void parse_curpos(const u8* p,u32 len){
   PB s; s.p=p; s.e=p+len; u32 f,w; int gotDest=0;
+  // The current road is part of every position update; one that does not carry it means "not known
+  // here" (unnamed road, car park), so it is cleared rather than left showing the last street.
+  char cur[sizeof g_st.curRoad]; cur[0]=0;
   while(pb_tag(&s,&f,&w)){
     if(f==1&&w==2){                              // NavigationStepDistance (field 2 is the destination)
       PB d; if(!pb_sub(&s,&d)) break;
@@ -320,7 +326,20 @@ static void parse_curpos(const u8* p,u32 len){
         else pb_skip(&d,dw);
       }
     }
+    else if(f==3&&w==2){                         // NavigationText current_road { text = 1 }
+      PB d; if(!pb_sub(&s,&d)) break;
+      u32 tf,tw;
+      while(pb_tag(&d,&tf,&tw)){
+        if(tf==1&&tw==2 && !cur[0]) pb_str(&d,cur,sizeof cur);
+        else pb_skip(&d,tw);
+      }
+    }
     else pb_skip(&s,w);
+  }
+  // Committed when the frame named a road, or was read to its end without one. A frame cut short
+  // before field 3 says nothing about the road, so the last one stays (no flicker on a bad frame).
+  if(cur[0] || s.p>=s.e){
+    for(usize i=0;i<sizeof g_st.curRoad;i++){ g_st.curRoad[i]=cur[i]; if(!cur[i]) break; }
   }
 }
 

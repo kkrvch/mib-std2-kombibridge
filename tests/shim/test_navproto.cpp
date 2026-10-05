@@ -276,6 +276,7 @@ static void test_curpos(){
         g_st.destDist);
   CHECK(g_st.destTime==1978,  "destTime=%u want 1978 (to arrival, not the 24 to the step)",
         g_st.destTime);
+  CHECK(std::strcmp(g_st.curRoad,"R1")==0, "curRoad='%s' want 'R1' (field 3, current road)", g_st.curRoad);
 
   // The three NavigationDistance fields are committed together: an unknown distance must not leave
   // the previous text standing next to a new number, and a frame without the string must clear it
@@ -382,6 +383,36 @@ static void test_snapshot_clears(){
         g_st.event, g_st.side);
 }
 
+// ---- current road (0x8007 field 3): per-frame, cleared when a whole frame omits it ----------------
+static void test_current_road(){
+  reset();
+  Buf road; road.s(1,"Main\tStreet");
+  Buf sd; sd.v(1,300);
+  Buf step; step.m(1,sd);
+  Buf cp; cp.m(1,step); cp.m(3,road);
+  parse_curpos(cp.b,(u32)cp.n);
+  CHECK(std::strcmp(g_st.curRoad,"Main Street")==0, "curRoad='%s' want 'Main Street' (tab sanitised)", g_st.curRoad);
+  CHECK(g_st.road[0]==0, "road='%s' must stay untouched by the current road", g_st.road);
+
+  // A complete frame without field 3: the phone no longer names the road -> cleared.
+  Buf cp2; cp2.m(1,step);
+  parse_curpos(cp2.b,(u32)cp2.n);
+  CHECK(g_st.curRoad[0]==0, "curRoad='%s' want empty after a frame without it", g_st.curRoad);
+
+  // A frame cut short says nothing about the road: the last one stays.
+  parse_curpos(cp.b,(u32)cp.n);
+  Buf longer; longer.m(1,step); longer.m(3,road);
+  parse_curpos(longer.b,(u32)longer.n - 4);
+  CHECK(std::strcmp(g_st.curRoad,"Main Street")==0, "curRoad='%s' must survive a truncated frame", g_st.curRoad);
+
+  // Overlong names are cut to the buffer, never past it.
+  char big[200]; std::memset(big,'x',199); big[199]=0;
+  Buf rb; rb.s(1,big);
+  Buf cp3; cp3.m(3,rb);
+  parse_curpos(cp3.b,(u32)cp3.n);
+  CHECK(std::strlen(g_st.curRoad)==sizeof g_st.curRoad-1, "curRoad len=%u", (unsigned)std::strlen(g_st.curRoad));
+}
+
 // ---- "-1" (unknown) distance/time must NOT clobber the last good countdown ---------------------
 // Seen live on DHU at 0 m to the manoeuvre: the phone sends -1, which as an unsigned varint
 // saturates to 4294967295 and would overflow the jar's Integer.parseInt, dropping the whole line.
@@ -467,6 +498,7 @@ int main(){
     {"road name vs instruction",      test_road_vs_instruction},
     {"navigation state / rerouting",  test_navstatus},
     {"current position distances",    test_curpos},
+    {"current road",                  test_current_road},
     {"long distance string",          test_long_dist_text},
     {"unknown (-1) distance",         test_unknown_distance},
     {"legacy event vocabulary",       test_event_vocabulary},

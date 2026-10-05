@@ -13,7 +13,10 @@ public final class NavState {
     public static volatile int     mainElement    = 13;     // VW MAIN_ELEMENT (13 = TURN), default
     public static volatile int     direction      = 192;    // VW direction angle 0..255 (192 = RIGHT), default
     public static volatile int     zLevelGuidance = 0;
-    public static volatile String  street         = "";     // next-turn road -> TurnToInfo (fid 20)
+    public static volatile String  street         = "";     // TurnToInfo (fid 20): next-turn road, or the current road while far
+    // The road the car is on now (1.7 0x8007 current_road, IPC line 6); "" = the phone did not say.
+    // -> CurrentPositionInfo (fid 19), and TurnToInfo during FOLLOW_STREET (see AANavReader.turnToStreet).
+    public static volatile String  currentRoad    = "";
     // Junction-glyph geometry -> ManeuverDescriptor col3 (Maneuver_1.sidestreets, a BAPString(17)).
     // On a nav-capable cluster this may be a MULTI-character schematic string (see JunctionSchematic)
 	// -- each character is an independent side-street spoke on the same 0..255 CCW scale as `direction`,
