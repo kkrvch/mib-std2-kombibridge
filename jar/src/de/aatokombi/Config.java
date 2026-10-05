@@ -38,7 +38,7 @@ public final class Config {
 	 *
 	 * Requires SHOW_NAV.
      */
-    public static final boolean FORCE_MAP_ON_KOMBI = false;
+    public static final boolean FORCE_MAP_ON_KOMBI = true;
 	 
     /**
      * Draw a multi-spoke junction schematic (several side-street glyphs positioned around the
