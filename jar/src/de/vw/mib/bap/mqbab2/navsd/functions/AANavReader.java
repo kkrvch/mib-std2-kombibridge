@@ -328,6 +328,14 @@ public final class AANavReader implements Runnable {
         NavState.distanceMeters = dist;                          // raw metres (stock formatter in the shadow)
         NavState.zLevelGuidance = 0;
         NavState.ACTIVE         = true;
+        if (Config.LOG_LEVEL <= MIBLogger.DEBUG) {
+            // What actually goes out on BAP this frame -- the other half of the shim's trip dump.
+            NavState.NextManeuver nm = NavState.nextManeuver;
+            MIBLogger.getInstance().debug("navsd out: imminent=" + imminent
+                    + " m1=" + mainElement + "/" + direction + " ss=" + sideStreets.length()
+                    + " m2=" + (nm == null ? "-" : (nm.mainElement + "/" + nm.direction))
+                    + " street='" + NavState.street + "' pos='" + NavState.currentRoad + "'");
+        }
         // MQB navsd shadows (no-op on PQ):
         ActiveRgType.poke();
         RGStatus.poke();

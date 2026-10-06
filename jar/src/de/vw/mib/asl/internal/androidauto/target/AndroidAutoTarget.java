@@ -130,6 +130,8 @@ public class AndroidAutoTarget
         // the media now-playing widget on a non-nav one. Gated by Config.SHOW_NAV so it drives NO
         // cluster surface when nav is off (not started -> NavState.ACTIVE stays false -> navsd renders
         // stock; the media branch is off too). Defensive: must never break target construction.
+        // AAtoKombi: at DEBUG, ask the patched GAL library for its per-trip dump (see TripDump).
+        try { de.aatokombi.TripDump.apply(); } catch (Throwable t) {}
         try {
             if (Config.SHOW_NAV) de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
         } catch (Throwable t) {}

@@ -49,6 +49,9 @@ typedef void* (*fopen_t)(const char*,const char*);
 typedef usize (*fwrite_t)(const void*,usize,usize,void*);
 typedef int   (*fclose_t)(void*);
 static fopen_t  p_fopen;  static fwrite_t p_fwrite; static fclose_t p_fclose;
+// Optional (trip dump timestamps only): clock_gettime(CLOCK_REALTIME=0, struct timespec{u32,u32}*).
+typedef int   (*clock_gettime_t)(int,void*);
+static clock_gettime_t p_clock_gettime;
 
 // minimal ELF32
 struct Ehdr{ u8 ident[16]; u16 type,machine; u32 version,entry,phoff,shoff,flags;
@@ -98,6 +101,7 @@ static void resolve_libc(){
     if(streq(nm,"fopen"))       p_fopen =(fopen_t)addr;
     else if(streq(nm,"fwrite")) p_fwrite=(fwrite_t)addr;
     else if(streq(nm,"fclose")) p_fclose=(fclose_t)addr;
+    else if(streq(nm,"clock_gettime")) p_clock_gettime=(clock_gettime_t)addr;
   }
 }
 
@@ -135,6 +139,124 @@ static void write_file_mode(const char* path, const char* buf, usize len, const 
 }
 static void write_file(const char* path, const char* buf, usize len){
   write_file_mode(path,buf,len,"w");
+}
+
+// ===== trip dump: everything the phone sent, for offline diagnosis (DEBUG builds only) ===========
+// Off unless the HMI jar runs at Config.LOG_LEVEL <= DEBUG: the jar then creates DUMP_FLAG at HMI
+// start, and the shim checks it once per AA session, on the session's first message. Two append-only
+// text files, one per channel, in /dev/shmem only (RAM: never on the SD card; lost on reboot, so copy
+// them off before the unit restarts):
+//   aa_dump_nav.log    R <id> <len> <hex payload>   every message on the navigation channel, raw
+//                      > <line>                     every line handed to the jar via aa_nav
+//   aa_dump_media.log  S ... / M ...                status / metadata callbacks, decoded + raw words
+//                      > <line>                     every line handed to the jar via aa_media
+// Every line starts with "<unix seconds>.<ms>" (or 0.000 if clock_gettime is not available), and a
+// session is framed by "= session N start" / "= session N end". Cover-art bytes are never dumped.
+// Written through a RAM buffer flushed every few seconds / ~12 KB, so the SAL thread that runs these
+// callbacks does at most one small open-append-close per flush; each file stops at DUMP_MAX.
+static const char DUMP_FLAG[] = "/dev/shmem/aa_debug";
+static const char DUMP_DIR[] = "/dev/shmem/";
+static const char DUMP_NAV_NAME[]   = "aa_dump_nav.log";
+static const char DUMP_MEDIA_NAME[] = "aa_dump_media.log";
+enum { DUMP_BUF = 16384, DUMP_FLUSH_AT = 12288, DUMP_FLUSH_S = 5, DUMP_HEX_MAX = 2048 };
+static const u32 DUMP_MAX = 8u*1024u*1024u;   // per file; it lives in RAM
+struct Dump { char path[64]; char buf[DUMP_BUF]; u32 n; u32 total; u32 lastFlushS; u32 full; };
+static Dump g_dnav, g_dmedia;
+static u32 g_dumpState;                // 0 = not decided this session, 1 = on, 2 = off
+
+static void dump_now(u32* sec, u32* ms){
+  u32 ts[2]; ts[0]=0; ts[1]=0;
+  if(p_clock_gettime) (void)p_clock_gettime(0, ts);
+  *sec=ts[0]; *ms=ts[1]/1000000u;
+}
+static void dump_path(Dump* d, const char* dir, const char* name){
+  int j=0;
+  for(int i=0; dir[i] && j<(int)sizeof d->path-1; i++) d->path[j++]=dir[i];
+  for(int i=0; name[i] && j<(int)sizeof d->path-1; i++) d->path[j++]=name[i];
+  d->path[j]=0;
+}
+static void dump_flush(Dump* d){
+  if(!d->n) return;
+  if(!d->full && d->path[0]){
+    write_file_mode(d->path, d->buf, d->n, "a");
+    d->total += d->n;
+    if(d->total >= DUMP_MAX){
+      static const char note[] = "= dump full, stopping\n";
+      write_file_mode(d->path, note, sizeof note - 1, "a");
+      d->full = 1;
+    }
+  }
+  d->n = 0;
+  u32 ms; dump_now(&d->lastFlushS, &ms);
+}
+static void dump_put(Dump* d, const char* s, usize n){
+  if(d->n + n > DUMP_BUF) dump_flush(d);
+  if(n > DUMP_BUF) n = DUMP_BUF;
+  for(usize i=0;i<n;i++) d->buf[d->n++] = s[i];
+}
+static void dump_str(Dump* d, const char* s){ dump_put(d, s, my_strlen(s)); }
+static void dump_dec(Dump* d, u32 v){ char t[12]; char* e=u2dec(t,v); dump_put(d,t,(usize)(e-t)); }
+static void dump_hexword(Dump* d, u32 v){
+  static const char h[]="0123456789abcdef"; char t[8];
+  for(int i=0;i<8;i++) t[i]=h[(v>>(28-4*i))&0xf];
+  dump_put(d,t,8);
+}
+// "<sec>.<ms> <tag> " -- the start of every record.
+static void dump_begin(Dump* d, char tag){
+  u32 sec, ms; dump_now(&sec,&ms);
+  dump_dec(d,sec); dump_put(d,".",1);
+  char t[3]; t[0]=(char)('0'+ms/100); t[1]=(char)('0'+(ms/10)%10); t[2]=(char)('0'+ms%10);
+  dump_put(d,t,3); dump_put(d," ",1); dump_put(d,&tag,1); dump_put(d," ",1);
+}
+static void dump_end(Dump* d){
+  dump_put(d,"\n",1);
+  u32 sec, ms; dump_now(&sec,&ms);
+  if(d->n >= DUMP_FLUSH_AT || sec - d->lastFlushS >= DUMP_FLUSH_S) dump_flush(d);
+}
+static void dump_session(Dump* d, const char* what){
+  dump_begin(d,'='); dump_str(d,"session "); dump_dec(d,g_session); dump_put(d," ",1);
+  dump_str(d,what); dump_end(d);
+}
+// Decided once per session, on its first message: by then the HMI (and the jar's flag) is up.
+static int dump_on(){
+  if(g_dumpState) return g_dumpState==1;
+  g_dumpState = 2;
+  if(!p_fopen || !p_fclose) return 0;
+  void* f = p_fopen(DUMP_FLAG,"r");
+  if(!f) return 0;
+  p_fclose(f);
+  dump_path(&g_dnav, DUMP_DIR, DUMP_NAV_NAME);
+  void* t = p_fopen(g_dnav.path,"a");
+  if(t){ p_fclose(t); dump_path(&g_dmedia, DUMP_DIR, DUMP_MEDIA_NAME); g_dumpState = 1; }
+  if(g_dumpState != 1) return 0;
+  g_dnav.n=0; g_dmedia.n=0;
+  dump_session(&g_dnav,"start"); dump_session(&g_dmedia,"start");
+  return 1;
+}
+// Session over (teardown, or a new session replacing the old one): close it out on disk.
+static void dump_close(){
+  if(g_dumpState==1){
+    dump_session(&g_dnav,"end"); dump_session(&g_dmedia,"end");
+    dump_flush(&g_dnav); dump_flush(&g_dmedia);
+  }
+  g_dumpState = 0;
+}
+// Every line of an IPC buffer, as "> <line>".
+static void dump_ipc(Dump* d, const char* b, usize len){
+  usize i=0;
+  while(i<len){
+    usize j=i; while(j<len && b[j]!='\n') j++;
+    dump_begin(d,'>'); dump_put(d,b+i,j-i); dump_end(d);
+    i=j+1;
+  }
+}
+static void dump_nav_raw(u32 id, const u8* p, u32 len){
+  Dump* d=&g_dnav; static const char h[]="0123456789abcdef";
+  dump_begin(d,'R'); dump_hexword(d,id); dump_put(d," ",1); dump_dec(d,len); dump_put(d," ",1);
+  u32 n = len<DUMP_HEX_MAX ? len : DUMP_HEX_MAX;
+  for(u32 i=0;p && i<n;i++){ char t[2]; t[0]=h[p[i]>>4]; t[1]=h[p[i]&0xf]; dump_put(d,t,2); }
+  if(n<len) dump_str(d," +more");
+  dump_end(d);
 }
 
 static void ipc_flush(){
@@ -204,6 +326,7 @@ static void ipc_flush(){
     *o++='\n';
   }
   write_file(IPC_PATH, b, (usize)(o-b));
+  if(g_dumpState==1) dump_ipc(&g_dnav, b, (usize)(o-b));
 }
 
 // Copy a CoW std::string's data (data = *(char**)strObj) into a fixed buffer.
@@ -276,6 +399,7 @@ static void media_flush(){
   o=u2dec(o,g_ms.repeatOne);              // field 12: repeat one (the track)
   *o++='\n';
   write_file(IPC_MEDIA, b, (usize)(o-b));
+  if(g_dumpState==1) dump_ipc(&g_dmedia, b, (usize)(o-b));
 }
 
 // Listener vtable {s0, dtor, onStatus(+8), onMetadata(+0xc)}.
@@ -294,9 +418,16 @@ static void m_dtor(void*){}
 // so as declared arguments: a4=State, a5=MediaSource, 6=PlaybackSeconds, 7=the packed flag bytes.
 // The flags are read from that one record word, not from r2/r3, so all three come from the same copy.
 static u32 flag01(u32 b){ return b==1 ? 1u : 0u; }      // a bool byte; anything else = not set
-static void m_status(void* /*self*/, void* /*rec*/, u32 /*repeat*/, u32 /*repeatOne*/,
+static void m_status(void* /*self*/, void* /*rec*/, u32 repeat, u32 repeatOne,
                      u32 state, u32 /*source*/, u32 playbackSeconds, u32 flags){
   g_mediaConn=1;                        // data flowing => channel up
+  if(dump_on()){                        // raw words as received: state, position, flag bytes, r2/r3
+    Dump* d=&g_dmedia; dump_begin(d,'S');
+    dump_str(d,"state="); dump_dec(d,state); dump_str(d," pos="); dump_dec(d,playbackSeconds);
+    dump_str(d," flags="); dump_hexword(d,flags);
+    dump_str(d," r2="); dump_dec(d,repeat); dump_str(d," r3="); dump_dec(d,repeatOne);
+    dump_end(d);
+  }
   g_ms.pos = playbackSeconds;
   g_ms.state     = (state<=3) ? state : 0u;   // 1 STOPPED, 2 PLAYING, 3 PAUSED; else "not said"
   g_ms.shuffle   = flag01( flags        & 0xffu);
@@ -307,8 +438,22 @@ static void m_status(void* /*self*/, void* /*rec*/, u32 /*repeat*/, u32 /*repeat
 // handleMediaPlaybackMetadata → +0xc. arr = 5 CoW std::string in the order the device builds them:
 //   arr[0]=Song, arr[1]=Album, arr[2]=Artist, arr[3]=AlbumArt(bytes), arr[4]=Playlist.
 // durationSeconds (MediaPlaybackMetadata+0x24) is the track length — feeds the progress bar total.
-static void m_metadata(void* /*self*/, void* arr, u32 /*a2*/, u32 /*a3*/){
+static void m_metadata(void* /*self*/, void* arr, u32 a2, u32 a3){
   g_mediaConn=1;                        // data flowing => channel up
+  if(dump_on()){                        // strings + the raw words after them (dur, rating) and r2/r3
+    Dump* d=&g_dmedia; dump_begin(d,'M');
+    if(arr){
+      const u32* w=(const u32*)arr;
+      char t[80];
+      rd_str_to(&((void**)arr)[0], t, sizeof t); dump_str(d,"song='");   dump_str(d,t);
+      rd_str_to(&((void**)arr)[2], t, sizeof t); dump_str(d,"' artist='"); dump_str(d,t);
+      rd_str_to(&((void**)arr)[1], t, sizeof t); dump_str(d,"' album='"); dump_str(d,t);
+      rd_str_to(&((void**)arr)[4], t, sizeof t); dump_str(d,"' playlist='"); dump_str(d,t);
+      dump_str(d,"' w5="); dump_dec(d,w[5]); dump_str(d," w6="); dump_dec(d,w[6]);
+    } else dump_str(d,"arr=null");
+    dump_str(d," r2="); dump_hexword(d,a2); dump_str(d," r3="); dump_hexword(d,a3);
+    dump_end(d);
+  }
   void** a = (void**)arr;
   if(a){
     rd_str_to(&a[0], g_ms.song,   sizeof g_ms.song);
@@ -457,6 +602,7 @@ int nav_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
       if(base && size>off+2 && (size-off-2)<0x40000){ payload = base+off+2; plen = size-off-2; }
     }
   }
+  if(dump_on()) dump_nav_raw(id,payload,plen);   // DEBUG only; before any parsing, so nothing is lost
   if(id==0x8006 || id==0x8007){
     if(payload){
       if(id==0x8006){
@@ -527,6 +673,7 @@ extern "C" __attribute__((used)) void gal_nav_inject(void* receiver){
   // Close the census of the session that just died BEFORE bumping the epoch, so its totals carry the
   // number of the session they describe; then start the new one's list.
   ids_close_session();
+  dump_close();                                   // the old session's dump (if any) ends here
   g_session++; g_navConn=0; g_mediaConn=0;
   ipc_flush();
   media_flush();
@@ -602,6 +749,7 @@ extern "C" __attribute__((used)) void gal_shutdown_hook(void* messageRouter){
   // this, a same-object reconnect left our nav/media endpoints dead while AA projection came back.
   g_inited_receiver = 0;
   ipc_flush(); media_flush();
+  dump_close();
   ((mrsd_t)ref(R_MR_SHUTDOWN))(messageRouter);   // displaced original MessageRouter::shutdown(this+4)
 }
 __attribute__((naked,used)) extern "C" void shutdown_trampoline(){

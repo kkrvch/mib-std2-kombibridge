@@ -155,6 +155,11 @@ public final class Config {
     /**
      * Log verbosity, compiled into the jar: MIBLogger.TRACE | DEBUG | INFO | ERROR | SILENT.
      * This is the sole source of the level (the former /media/mp000/MIBLogger SD override is gone).
+     *
+     * DEBUG (or TRACE) also switches on the shim's trip dump (see de.aatokombi.TripDump): every
+     * message the phone sends on the navigation and media channels, raw, plus every line handed to
+     * the jar, appended to /dev/shmem/aa_dump_nav.log and /dev/shmem/aa_dump_media.log (RAM only,
+     * never the SD card; gone after a reboot). Each file stops at 8 MB.
      */
     public static final int LOG_LEVEL = MIBLogger.DEBUG;
 }
