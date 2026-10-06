@@ -34,10 +34,13 @@ typedef unsigned long  usize;
 // next* = steps[1], the manoeuvre AFTER the current one (1.7 only): the cluster can draw it as the
 // small "then" arrow (navsd ManeuverDescriptor.maneuver_2). Same (event, side) vocabulary as the
 // current one; nextValid 0 = the phone sent no second step (or one we cannot name).
+// destName = the address of the FIRST destination in 0x8006 (NavigationDestination.address, 1.7
+// only), as one free-form string ("ул. Ленина 1"); the jar puts it into navsd DestinationInfo.
+// Empty = the phone did not say.
 struct NavState{ u32 seq,status,event,side,dist,time,unit; i32 angle,number; char road[64];
                  char distText[16]; u32 destDist,destTime;
                  u32 nextValid,nextEvent,nextSide; i32 nextAngle,nextNumber;
-                 char curRoad[64]; };
+                 char curRoad[64]; char destName[96]; };
 static NavState g_st;
 
 // Lane guidance (1.7 only) goes out as IPC line 2, so line 1 stays byte-identical:
@@ -78,6 +81,13 @@ static void pb_str(PB* s,char* dst,int cap){
   for(u32 i=0;i<n;i++){ char c=(char)s->p[i];
     if(c=='\n'||c=='\r'||c=='\t') c=' ';          // line 1 is newline-delimited; never break it
     if(j<cap-1) dst[j++]=c; }
+  // Cut short: never leave half a UTF-8 sequence at the end (Cyrillic is 2 bytes a letter), or the
+  // jar decodes a replacement glyph onto the cluster. Back off to the lead byte of the partial char.
+  if((u32)j<n && j>0){
+    int k=j; while(k>0 && (((u8)dst[k-1])&0xC0)==0x80) k--;   // k-1 = lead byte (or ASCII)
+    if(k>0){ u8 lead=(u8)dst[k-1]; int need=(lead>=0xF0)?4:(lead>=0xE0)?3:(lead>=0xC0)?2:1;
+             if(j-(k-1)<need) j=k-1; }
+  }
   dst[j]=0; s->p+=n;
 }
 
@@ -93,6 +103,7 @@ static void pb_str(PB* s,char* dst,int cap){
 //   NavigationStep  { NavigationManeuver maneuver=1; NavigationText instruction=2;
 //                     repeated NavigationLane lanes=3; NavigationRoadInfo road_info=4; }
 //   NavigationText  { text=1 }      NavigationRoadInfo { repeated string road_names=1 }
+//   NavigationDestination { string address=1; ChargingStationDetails charging_station=2; }
 //   NavigationDestination { address=1; ChargingStationDetails charging_station=2 }
 //   NavigationManeuver { type=1; roundabout_exit_number=2; roundabout_exit_angle=3; }
 //   NavigationLane  { repeated LaneDirection dir=1 }   LaneDirection { shape=1; is_highlighted=2; }
@@ -241,14 +252,26 @@ static void parse_step(PB s){
 // Returns 1 when a step was actually parsed. The caller uses that as the "guidance is running"
 // signal: at 1.7 the stock dispatcher is bypassed entirely, so its status callback never fires and
 // this message is the only evidence that a route exists.
+// The destination is message-level, so it follows the same "complete snapshot" rule as the step,
+// but only for a frame that carried a step: a stepless (truncated) frame changes nothing.
 static int parse_navstate(const u8* p,u32 len){
   PB s; s.p=p; s.e=p+len;
-  int first=1,second=0; u32 f,w;
+  int first=1,second=0,gotDest=0; u32 f,w;
+  char dest[sizeof g_st.destName]; dest[0]=0;
   while(pb_tag(&s,&f,&w)){
     if(f==1&&w==2){ PB d; if(!pb_sub(&s,&d)) break;
                     if(first){ parse_step(d); first=0; }
                     else if(!second){ parse_next_step(d); second=1; } }   // steps[2..] unused
+    else if(f==2&&w==2){ PB d; if(!pb_sub(&s,&d)) break;
+                    if(!gotDest){ u32 df,dw;                             // dests[1..] = later legs
+                      while(pb_tag(&d,&df,&dw)){
+                        if(df==1&&dw==2) pb_str(&d,dest,sizeof dest);
+                        else pb_skip(&d,dw); }
+                      gotDest=1; } }
     else pb_skip(&s,w);
+  }
+  if(!first){
+    for(usize i=0;i<sizeof g_st.destName;i++){ g_st.destName[i]=dest[i]; if(!dest[i]) break; }
   }
   return !first;
 }

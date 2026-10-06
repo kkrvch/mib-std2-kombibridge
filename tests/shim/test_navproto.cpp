@@ -487,6 +487,40 @@ static void test_fuzz(){
   }
 }
 
+// ---- destination address (0x8006 field 2) ----------------------------------------------------
+static int hexval(char c){ return c<='9'? c-'0' : (c|32)-'a'+10; }
+static void test_destination(){
+  reset();
+  // Golden frame: Google Maps, 2026-10 trip dump (one step + one destination).
+  const char* hx="0a6c0a02080112320a30d09220d181d182d0bed180d0bed0bdd18320d183d0bb2e20d0a1d182d0b0d185d0b0d0bdd0bed0b2d181d0bad0b0d18f22320a30d09220d181d182d0bed180d0bed0bdd18320d183d0bb2e20d0a1d182d0b0d185d0b0d0bdd0bed0b2d181d0bad0b0d18f12220a20d183d0bb2e20d09fd180d0bed0bcd18bd188d0bbd0b5d0bdd0bdd0b0d18f2031";
+  u8 fr[256]; u32 n=0; for(const char* h=hx; h[0]&&h[1]; h+=2) fr[n++]=(u8)(hexval(h[0])*16+hexval(h[1]));
+  CHECK(parse_navstate(fr,n)==1, "golden frame: no step parsed");
+  CHECK(std::strcmp(g_st.destName,"\xd1\x83\xd0\xbb. \xd0\x9f\xd1\x80\xd0\xbe\xd0\xbc\xd1\x8b\xd1\x88\xd0\xbb\xd0\xb5\xd0\xbd\xd0\xbd\xd0\xb0\xd1\x8f 1")==0,
+        "destName='%s'", g_st.destName);
+  CHECK(g_st.event==1, "event=%u want 1 (DEPART)", g_st.event);
+
+  // Only the first destination; later legs ignored.
+  Buf a1; a1.s(1,"Home"); Buf a2; a2.s(1,"Work");
+  Buf mv; mv.v(1,7); Buf st; st.m(1,mv);
+  Buf f2; f2.m(1,st); f2.m(2,a1); f2.m(2,a2);
+  parse_navstate(f2.b,(u32)f2.n);
+  CHECK(std::strcmp(g_st.destName,"Home")==0, "destName='%s' want Home", g_st.destName);
+
+  // A complete frame with a step but no destination clears it; a stepless one changes nothing.
+  Buf f3; f3.m(1,st); parse_navstate(f3.b,(u32)f3.n);
+  CHECK(g_st.destName[0]==0, "destName='%s' want empty", g_st.destName);
+  parse_navstate(f2.b,(u32)f2.n);
+  Buf f4; f4.m(2,a2); parse_navstate(f4.b,(u32)f4.n);
+  CHECK(std::strcmp(g_st.destName,"Home")==0, "stepless frame changed destName to '%s'", g_st.destName);
+
+  // Truncation never leaves half a UTF-8 letter: 60 x "Ж" (120 bytes) into a 96-byte buffer.
+  char big[121]; for(int i=0;i<60;i++){ big[2*i]=(char)0xd0; big[2*i+1]=(char)0x96; } big[120]=0;
+  Buf ab; ab.s(1,big); Buf f5; f5.m(1,st); f5.m(2,ab);
+  parse_navstate(f5.b,(u32)f5.n);
+  usize L=std::strlen(g_st.destName);
+  CHECK(L==94, "destName len=%u want 94 (47 whole letters)", (unsigned)L);
+}
+
 int main(){
   struct { const char* name; void(*fn)(); } tests[] = {
     {"five lanes (golden frame)",     test_five_lanes},
@@ -499,6 +533,7 @@ int main(){
     {"navigation state / rerouting",  test_navstatus},
     {"current position distances",    test_curpos},
     {"current road",                  test_current_road},
+    {"destination address",           test_destination},
     {"long distance string",          test_long_dist_text},
     {"unknown (-1) distance",         test_unknown_distance},
     {"legacy event vocabulary",       test_event_vocabulary},

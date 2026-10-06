@@ -265,8 +265,8 @@ static void ipc_flush(){
   // connected/session are inserted BEFORE road (road is the space-remainder field, may hold spaces).
   // Worst case ~123 numeric bytes + road[63] + '\n', plus the tagged lines below (variable lane
   // directions ~100, distance text ~20, destination ~24, next manoeuvre ~40, current road ~66) ->
-  // ~470 worst case, so the buffer is 600.
-  char b[600]; char* o=b;
+  // ~470 worst case, plus the destination address ~98 -> ~570, so the buffer is 720.
+  char b[720]; char* o=b;
   o=u2dec(o,g_st.seq);   *o++=' ';
   o=u2dec(o,g_st.status);*o++=' ';
   o=u2dec(o,g_st.event); *o++=' ';
@@ -288,6 +288,7 @@ static void ipc_flush(){
   //   "5 <event> <side> <angle> <number>"  the manoeuvre AFTER the current one (steps[1]); absent =
   //                        the phone sent none. Same vocabulary as line 1's event/side/angle/number.
   //   "6 <road>"           the road the car is on now (0x8007 current_road); absent = not known
+  //   "7 <address>"        the destination (first NavigationDestination.address); absent = not known
   if(g_nLane){
     *o++='2'; *o++='v'; *o++=' ';
     o=u2dec(o,g_nLane);
@@ -323,6 +324,11 @@ static void ipc_flush(){
   if(g_st.curRoad[0]){
     *o++='6'; *o++=' ';
     { usize n=my_strlen(g_st.curRoad); for(usize i=0;i<n;i++) *o++=g_st.curRoad[i]; }
+    *o++='\n';
+  }
+  if(g_st.destName[0]){
+    *o++='7'; *o++=' ';
+    { usize n=my_strlen(g_st.destName); for(usize i=0;i<n;i++) *o++=g_st.destName[i]; }
     *o++='\n';
   }
   write_file(IPC_PATH, b, (usize)(o-b));
@@ -627,7 +633,7 @@ int nav_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
       // finished trip's distance and travel time would still be in the file when the NEXT route
       // starts, and the jar would publish them until that route's first 0x8007 lands. This used to
       // live in the legacy status callback, which nothing reaches any more.
-      if(st!=1 && st!=3){ g_st.destDist=0; g_st.destTime=0; g_st.nextValid=0; g_st.curRoad[0]=0; }
+      if(st!=1 && st!=3){ g_st.destDist=0; g_st.destTime=0; g_st.nextValid=0; g_st.curRoad[0]=0; g_st.destName[0]=0; }
       g_navConn=1; g_st.status=(u32)st; g_st.seq++; ipc_flush();
     }
   }

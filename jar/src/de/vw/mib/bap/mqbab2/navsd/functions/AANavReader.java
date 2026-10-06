@@ -173,6 +173,7 @@ public final class AANavReader implements Runnable {
                     + " lanes=" + taggedLine(lines, '2')  // raw shim payload: "<count> <lane0> <lane1> ..."
                     + " next=" + taggedLine(lines, '5')   // raw shim payload: "<event> <side> <angle> <number>"
                     + " cur='" + taggedLine(lines, '6') + "'"  // the road the car is on now
+                    + " destName='" + taggedLine(lines, '7') + "'"  // the destination address
                     + " q4='" + quaternaryFor(event, number) + "' road=" + road);
         }
 
@@ -210,7 +211,8 @@ public final class AANavReader implements Runnable {
                 ActiveRgType.primeForAAStart(Config.FORCE_MAP_ON_KOMBI);
             }
             publishNavsd(event, side, angle, number, streetFor(rerouting, road), dist, time,
-                    packNextManeuver(taggedLine(lines, '5')), taggedLine(lines, '6'));
+                    packNextManeuver(taggedLine(lines, '5')), taggedLine(lines, '6'),
+                    taggedLine(lines, '7'));
         } else {
             if (statusEdge && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
@@ -261,7 +263,7 @@ public final class AANavReader implements Runnable {
 
     // ===== nav-capable path: NavState + navsd shadows ==========================================
     private void publishNavsd(int event, int side, int angle, int number, String road, int dist, int time,
-                              int[] next, String currentRoad) {
+                              int[] next, String currentRoad, String destination) {
         de.aatokombi.MediaViewMode.guidance(false);
         // Only the glyph waits: street, countdown and destination keep running meanwhile.
         boolean imminent = maneuverImminent(dist, time);
@@ -322,6 +324,7 @@ public final class AANavReader implements Runnable {
         NavState.mainElement    = mainElement;
         NavState.direction      = direction;
         NavState.currentRoad    = (currentRoad != null) ? currentRoad : "";
+        NavState.destinationName = (destination != null) ? destination : "";
         NavState.street         = turnToStreet(road, currentRoad, imminent);   // -> TurnToInfo
         NavState.sideStreets    = sideStreets;
         NavState.approaching    = imminent;
@@ -343,6 +346,7 @@ public final class AANavReader implements Runnable {
         DistanceToNextManeuver.poke();
         TurnToInfo.poke();
         CurrentPositionInfo.poke();          // fn 19
+        DestinationInfo.poke();              // fn 46
         LaneGuidance.poke();                 // fn 24
         DistanceToDestination.poke();        // fn 21
         TimeToDestination.poke();            // fn 22
@@ -462,9 +466,17 @@ public final class AANavReader implements Runnable {
         if (event == 6) {
             return (side == 2) ? 192 : 64;
         }
-        if (event == 1 || event == 2 || event == 14
-                || event == 17 || event == 18 || event == 19) {
-            return 0;                              // depart / name-change / straight / arrival
+        if (event == 17 || event == 18 || event == 19) {
+            // Arrival (ARRIVED glyph): the shim folds DESTINATION_LEFT/RIGHT onto 17 + side, so the
+            // side is the only place "the destination is on your left/right" survives. Turned the way
+            // a turn would be; straight/unspecified stays 0. [HW-TUNE: whether the AID rotates the
+            // ARRIVED glyph at all is unverified]
+            if (side == 1) return 64;
+            if (side == 2) return 192;
+            return 0;
+        }
+        if (event == 1 || event == 2 || event == 14) {
+            return 0;                              // depart / name-change / straight
         }
         if (event == 11 || event == 12 || event == 13) {    // roundabout: true exit bearing when sent
             if (angle >= 1 && angle <= 360) {
@@ -815,6 +827,8 @@ public final class AANavReader implements Runnable {
                 NavState.nextManeuver = null;
                 NavState.currentRoad = "";
                 CurrentPositionInfo.poke();
+                NavState.destinationName = "";
+                DestinationInfo.poke();
                 LaneGuidance.poke();
                 // Zero before poking: a stale destination outliving its route would otherwise be the
                 // one number on the cluster nobody can tell is stale.
@@ -871,7 +885,7 @@ public final class AANavReader implements Runnable {
      * after it are 1.7 extras, each tagged with its own marker and written only when it has content,
      * so they are matched by marker rather than by position: "2 " = lane guidance, "3 " = the phone's
      * own distance string, "4 " = distance/time to the destination, "5 " = the manoeuvre after the
-     * current one, "6 " = the road the car is on now. Lane line "2v " is the current
+     * current one, "6 " = the road the car is on now, "7 " = the destination address. Lane line "2v " is the current
      * variable-direction encoding; "2 " remains accepted for a jar deployed with an older shim.
      * Any element may be null.
      */

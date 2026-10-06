@@ -284,6 +284,8 @@ public final class NavMappingTest {
         eq("depart",          AANavReader.mapDirection(1, 3, 0), 0);
         eq("straight",        AANavReader.mapDirection(14, 3, 0), 0);
         eq("arrival",         AANavReader.mapDirection(17, 3, 0), 0);
+        eq("arrival on the left",  AANavReader.mapDirection(17, 1, 0), 64);
+        eq("arrival on the right", AANavReader.mapDirection(17, 2, 0), 192);
 
         eq("slight left",     AANavReader.mapDirection(3, 1, 0), 32);
         eq("slight right",    AANavReader.mapDirection(3, 2, 0), 224);
