@@ -5,6 +5,8 @@
  */
 package de.vw.mib.bap.mqbab2.navsd.functions;
 
+import de.aatokombi.Config;
+import de.adi961.miblogger.MIBLogger;
 import de.vw.mib.bap.datatypes.BAPEntity;
 import de.vw.mib.bap.functions.BAPFunctionListener;
 import de.vw.mib.bap.functions.Property;
@@ -56,25 +58,40 @@ NavigationServiceListener {
 
     private void setCurrentPositionInfoStatusData(CurrentPositionInfo_Status currentPositionInfo_Status) {
         try {
-            if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
-                // navsd-shadow delta: the AA current road. Stock blanks this while its own route
-                // guidance runs; AA has no such rule, so the road is sent whenever the phone names it.
-                String road = NavState.currentRoad;
-                currentPositionInfo_Status.positionInfo.setContent(road != null ? road : "");
+            String aaRoad = NavState.currentRoad;
+            if (ClusterCaps.isNavCapable() && NavState.ACTIVE && aaRoad != null && aaRoad.length() > 0) {
+                // navsd-shadow delta: the AA current road (0x8007 current_road), when the phone names
+                // it. Google Maps does not send it at all (trip dump 2026-10), so without it we fall
+                // through to the stock value below: the unit's own map-matched street, which is what
+                // the cluster showed under the FOLLOW_STREET arrow before this shadow existed.
+                currentPositionInfo_Status.positionInfo.setContent(aaRoad);
             } else if (ClusterCaps.isNavCapable()) {
                 // Stock: the position only while the unit's own navigation is NOT guiding.
                 NavigationService navigationService = this.getNavigationService();
                 String string = navigationService.getCurrentPositionInfo();
-                if (string == null || navigationService.getNavigationStatus() != 0) {
-                    currentPositionInfo_Status.positionInfo.setContent("");
-                } else {
-                    currentPositionInfo_Status.positionInfo.setContent(string);
-                }
+                int navStatus = navigationService.getNavigationStatus();
+                String out = (string == null || navStatus != 0) ? "" : string;
+                currentPositionInfo_Status.positionInfo.setContent(out);
+                logStock(string, navStatus, out);
             } else {
                 currentPositionInfo_Status.positionInfo.setContent("");
             }
         } catch (Throwable t) {
             // leave empty on any failure; never crash navsd
+        }
+    }
+
+    // Debug-only, change-triggered: what the stock path saw and sent (diagnosing the AID caption).
+    private static String lastStockLog = null;
+    private static void logStock(String raw, int navStatus, String out) {
+        if (Config.LOG_LEVEL > MIBLogger.DEBUG) {
+            return;
+        }
+        String line = "CurrentPositionInfo stock: raw='" + raw + "' navStatus=" + navStatus
+                + " out='" + out + "' aaActive=" + NavState.ACTIVE;
+        if (!line.equals(lastStockLog)) {
+            lastStockLog = line;
+            MIBLogger.getInstance().debug(line);
         }
     }
 
