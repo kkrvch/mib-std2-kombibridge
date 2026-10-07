@@ -69,7 +69,7 @@ regardless, and every stock-service call is wrapped so a non-routing engine can 
 | `CurrentPositionInfo` | 19 | the current road (stock fills it only while its own guidance is idle; the cluster may not show it during guidance) | IPC line 6 (0x8007 `current_road`) |
 | `LaneGuidance` | 24 | the lane row of the junction ahead (a BAP **array**, max 6 lanes, not a property) | `NavState.lanes` |
 | `DistanceToDestination` | 21 | distance to the destination | `NavState.destinationMeters` |
-| `TimeToDestination` | 22 | remaining travel time (a duration, **not** an arrival clock) | `NavState.destinationSeconds` |
+| `TimeToDestination` | 22 | remaining travel time, or the arrival clock when the stock nav-menu switch says so (`getTimeToDestinationTimeInfo() == 1`) and the phone's ETA string parses (`AANavReader.parseEtaClock`); otherwise the remaining time | `NavState.destinationSeconds`, `NavState.destinationEta` (IPC line 8) |
 
 `ActiveRgType.rgtype = 0` is the real gate (the analogue of the property-732 path on non-nav units,
 but on the correct producer).

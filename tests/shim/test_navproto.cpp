@@ -521,6 +521,26 @@ static void test_destination(){
   CHECK(L==94, "destName len=%u want 94 (47 whole letters)", (unsigned)L);
 }
 
+// ---- destination ETA string (0x8007 destination field 2) ---------------------------------------
+static void test_dest_eta(){
+  reset();
+  // Golden frame: Google Maps trip dump, 0x8007 with "12:50".
+  const char* hx="0a070a05120130180112160a0a08be131203322c351803120531323a3530188a03";
+  u8 fr[64]; u32 n=0; for(const char* h=hx; h[0]&&h[1]; h+=2) fr[n++]=(u8)(hexval(h[0])*16+hexval(h[1]));
+  parse_curpos(fr,n);
+  CHECK(std::strcmp(g_st.destEta,"12:50")==0, "destEta='%s' want 12:50", g_st.destEta);
+  CHECK(g_st.destTime==394 && g_st.destDist==2494, "dest %u m / %u s", g_st.destDist, g_st.destTime);
+  // A destination entry without the string clears it; only the nearest destination counts.
+  Buf dd; dd.v(1,1000); Buf d1; d1.m(1,dd); d1.v(3,60);
+  Buf d2; d2.m(1,dd); d2.s(2,"23:59"); d2.v(3,600);
+  Buf cp; cp.m(2,d1); cp.m(2,d2);
+  parse_curpos(cp.b,(u32)cp.n);
+  CHECK(g_st.destEta[0]==0, "destEta='%s' want empty (nearest has none)", g_st.destEta);
+  Buf d3; d3.m(1,dd); d3.s(2,"5:42 PM"); d3.v(3,60); Buf cp2; cp2.m(2,d3);
+  parse_curpos(cp2.b,(u32)cp2.n);
+  CHECK(std::strcmp(g_st.destEta,"5:42 PM")==0, "destEta='%s'", g_st.destEta);
+}
+
 int main(){
   struct { const char* name; void(*fn)(); } tests[] = {
     {"five lanes (golden frame)",     test_five_lanes},
@@ -534,6 +554,7 @@ int main(){
     {"current position distances",    test_curpos},
     {"current road",                  test_current_road},
     {"destination address",           test_destination},
+    {"destination ETA string",        test_dest_eta},
     {"long distance string",          test_long_dist_text},
     {"unknown (-1) distance",         test_unknown_distance},
     {"legacy event vocabulary",       test_event_vocabulary},

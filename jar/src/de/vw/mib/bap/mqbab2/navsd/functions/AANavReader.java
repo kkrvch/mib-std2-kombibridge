@@ -201,6 +201,8 @@ public final class AANavReader implements Runnable {
         NavState.laneState = packLaneState(taggedLine(lines, '2')); // only for a frame we are about to publish
         String distText = taggedLine(lines, '3');  // phone-rendered distance, 1.7 only; null on 1.3
         applyDestination(taggedLine(lines, '4'));  // distance/time to destination, 1.7 only
+        String eta = taggedLine(lines, '8');       // the phone's arrival clock string, 1.7 only
+        NavState.destinationEta = (eta != null) ? eta : "";
 
         // Router: one parse, exactly one output, chosen by the runtime cluster type.
         if (navCapable()) {
@@ -896,6 +898,7 @@ public final class AANavReader implements Runnable {
                 // one number on the cluster nobody can tell is stale.
                 NavState.destinationMeters = 0;
                 NavState.destinationSeconds = 0;
+                NavState.destinationEta = "";
                 DistanceToDestination.poke();
                 TimeToDestination.poke();
                 de.vw.mib.bap.mqbpq.navsd.functions.RouteGuidanceStatus.poke();
@@ -918,6 +921,7 @@ public final class AANavReader implements Runnable {
                 NavState.laneState = NavState.NO_LANES;
                 NavState.destinationMeters = 0;
                 NavState.destinationSeconds = 0;
+                NavState.destinationEta = "";
                 NavigationHandler.aaRouteGuidanceActive = false;
                 CurrentStationInfo.pokeNav();
             } catch (Throwable t) {
@@ -947,7 +951,8 @@ public final class AANavReader implements Runnable {
      * after it are 1.7 extras, each tagged with its own marker and written only when it has content,
      * so they are matched by marker rather than by position: "2 " = lane guidance, "3 " = the phone's
      * own distance string, "4 " = distance/time to the destination, "5 " = the manoeuvre after the
-     * current one, "6 " = the road the car is on now, "7 " = the destination address. Lane line "2v " is the current
+     * current one, "6 " = the road the car is on now, "7 " = the destination address,
+     * "8 " = the phone's arrival clock string. Lane line "2v " is the current
      * variable-direction encoding; "2 " remains accepted for a jar deployed with an older shim.
      * Any element may be null.
      */
@@ -957,7 +962,7 @@ public final class AANavReader implements Runnable {
             br = new BufferedReader(new FileReader(PATH));
             // Line 1 plus every tagged line the shim may write (2v, 3, 4, 5, ...), with headroom: a
             // marker that does not fit here would silently never be seen.
-            String[] out = new String[8];
+            String[] out = new String[12];
             for (int i = 0; i < out.length; i++) {
                 out[i] = br.readLine();
             }
@@ -1133,6 +1138,56 @@ public final class AANavReader implements Runnable {
             minutes = 59;
         }
         return new int[]{ hours, minutes };
+    }
+
+    /**
+     * The phone's arrival clock string (IPC line 8) -&gt; {hour 0..23, minute 0..59}, or null when it
+     * cannot be read. Accepts what the navigators were seen to send ("17:42", "7:51") plus the
+     * 12-hour forms of an English phone ("5:42 PM", "12:05 am", "5:42 p.m."); "." also separates.
+     * Anything else (a date, a day suffix, garbage) -&gt; null, and the cluster gets the remaining
+     * time instead.
+     */
+    public static int[] parseEtaClock(String eta) {
+        if (eta == null) {
+            return null;
+        }
+        String s = eta.trim();
+        int n = s.length();
+        int i = 0;
+        int h = 0;
+        int hd = 0;
+        while (i < n && hd < 2 && Character.isDigit(s.charAt(i))) {
+            h = h * 10 + (s.charAt(i) - '0');
+            i++;
+            hd++;
+        }
+        if (hd == 0 || i >= n || (s.charAt(i) != ':' && s.charAt(i) != '.')) {
+            return null;
+        }
+        i++;
+        if (i + 2 > n || !Character.isDigit(s.charAt(i)) || !Character.isDigit(s.charAt(i + 1))) {
+            return null;
+        }
+        int m = (s.charAt(i) - '0') * 10 + (s.charAt(i + 1) - '0');
+        i += 2;
+        String rest = s.substring(i).trim().toLowerCase();
+        if (rest.length() > 0) {
+            String ampm = rest.replace('.', ' ').trim();
+            boolean pm = ampm.startsWith("p");
+            boolean am = ampm.startsWith("a");
+            if ((!pm && !am) || h < 1 || h > 12) {
+                return null;
+            }
+            if (am) {
+                h = (h == 12) ? 0 : h;
+            } else {
+                h = (h == 12) ? 12 : h + 12;
+            }
+        }
+        if (h > 23 || m > 59) {
+            return null;
+        }
+        return new int[]{ h, m };
     }
 
     /** AA lane shape -&gt; VW laneDirection, the same 0..255 CCW scale the manoeuvre arrow uses. */

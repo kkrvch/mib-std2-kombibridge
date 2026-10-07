@@ -143,6 +143,32 @@ SystemServiceListener {
         } catch (Throwable t) {
             timeToDestination_Status.timeInfo.navigationTimeFormat = 0;
         }
+        // The stock nav-menu switch (arrival time vs time to destination) is the unit's own setting,
+        // readable whether or not its route guidance runs; 1 = arrival clock. The clock comes from the
+        // phone's own ETA string, so it matches what the phone shows; unreadable -> remaining time.
+        int preference = 0;
+        try {
+            preference = this.getNavigationService().getTimeToDestinationTimeInfo();
+        } catch (Throwable t) {
+            preference = 0;
+        }
+        int[] clock = (preference == 1 && valid) ? AANavReader.parseEtaClock(NavState.destinationEta) : null;
+        logForm(preference, clock);
+        if (clock != null) {
+            timeToDestination_Status.timeInfo.timeInfoType = 1;   // arrival clock
+            timeToDestination_Status.timeInfo.hour = clock[0];
+            timeToDestination_Status.timeInfo.minute = clock[1];
+            timeToDestination_Status.timeInfo.day = 0;
+            timeToDestination_Status.timeInfo.month = 0;
+            timeToDestination_Status.timeInfo.year = 0;
+            timeToDestination_Status.validityInformation.timeInfo_MinuteIsValid = true;
+            timeToDestination_Status.validityInformation.timeInfo_HourIsValid = true;
+            // The phone's string carries no date, so an arrival after midnight shows just the time.
+            timeToDestination_Status.validityInformation.timeInfo_DayIsAvailableToBeDisplayed = false;
+            timeToDestination_Status.validityInformation.timeInfo_MonthIsAvailableToBeDisplayed = false;
+            timeToDestination_Status.validityInformation.timeInfo_YearIsAvailableToBeDisplayed = false;
+            return;
+        }
         int[] hm = AANavReader.remainingHoursMinutes(seconds);
         timeToDestination_Status.timeInfo.timeInfoType = 0;   // remaining travel time, not arrival clock
         timeToDestination_Status.timeInfo.hour = hm[0];
@@ -157,6 +183,20 @@ SystemServiceListener {
         timeToDestination_Status.validityInformation.timeInfo_DayIsAvailableToBeDisplayed = false;
         timeToDestination_Status.validityInformation.timeInfo_MonthIsAvailableToBeDisplayed = false;
         timeToDestination_Status.validityInformation.timeInfo_YearIsAvailableToBeDisplayed = false;
+    }
+
+    // Debug-only, change-triggered: which form went out and why.
+    private static String lastFormLog = null;
+    private static void logForm(int preference, int[] clock) {
+        if (de.aatokombi.Config.LOG_LEVEL > de.adi961.miblogger.MIBLogger.DEBUG) {
+            return;
+        }
+        String line = "TimeToDestination: pref=" + preference + " eta='" + NavState.destinationEta + "' -> "
+                + (clock != null ? ("arrival " + clock[0] + ":" + clock[1]) : "remaining");
+        if (!line.equals(lastFormLog)) {
+            lastFormLog = line;
+            de.adi961.miblogger.MIBLogger.getInstance().debug(line);
+        }
     }
 
     private void sendtimeToDestinationStatus(TimeToDestination_Status timeToDestination_Status) {

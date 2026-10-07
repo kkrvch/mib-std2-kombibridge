@@ -72,6 +72,9 @@ public final class NavState {
     // (DistanceToDestination fid 21, TimeToDestination fid 22), never one displayed pair.
     public static volatile int     destinationMeters  = 0;
     public static volatile int     destinationSeconds = 0;  // remaining travel time, NOT a clock ETA
+    // The phone's own arrival clock for the destination, verbatim ("17:42", "5:42 PM"; IPC line 8,
+    // 1.7 only); "" = not said. Used only for the arrival-clock form of TimeToDestination (fid 22).
+    public static volatile String  destinationEta = "";
 
     private NavState() {}
 }

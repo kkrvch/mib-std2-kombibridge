@@ -349,6 +349,29 @@ public final class NavMappingTest {
         yes("negative = not known",     AANavReader.maneuverImminent(-1, -1));
 	}
 
+    private static String clock(String eta) {
+        int[] c = AANavReader.parseEtaClock(eta);
+        return c == null ? "null" : (c[0] + ":" + c[1]);
+    }
+
+    private static void etaClock() {
+        eq("24 h",              clock("17:42"), "17:42");
+        eq("one-digit hour",    clock("7:51"), "7:51");
+        eq("padded",            clock(" 07:05 "), "7:5");
+        eq("dot separator",     clock("17.42"), "17:42");
+        eq("PM",                clock("5:42 PM"), "17:42");
+        eq("p.m.",              clock("5:42 p.m."), "17:42");
+        eq("12 AM = 0",         clock("12:05 am"), "0:5");
+        eq("12 PM = 12",        clock("12:30 PM"), "12:30");
+        eq("hour out of range", clock("25:00"), "null");
+        eq("13 PM",             clock("13:00 PM"), "null");
+        eq("minutes missing",   clock("17:"), "null");
+        eq("not a time",        clock("tomorrow"), "null");
+        eq("day suffix",        clock("17:42 +1"), "null");
+        eq("empty",             clock(""), "null");
+        eq("null",              clock(null), "null");
+    }
+
     private static void prepareStage() {
         int m = de.aatokombi.Config.MANEUVER_PREPARE_METERS;
         int s = de.aatokombi.Config.MANEUVER_PREPARE_SECONDS;
@@ -597,7 +620,7 @@ public final class NavMappingTest {
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
                            "directions", "roundabout angles", "imminence",
-						   "next maneuver", "current road", "playback mode", "prepare stage", "junction schematic" };
+						   "next maneuver", "current road", "playback mode", "prepare stage", "eta clock", "junction schematic" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -615,6 +638,7 @@ public final class NavMappingTest {
                 case 11: currentRoad(); break;
                 case 12: playbackMode(); break;
                 case 13: prepareStage(); break;
+                case 14: etaClock(); break;
                 default: junctionSchematic(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));

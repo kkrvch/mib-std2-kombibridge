@@ -40,7 +40,9 @@ typedef unsigned long  usize;
 struct NavState{ u32 seq,status,event,side,dist,time,unit; i32 angle,number; char road[64];
                  char distText[16]; u32 destDist,destTime;
                  u32 nextValid,nextEvent,nextSide; i32 nextAngle,nextNumber;
-                 char curRoad[64]; char destName[96]; };
+                 char curRoad[64]; char destName[96];
+                 char destEta[16];   // phone's arrival clock for the nearest destination ("17:42")
+               };
 static NavState g_st;
 
 // Lane guidance (1.7 only) goes out as IPC line 2, so line 1 stays byte-identical:
@@ -331,6 +333,7 @@ static void parse_curpos(const u8* p,u32 len){
       PB d; if(!pb_sub(&s,&d)) break;            // per remaining waypoint, nearest first.
       if(gotDest) continue;                      // only the nearest reaches the cluster; a stopover
       gotDest=1;                                 // is what the driver is heading for right now.
+      char eta[sizeof g_st.destEta]; eta[0]=0;   // absent in this entry => cleared below
       u32 df,dw;
       while(pb_tag(&d,&df,&dw)){
         if(df==1&&dw==2){ PB n; if(!pb_sub(&d,&n)) break;
@@ -342,12 +345,14 @@ static void parse_curpos(const u8* p,u32 len){
             if(nf==1&&nw==0){ u32 v=pb_var(&n); if(v<=MAX_DIST_M) g_st.destDist=v; }
             else pb_skip(&n,nw);
           } }
-        // Field 2 is the phone's ETA clock string ("17:11"); we take the remaining seconds instead,
-        // so no timezone or clock-skew question ever arises. Committed independently of the metres:
-        // they are separate cluster functions (fid 22 and 21), not one displayed pair.
+        // Field 2 is the phone's ETA clock string ("17:11", locale-formatted). It goes out verbatim
+        // (IPC line 8) for the arrival-clock form of fid 22; the remaining seconds below stay the
+        // default form. Committed independently of the metres: separate cluster functions.
+        else if(df==2&&dw==2){ pb_str(&d,eta,sizeof eta); }
         else if(df==3&&dw==0){ u32 v=pb_var(&d); if(v<=MAX_TIME_S) g_st.destTime=v; }
         else pb_skip(&d,dw);
       }
+      for(usize i=0;i<sizeof g_st.destEta;i++){ g_st.destEta[i]=eta[i]; if(!eta[i]) break; }
     }
     else if(f==3&&w==2){                         // NavigationText current_road { text = 1 }
       PB d; if(!pb_sub(&s,&d)) break;
