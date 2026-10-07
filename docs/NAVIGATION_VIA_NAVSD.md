@@ -96,7 +96,14 @@ right-turn arrow for the five kilometres before the turn (`AANavReader.maneuverI
 | `dist` / `time` to the maneuver | `mainElement` | bargraph |
 |---|---|---|
 | `<= MANEUVER_NEAR_METERS` **or** `<= MANEUVER_NEAR_SECONDS` | the real maneuver | on |
-| further than both | `FOLLOW_STREET`, `direction = 0` | off |
+| `<= MANEUVER_PREPARE_METERS` **or** `<= MANEUVER_PREPARE_SECONDS` | `PREPARE_TURN` / `PREPARE_ROUNDABOUT` / `PREPARE_SQUARE` / `PREPARE_UTURN`, turned the manoeuvre's way | off |
+| further than all gates | `FOLLOW_STREET`, `direction = 0` | off |
+
+The prepare stage (`AANavReader.maneuverPreparing` / `prepareElementFor`, defaults 1000 m / 80 s)
+only exists for manoeuvres the cluster has a prepare glyph for: turns (incl. onto a main road),
+roundabouts, squares and U-turns. Exits, forks, merges and the destination go straight from
+`FOLLOW_STREET` to the real glyph. In the prepare stage the street line already shows the road the
+manoeuvre turns into, and `maneuver_2` behaves as when near. `0`/`0` disables the stage.
 
 Two gates because 400 m is half a minute in town but twelve seconds on a motorway; the countdown is
 the phone's `time_to_step_seconds` (IPC field 8, protocol 1.7), and `0` on either field means "not
@@ -117,7 +124,7 @@ picks what the second arrow shows:
 
 | phase | `maneuver_1` | `maneuver_2` |
 |---|---|---|
-| manoeuvre near (see above) | the manoeuvre | the one after it (`steps[1]`) |
+| manoeuvre near or in the prepare stage | the manoeuvre (or its `PREPARE_*` glyph) | the one after it (`steps[1]`) |
 | manoeuvre still far | `FOLLOW_STREET` | the manoeuvre itself, as a preview |
 
 A second arrow that would only say "follow the street" is left out (`NO_SYMBOL`), and the field is

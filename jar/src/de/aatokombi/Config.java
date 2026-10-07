@@ -133,6 +133,15 @@ public final class Config {
      */
     public static final int MANEUVER_NEAR_METERS = 500;
     public static final int MANEUVER_NEAR_SECONDS = 40;
+    /**
+     * The middle stage between FOLLOW_STREET and the manoeuvre itself: inside EITHER gate (but not yet
+     * near, see above) the cluster draws the stock "prepare" glyph -- PREPARE_TURN, PREPARE_ROUNDABOUT,
+     * PREPARE_SQUARE or PREPARE_UTURN, turned the way of the manoeuvre (AANavReader.prepareElementFor).
+     * Manoeuvres without a prepare glyph (exits, forks, merges, the destination) stay FOLLOW_STREET
+     * in this stage. 0 and 0 = no prepare stage, as before.
+     */
+    public static final int MANEUVER_PREPARE_METERS = 1000;
+    public static final int MANEUVER_PREPARE_SECONDS = 80;
 
     // ===== disconnect handling =============================================================
     /**

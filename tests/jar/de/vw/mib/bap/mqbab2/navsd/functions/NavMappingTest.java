@@ -348,6 +348,23 @@ public final class NavMappingTest {
         yes("nothing known at all",     AANavReader.maneuverImminent(0, 0));
         yes("negative = not known",     AANavReader.maneuverImminent(-1, -1));
 	}
+
+    private static void prepareStage() {
+        int m = de.aatokombi.Config.MANEUVER_PREPARE_METERS;
+        int s = de.aatokombi.Config.MANEUVER_PREPARE_SECONDS;
+        yes("at the prepare metre gate", AANavReader.maneuverPreparing(m, 0));
+        no ("beyond both prepare gates", AANavReader.maneuverPreparing(m + 1, s + 1));
+        yes("prepare time gate",         AANavReader.maneuverPreparing(5000, s));
+        no ("nothing known",             AANavReader.maneuverPreparing(0, 0));
+        eq("turn -> PREPARE_TURN",       AANavReader.prepareElementFor(13), 28);
+        eq("main road -> PREPARE_TURN",  AANavReader.prepareElementFor(14), 28);
+        eq("ring R -> PREPARE_RNDBT",    AANavReader.prepareElementFor(21), 29);
+        eq("ring L -> PREPARE_RNDBT",    AANavReader.prepareElementFor(22), 29);
+        eq("u-turn -> PREPARE_UTURN",    AANavReader.prepareElementFor(25), 31);
+        eq("exit: no prepare glyph",     AANavReader.prepareElementFor(15), -1);
+        eq("arrival: no prepare glyph",  AANavReader.prepareElementFor(3), -1);
+        eq("follow: no prepare glyph",   AANavReader.prepareElementFor(11), -1);
+    }
 	
     // ---- multi-spoke junction schematic (this class itself has no idea what cluster it runs on --
     // the NavCapable gate lives entirely in AANavReader.publishNavsd(), which is exactly why these
@@ -580,8 +597,7 @@ public final class NavMappingTest {
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
                            "directions", "roundabout angles", "imminence",
-						   "next maneuver", "current road", 
-						   "playback mode", "junction schematic" };
+						   "next maneuver", "current road", "playback mode", "prepare stage", "junction schematic" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -598,6 +614,7 @@ public final class NavMappingTest {
                 case 10: nextManeuver(); break;
                 case 11: currentRoad(); break;
                 case 12: playbackMode(); break;
+                case 13: prepareStage(); break;
                 default: junctionSchematic(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));

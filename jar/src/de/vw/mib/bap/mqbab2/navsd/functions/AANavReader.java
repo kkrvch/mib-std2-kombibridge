@@ -245,6 +245,40 @@ public final class AANavReader implements Runnable {
     static final int MAIN_ELEMENT_FOLLOW_STREET = 11;
     static final int MAIN_ELEMENT_TURN = 13;
     static final int MAIN_ELEMENT_TURN_ON_MAINROAD = 14;
+    // The stock "get ready" glyphs (ASL MAIN_ELEMENT C28..C31, confirmed by name in the generated
+    // ASLNavigationBapPropertyManager constants).
+    static final int MAIN_ELEMENT_PREPARE_TURN = 28;
+    static final int MAIN_ELEMENT_PREPARE_ROUNDABOUT = 29;
+    static final int MAIN_ELEMENT_PREPARE_SQUARE = 30;
+    static final int MAIN_ELEMENT_PREPARE_UTURN = 31;
+
+    /**
+     * Middle stage (Config.MANEUVER_PREPARE_*): not near yet, but inside either prepare gate.
+     * Only meaningful when maneuverImminent() is false; 0 on a field = "the phone has not said".
+     */
+    static boolean maneuverPreparing(int dist, int time) {
+        if (time > 0 && time <= Config.MANEUVER_PREPARE_SECONDS) {
+            return true;
+        }
+        return dist > 0 && dist <= Config.MANEUVER_PREPARE_METERS;
+    }
+
+    /**
+     * The prepare glyph for a manoeuvre glyph, or -1 when the cluster has none for it (exit, fork,
+     * merge, arrival...): those stay FOLLOW_STREET until they are near.
+     */
+    static int prepareElementFor(int mainElement) {
+        switch (mainElement) {
+            case 13:                               // TURN
+            case 14: return MAIN_ELEMENT_PREPARE_TURN;        // TURN_ON_MAINROAD
+            case 21:                               // ROUNDABOUT_TRS_RIGHT
+            case 22: return MAIN_ELEMENT_PREPARE_ROUNDABOUT;  // ROUNDABOUT_TRS_LEFT
+            case 23:                               // SQUARE_TRS_RIGHT
+            case 24: return MAIN_ELEMENT_PREPARE_SQUARE;      // SQUARE_TRS_LEFT
+            case 25: return MAIN_ELEMENT_PREPARE_UTURN;       // UTURN
+            default: return -1;
+        }
+    }
 
     /**
      * Whether the manoeuvre is close enough to draw; further out the cluster gets FOLLOW_STREET,
@@ -313,9 +347,18 @@ public final class AANavReader implements Runnable {
 		}
 
         // Second, smaller arrow (maneuver_2): the manoeuvre after this one, or this one as a preview.
+        // In the prepare stage maneuver_1 already shows this manoeuvre, so maneuver_2 behaves as near.
+        boolean preparing = !imminent && maneuverPreparing(dist, time)
+                && prepareElementFor(mainElement) >= 0;
+        boolean shown = imminent || preparing;     // maneuver_1 names the manoeuvre itself
         NavState.nextManeuver   = Config.SHOW_NEXT_MANEUVER
-                ? nextManeuverFor(imminent, mainElement, direction, sideStreets, next) : null;
-        if (!imminent) {
+                ? nextManeuverFor(shown, mainElement, direction, sideStreets, next) : null;
+        if (preparing) {
+            // Middle stage: the stock "get ready" glyph turned the manoeuvre's way, no junction
+            // geometry yet (the stock validator clears sidestreets for these glyphs anyway).
+            mainElement = prepareElementFor(mainElement);
+            sideStreets = "";
+        } else if (!imminent) {
             // Far: maneuver_1 is a plain "follow the street", with no junction geometry around it.
             mainElement = MAIN_ELEMENT_FOLLOW_STREET;
             direction = 0;
@@ -325,7 +368,7 @@ public final class AANavReader implements Runnable {
         NavState.direction      = direction;
         NavState.currentRoad    = (currentRoad != null) ? currentRoad : "";
         NavState.destinationName = (destination != null) ? destination : "";
-        NavState.street         = turnToStreet(road, currentRoad, imminent);   // -> TurnToInfo
+        NavState.street         = turnToStreet(road, currentRoad, shown);      // -> TurnToInfo
         NavState.sideStreets    = sideStreets;
         NavState.approaching    = imminent;
         NavState.distanceMeters = dist;                          // raw metres (stock formatter in the shadow)
@@ -334,7 +377,7 @@ public final class AANavReader implements Runnable {
         if (Config.LOG_LEVEL <= MIBLogger.DEBUG) {
             // What actually goes out on BAP this frame -- the other half of the shim's trip dump.
             NavState.NextManeuver nm = NavState.nextManeuver;
-            MIBLogger.getInstance().debug("navsd out: imminent=" + imminent
+            MIBLogger.getInstance().debug("navsd out: imminent=" + imminent + " prep=" + preparing
                     + " m1=" + mainElement + "/" + direction + " ss=" + sideStreets.length()
                     + " m2=" + (nm == null ? "-" : (nm.mainElement + "/" + nm.direction))
                     + " street='" + NavState.street + "' pos='" + NavState.currentRoad + "'");
