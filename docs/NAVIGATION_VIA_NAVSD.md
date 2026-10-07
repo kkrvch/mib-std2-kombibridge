@@ -115,6 +115,14 @@ only for the real ones (`{3,4,5,13..27,32..35}`) — the bargraph *is* the appro
 thresholds are in the native nav engine (Java only forwards the DSI array in
 `HsmTargetBap.dsiNavigationUpdateBapManeuverDescriptor`), so the two numbers above are ours.
 
+## Rerouting
+
+While the phone reports `NavigationState = REROUTING` (3, protocol 1.7; Google Maps and 2GIS send it
+for 0.3-1.3 s, Yandex never does) `maneuver_1` is the stock `RECALC_ROUTE` glyph (10), exactly as the
+unit's own navigation shows a recalculation: no `maneuver_2`, an empty `TurnToInfo` (the cluster
+captions the glyph itself, in its own language), the distance invalid and no lanes. There is no
+extra hold time — it lasts as long as the phone says so.
+
 ## The second ("then") arrow — `maneuver_2`
 
 `ManeuverDescriptor` carries up to three manoeuvres; the stock navigation fills `maneuver_2` with

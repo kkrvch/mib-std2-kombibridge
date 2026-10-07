@@ -210,9 +210,11 @@ public final class AANavReader implements Runnable {
                 // left over from a previous session.
                 ActiveRgType.primeForAAStart(Config.FORCE_MAP_ON_KOMBI);
             }
-            publishNavsd(event, side, angle, number, streetFor(rerouting, road), dist, time,
+            // No rerouting TEXT here: the cluster gets the stock RECALC_ROUTE glyph instead and
+            // renders its own, locale-dependent caption for it (see publishNavsd).
+            publishNavsd(event, side, angle, number, road, dist, time,
                     packNextManeuver(taggedLine(lines, '5')), taggedLine(lines, '6'),
-                    taggedLine(lines, '7'));
+                    taggedLine(lines, '7'), rerouting);
         } else {
             if (statusEdge && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
@@ -242,6 +244,7 @@ public final class AANavReader implements Runnable {
         return road;
     }
 
+    static final int MAIN_ELEMENT_RECALC_ROUTE = 10;   // ASL MAIN_ELEMENT C10
     static final int MAIN_ELEMENT_FOLLOW_STREET = 11;
     static final int MAIN_ELEMENT_TURN = 13;
     static final int MAIN_ELEMENT_TURN_ON_MAINROAD = 14;
@@ -297,7 +300,7 @@ public final class AANavReader implements Runnable {
 
     // ===== nav-capable path: NavState + navsd shadows ==========================================
     private void publishNavsd(int event, int side, int angle, int number, String road, int dist, int time,
-                              int[] next, String currentRoad, String destination) {
+                              int[] next, String currentRoad, String destination, boolean rerouting) {
         de.aatokombi.MediaViewMode.guidance(false);
         // Only the glyph waits: street, countdown and destination keep running meanwhile.
         boolean imminent = maneuverImminent(dist, time);
@@ -364,11 +367,26 @@ public final class AANavReader implements Runnable {
             direction = 0;
             sideStreets = "";
         }
+        if (rerouting) {
+            // The phone is recalculating (status 3): the stock "recalculating route" glyph, as the
+            // unit's own navigation shows it, with nothing of the route being replaced around it --
+            // no second arrow, no street (the cluster captions RECALC_ROUTE itself, in its own
+            // language), no countdown, no lanes. Shown exactly as long as the phone says so.
+            mainElement = MAIN_ELEMENT_RECALC_ROUTE;
+            direction = 0;
+            sideStreets = "";
+            NavState.nextManeuver = null;
+            dist = 0;
+            imminent = false;
+            shown = false;
+            NavState.laneState = NavState.NO_LANES;
+        }
         NavState.mainElement    = mainElement;
         NavState.direction      = direction;
         NavState.currentRoad    = (currentRoad != null) ? currentRoad : "";
         NavState.destinationName = (destination != null) ? destination : "";
-        NavState.street         = turnToStreet(road, currentRoad, shown);      // -> TurnToInfo
+        NavState.street         = rerouting ? ""
+                : turnToStreet(road, currentRoad, shown);                         // -> TurnToInfo
         NavState.sideStreets    = sideStreets;
         NavState.approaching    = imminent;
         NavState.distanceMeters = dist;                          // raw metres (stock formatter in the shadow)
@@ -378,6 +396,7 @@ public final class AANavReader implements Runnable {
             // What actually goes out on BAP this frame -- the other half of the shim's trip dump.
             NavState.NextManeuver nm = NavState.nextManeuver;
             MIBLogger.getInstance().debug("navsd out: imminent=" + imminent + " prep=" + preparing
+                    + (rerouting ? " REROUTE" : "")
                     + " m1=" + mainElement + "/" + direction + " ss=" + sideStreets.length()
                     + " m2=" + (nm == null ? "-" : (nm.mainElement + "/" + nm.direction))
                     + " street='" + NavState.street + "' pos='" + NavState.currentRoad + "'");
