@@ -372,6 +372,20 @@ public final class NavMappingTest {
         eq("null",              clock(null), "null");
     }
 
+    private static void i18n() {
+        de.aatokombi.Strings.overrideLanguage = "ru";
+        eq("ru turn left",      AANavReader.wordFor(4, 1), "Налево");
+        eq("ru arrive",         AANavReader.wordFor(17, 3), "Финиш");
+        eq("ru rerouting",      AANavReader.streetFor(true, "x"), "Перестроение...");
+        eq("ru row",            AANavReader.destinationRow(32000, 5100), "1 ч 25 мин / 32 км");
+        eq("ru short distance", AANavReader.formatDistance(300), "300 м");
+        de.aatokombi.Strings.overrideLanguage = "de";       // no row yet -> English
+        eq("unknown -> en",     AANavReader.wordFor(4, 2), "Turn right");
+        de.aatokombi.Strings.overrideLanguage = "en";
+        eq("en turn left",      AANavReader.wordFor(4, 1), "Turn left");
+        eq("en unknown event",  AANavReader.wordFor(99, 1), "");
+    }
+
     private static void prepareStage() {
         int m = de.aatokombi.Config.MANEUVER_PREPARE_METERS;
         int s = de.aatokombi.Config.MANEUVER_PREPARE_SECONDS;
@@ -617,10 +631,11 @@ public final class NavMappingTest {
     }
 
     public static void main(String[] args) {
+        de.aatokombi.Strings.overrideLanguage = "en";   // the expectations below are the English texts
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
                            "directions", "roundabout angles", "imminence",
-						   "next maneuver", "current road", "playback mode", "prepare stage", "eta clock", "junction schematic" };
+						   "next maneuver", "current road", "playback mode", "prepare stage", "eta clock", "i18n", "junction schematic" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -639,6 +654,7 @@ public final class NavMappingTest {
                 case 12: playbackMode(); break;
                 case 13: prepareStage(); break;
                 case 14: etaClock(); break;
+                case 15: i18n(); break;
                 default: junctionSchematic(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));

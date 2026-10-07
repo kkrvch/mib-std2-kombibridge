@@ -1,6 +1,7 @@
 package de.vw.mib.bap.mqbab2.navsd.functions;
 
 import de.aatokombi.Config;
+import de.aatokombi.Strings;
 import de.adi961.miblogger.MIBLogger;
 import de.vw.mib.asl.framework.internal.framework.ServiceManager;
 import de.vw.mib.asl.internal.androidauto.target.NavigationHandler;
@@ -49,9 +50,11 @@ public final class AANavReader implements Runnable {
 
     private static final String PATH = "/dev/shmem/aa_nav";
     private static final long POLL_MS = 300L;
-    // English, like the manoeuvre words on the media path: the firmware's own strings are not
-    // reachable from here, and a mixed-language line would read worse than a consistent one.
-    private static final String REROUTING_TEXT = "Rerouting...";
+    // The rerouting notice of the MEDIA path (the nav-capable path uses the stock RECALC_ROUTE glyph
+    // instead), in the cluster's language like the manoeuvre words (de.aatokombi.Strings).
+    private static String reroutingText() {
+        return Strings.get(Strings.REROUTING);
+    }
 
     private static volatile boolean started = false;
     private static AANavReader instance = null;
@@ -81,7 +84,8 @@ public final class AANavReader implements Runnable {
             instance.timer = ServiceManager.timerManager.createTimer(
                     "AATOKOMBI_NAV_POLL", POLL_MS, true, instance, Timer.TIMER_THREAD_INVOKER);
             instance.timer.start();
-            MIBLogger.getInstance().info("AANavReader started, polling " + PATH);
+            MIBLogger.getInstance().info("AANavReader started, polling " + PATH
+                    + ", cluster language '" + Strings.language() + "'");
         } catch (Throwable t) {
             // If the framework timer isn't available yet, leave started=false so a later call retries.
             started = false;
@@ -221,7 +225,8 @@ public final class AANavReader implements Runnable {
             if (statusEdge && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
             }
-            publishMedia(event, side, number, streetFor(rerouting, road), dist, distText);
+            publishMedia(event, side, number, streetFor(rerouting, road), dist, distText,
+                    taggedLine(lines, '9'));
         }
     }
 
@@ -241,7 +246,7 @@ public final class AANavReader implements Runnable {
      */
     static String streetFor(boolean rerouting, String road) {
         if (rerouting) {
-            return REROUTING_TEXT;
+            return reroutingText();
         }
         return road;
     }
@@ -431,7 +436,7 @@ public final class AANavReader implements Runnable {
      */
     static String turnToStreet(String nextRoad, String currentRoad, boolean imminent) {
         String next = (nextRoad != null) ? nextRoad : "";
-        if (imminent || REROUTING_TEXT.equals(next)) {
+        if (imminent || reroutingText().equals(next)) {
             return next;
         }
         if (currentRoad != null && currentRoad.length() > 0) {
@@ -598,13 +603,16 @@ public final class AANavReader implements Runnable {
     }
 
     // ===== non-nav path: media now-playing widget =============================================
-    private void publishMedia(int event, int side, int number, String road, int dist, String distText) {
+    private void publishMedia(int event, int side, int number, String road, int dist, String distText,
+                              String cue) {
         de.aatokombi.MediaViewMode.guidance(true);
         // Cluster layout (top->bottom): secondary, tertiary, PRIMARY(big), quaternary.
         //   secondary = street, or the lane row while there is one; tertiary = maneuver word
         //   (+ roundabout exit); PRIMARY = arrow + distance ("> 300 m"); quaternary = destination.
         String arrow = arrowForManeuver(event, side);
-        String word = wordFor(event, side);
+        // The manoeuvre line: the navigator's own instruction text when it says more than the street
+        // (IPC line 9 -- the shim only writes it then), otherwise our word in the cluster's language.
+        String word = (cue != null && cue.length() > 0 && !cue.equals(road)) ? cue : wordFor(event, side);
         String street = (road != null && road.length() > 0) ? road : "";
         // Prefer the phone's own string: it is already rounded the way the driver sees it on the
         // phone and, unlike ours, follows the phone's units (miles/yards). We only format the raw
@@ -623,7 +631,7 @@ public final class AANavReader implements Runnable {
         // tight six-cell row illegible.
         String lanes = laneRow(NavState.laneState.lanes);
         CurrentStationInfo.navSecondary =
-                (lanes.length() > 0 && !REROUTING_TEXT.equals(street)) ? lanes : street;
+                (lanes.length() > 0 && !reroutingText().equals(street)) ? lanes : street;
         // The roundabout exit number rides with the manoeuvre word: "Roundabout exit 3" reads as one
         // phrase, and the exit is not worth a line of its own. (The PQ widget has always
         // concatenated the two into its third line, so this only makes MQB agree with it.)
@@ -659,32 +667,32 @@ public final class AANavReader implements Runnable {
         }
     }
 
-    private String wordFor(int event, int side) {
+    static String wordFor(int event, int side) {
         switch (event) {
-            case 1:  return "Start";
-            case 2:  return "Continue";
-            case 3:  return side == 1 ? "Bear left" : side == 2 ? "Bear right" : "Continue";
-            case 4:  return side == 1 ? "Turn left" : side == 2 ? "Turn right" : "Turn";
-            case 5:  return side == 1 ? "Sharp left" : side == 2 ? "Sharp right" : "Turn";
-            case 6:  return "U-turn";
-            case 7:  return "On-ramp";
-            case 8:  return "Exit";
-            case 9:  return "Fork";
-            case 10: return "Merge";
+            case 1:  return Strings.get(Strings.START);
+            case 2:  return Strings.get(Strings.CONTINUE);
+            case 3:  return side == 1 ? Strings.get(Strings.BEAR_LEFT) : side == 2 ? Strings.get(Strings.BEAR_RIGHT) : Strings.get(Strings.CONTINUE);
+            case 4:  return side == 1 ? Strings.get(Strings.TURN_LEFT) : side == 2 ? Strings.get(Strings.TURN_RIGHT) : Strings.get(Strings.TURN);
+            case 5:  return side == 1 ? Strings.get(Strings.SHARP_LEFT) : side == 2 ? Strings.get(Strings.SHARP_RIGHT) : Strings.get(Strings.TURN);
+            case 6:  return Strings.get(Strings.U_TURN);
+            case 7:  return Strings.get(Strings.ON_RAMP);
+            case 8:  return Strings.get(Strings.EXIT);
+            case 9:  return Strings.get(Strings.FORK);
+            case 10: return Strings.get(Strings.MERGE);
             case 11:
             case 12:
-            case 13: return "Roundabout";
-            case 14: return "Straight";
+            case 13: return Strings.get(Strings.ROUNDABOUT);
+            case 14: return Strings.get(Strings.STRAIGHT);
             case 15:
-            case 16: return "Ferry";
-            case 17: return "Arrive";
+            case 16: return Strings.get(Strings.FERRY);
+            case 17: return Strings.get(Strings.ARRIVE);
             default: return "";
         }
     }
 
     private String quaternaryFor(int event, int number) {
         if ((event == 11 || event == 12 || event == 13) && number > 0) {
-            return "exit " + number;
+            return Strings.get(Strings.RING_EXIT) + " " + number;
         }
         return "";
     }
@@ -824,7 +832,7 @@ public final class AANavReader implements Runnable {
      */
     static String formatTripDistance(int meters) {
         if (meters >= 10000) {
-            return ((meters + 500) / 1000) + " km";
+            return ((meters + 500) / 1000) + " " + Strings.get(Strings.UNIT_KM);
         }
         return formatDistance(meters);
     }
@@ -836,9 +844,9 @@ public final class AANavReader implements Runnable {
         }
         int[] hm = remainingHoursMinutes(seconds);
         if (hm[0] > 0) {
-            return hm[0] + " h " + hm[1] + " min";
+            return hm[0] + " " + Strings.get(Strings.UNIT_H) + " " + hm[1] + " " + Strings.get(Strings.UNIT_MIN);
         }
-        return hm[1] + " min";
+        return hm[1] + " " + Strings.get(Strings.UNIT_MIN);
     }
 
     /** "300 m" / "1,2 km" / "" when unknown. */
@@ -848,11 +856,11 @@ public final class AANavReader implements Runnable {
         }
         if (dist < 1000) {
             if (dist < 10) {
-                return dist + " m";           // very short: show the exact metres
+                return dist + " " + Strings.get(Strings.UNIT_M);   // very short: show the exact metres
             }
-            return (((dist + 5) / 10) * 10) + " m";   // else round to nearest 10 m, like Google
+            return (((dist + 5) / 10) * 10) + " " + Strings.get(Strings.UNIT_M);   // else round to nearest 10 m, like Google
         }
-        return (dist / 1000) + "," + ((dist % 1000) / 100) + " km";
+        return (dist / 1000) + "," + ((dist % 1000) / 100) + " " + Strings.get(Strings.UNIT_KM);
     }
 
     // ===== shared lifecycle ====================================================================
@@ -952,7 +960,8 @@ public final class AANavReader implements Runnable {
      * so they are matched by marker rather than by position: "2 " = lane guidance, "3 " = the phone's
      * own distance string, "4 " = distance/time to the destination, "5 " = the manoeuvre after the
      * current one, "6 " = the road the car is on now, "7 " = the destination address,
-     * "8 " = the phone's arrival clock string. Lane line "2v " is the current
+     * "8 " = the phone's arrival clock string,
+     * "9 " = the instruction text when it differs from the road. Lane line "2v " is the current
      * variable-direction encoding; "2 " remains accepted for a jar deployed with an older shim.
      * Any element may be null.
      */

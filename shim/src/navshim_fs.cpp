@@ -265,8 +265,9 @@ static void ipc_flush(){
   // connected/session are inserted BEFORE road (road is the space-remainder field, may hold spaces).
   // Worst case ~123 numeric bytes + road[63] + '\n', plus the tagged lines below (variable lane
   // directions ~100, distance text ~20, destination ~24, next manoeuvre ~40, current road ~66) ->
-  // ~470 worst case, plus the destination address ~98 and ETA ~18 -> ~590, so the buffer is 720.
-  char b[720]; char* o=b;
+  // ~470 worst case, plus the destination address ~98, ETA ~18 and instruction ~98 -> ~690, so the
+  // buffer is 800.
+  char b[800]; char* o=b;
   o=u2dec(o,g_st.seq);   *o++=' ';
   o=u2dec(o,g_st.status);*o++=' ';
   o=u2dec(o,g_st.event); *o++=' ';
@@ -290,6 +291,8 @@ static void ipc_flush(){
   //   "6 <road>"           the road the car is on now (0x8007 current_road); absent = not known
   //   "7 <address>"        the destination (first NavigationDestination.address); absent = not known
   //   "8 <eta>"            the phone's arrival clock for it, verbatim ("17:42"); absent = not known
+  //   "9 <text>"           the instruction text of the manoeuvre, only when it says more than the
+  //                        road on line 1 (Google/2GIS usually repeat the road; Yandex sends none)
   if(g_nLane){
     *o++='2'; *o++='v'; *o++=' ';
     o=u2dec(o,g_nLane);
@@ -336,6 +339,19 @@ static void ipc_flush(){
     *o++='8'; *o++=' ';
     { usize n=my_strlen(g_st.destEta); for(usize i=0;i<n;i++) *o++=g_st.destEta[i]; }
     *o++='\n';
+  }
+  if(g_st.cue[0]){
+    int same=1;
+    for(usize i=0;i<sizeof g_st.cue;i++){
+      char c=g_st.cue[i]; char r=(i<sizeof g_st.road)?g_st.road[i]:0;
+      if(c!=r){ same=0; break; }
+      if(!c) break;
+    }
+    if(!same){
+      *o++='9'; *o++=' ';
+      { usize n=my_strlen(g_st.cue); for(usize i=0;i<n;i++) *o++=g_st.cue[i]; }
+      *o++='\n';
+    }
   }
   write_file(IPC_PATH, b, (usize)(o-b));
   if(g_dumpState==1) dump_ipc(&g_dnav, b, (usize)(o-b));

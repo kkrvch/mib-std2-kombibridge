@@ -42,6 +42,7 @@ struct NavState{ u32 seq,status,event,side,dist,time,unit; i32 angle,number; cha
                  u32 nextValid,nextEvent,nextSide; i32 nextAngle,nextNumber;
                  char curRoad[64]; char destName[96];
                  char destEta[16];   // phone's arrival clock for the nearest destination ("17:42")
+                 char cue[96];       // steps[0] instruction text ("Turn left onto ..."), "" = none
                };
 static NavState g_st;
 
@@ -218,6 +219,7 @@ static void parse_lane(PB s){
 // media widget for a poll cycle. The 0x8007 fields (dist/time/unit) live in the other message and
 // keep their last good value on purpose.
 static void parse_step(PB s){
+  PB s0=s;                                       // the whole step, for the second (cue) pass
   g_st.event=0; g_st.side=3;                     // 3 = TurnSide UNSPECIFIED, as the legacy feed sent
   g_st.number=0; g_st.angle=0; g_st.road[0]=0; g_nLane=0;
   g_st.nextValid=0; g_st.nextEvent=0; g_st.nextSide=3; g_st.nextAngle=0; g_st.nextNumber=0;
@@ -245,6 +247,16 @@ static void parse_step(PB s){
   if(!g_st.road[0]){
     for(usize i=0;i<sizeof g_st.road;i++){ g_st.road[i]=cue[i]; if(!cue[i]) break; }
   }
+  // The instruction itself, kept apart for the media widget's manoeuvre line (IPC line 9). Its own,
+  // larger buffer: a spoken cue is longer than a road name. Re-read rather than copied from `cue`
+  // above, which is sized for the road fallback.
+  g_st.cue[0]=0;
+  { PB r=s0; u32 rf,rw;
+    while(pb_tag(&r,&rf,&rw)){
+      if(rf==2&&rw==2){ PB d; if(!pb_sub(&r,&d)) break; u32 tf,tw;
+        while(pb_tag(&d,&tf,&tw)){ if(tf==1&&tw==2) pb_str(&d,g_st.cue,sizeof g_st.cue); else pb_skip(&d,tw); } }
+      else pb_skip(&r,rw);
+    } }
 }
 
 // steps[0] is the manoeuvre the cluster draws; steps[1] the follow-up one, kept only as the "then"

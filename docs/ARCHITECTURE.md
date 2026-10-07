@@ -100,8 +100,8 @@ measured on the cluster, top to bottom:
 
 | row | BAP field | route guidance active | Android Auto connected, no route |
 |---|---|---|---|
-| 1 | `secondaryInformation` | street, `Rerouting...`, or the **lane row** while there is one | artist |
-| 2 | `tertiaryInformation` | maneuver word + roundabout exit | album |
+| 1 | `secondaryInformation` | street, the rerouting notice, or the **lane row** while there is one | artist |
+| 2 | `tertiaryInformation` | the navigator's instruction text when it says more than the street (IPC line 9), else the maneuver word; + roundabout exit | album |
 | 3 | `primaryInformation` (**big font**) | arrow glyph + distance to the turn | track title |
 | 4 | `quaternaryInformation` | distance + time to the destination | progress bar (`SHOW_MEDIA_PROGRESS`) |
 
@@ -123,6 +123,12 @@ so that is where it goes. Losing the street name for the last few hundred metres
 trade: at that point the junction is in sight and which lane matters far more than what it is
 called. The rerouting notice still wins the row, since row 1 is the only place that notice appears
 and lanes carried over from a route being recalculated are stale anyway.
+
+The words the mod writes itself (maneuver words, the rerouting notice, "exit", units) come from
+`de.aatokombi.Strings`, in the language the head unit last set on the instrument cluster
+(`LanguageHelper.lastRequestedLanguageForInstrumentCluster`, read by reflection; JVM locale, then
+English, as fallbacks). English and Russian are built in; another language is one more row in
+`Strings.TABLE`.
 
 The now-playing title used to scroll in row 4 as a marquee and no longer does — the route wants all
 four rows, and music is fully visible whenever no route is guiding.

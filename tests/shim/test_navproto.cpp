@@ -203,6 +203,11 @@ static void test_road_vs_instruction(){
   parse_navstate(st2.b,(u32)st2.n);
   CHECK(std::strcmp(g_st.road,"Main Street")==0, "road='%s' want 'Main Street' whatever the order",
         g_st.road);
+  CHECK(std::strcmp(g_st.cue,"Turn right onto Main Street")==0, "cue='%s' kept apart", g_st.cue);
+  // A step without an instruction leaves no cue behind from the previous one.
+  Buf stepNc; stepNc.m(4,road); Buf stNc; stNc.m(1,stepNc);
+  parse_navstate(stNc.b,(u32)stNc.n);
+  CHECK(g_st.cue[0]==0, "cue='%s' want empty", g_st.cue);
 
   // A phone that sends no road_info at all: the instruction is better than an empty street line.
   reset();
