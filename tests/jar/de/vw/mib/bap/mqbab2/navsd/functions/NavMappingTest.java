@@ -386,6 +386,27 @@ public final class NavMappingTest {
         eq("en unknown event",  AANavReader.wordFor(99, 1), "");
     }
 
+    private static String ringOut(AANavReader.RingMemory r, int ev, int a, int n) {
+        int[] o = r.apply(ev, a, n);
+        return o[0] + "/" + o[1] + (o[2] == 1 ? " exit-only" : "");
+    }
+
+    private static void ringContinuity() {
+        AANavReader.RingMemory r = new AANavReader.RingMemory();
+        eq("approach: ring step as sent",   ringOut(r, 13, 225, 3), "225/3");
+        eq("on the ring: bare exit keeps it", ringOut(r, 12, 0, 0), "225/3");
+        eq("still on the ring",              ringOut(r, 12, 0, 0), "225/3");
+        eq("next turn untouched",            ringOut(r, 4, 0, 0), "0/0");
+        eq("bare exit after a turn",         ringOut(r, 12, 0, 0), "0/0 exit-only");
+        AANavReader.RingMemory r2 = new AANavReader.RingMemory();
+        eq("exit step with its own data",    ringOut(r2, 12, 90, 1), "90/1");
+        eq("first ever step a bare exit",    ringOut(new AANavReader.RingMemory(), 12, 0, 0), "0/0 exit-only");
+        AANavReader.RingMemory r3 = new AANavReader.RingMemory();
+        ringOut(r3, 11, 270, 2);
+        r3.reset();
+        eq("reset forgets the ring",         ringOut(r3, 12, 0, 0), "0/0 exit-only");
+    }
+
     private static void prepareStage() {
         int m = de.aatokombi.Config.MANEUVER_PREPARE_METERS;
         int s = de.aatokombi.Config.MANEUVER_PREPARE_SECONDS;
@@ -635,7 +656,7 @@ public final class NavMappingTest {
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
                            "directions", "roundabout angles", "imminence",
-						   "next maneuver", "current road", "playback mode", "prepare stage", "eta clock", "i18n", "junction schematic" };
+						   "next maneuver", "current road", "playback mode", "prepare stage", "eta clock", "i18n", "ring continuity", "junction schematic" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -655,6 +676,7 @@ public final class NavMappingTest {
                 case 13: prepareStage(); break;
                 case 14: etaClock(); break;
                 case 15: i18n(); break;
+                case 16: ringContinuity(); break;
                 default: junctionSchematic(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));

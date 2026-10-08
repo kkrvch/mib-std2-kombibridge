@@ -68,6 +68,61 @@ public final class AANavReader implements Runnable {
     private long lastSession = -1L;   // AA session epoch from the shim; change => phone reconnected
     private boolean cleared = true;
     private boolean lastImminent = true;   // log only the edges (see publishNavsd)
+    private final RingMemory ring = new RingMemory();   // roundabout exit-step continuity (see RingMemory)
+
+    /**
+     * Google Maps splits a roundabout in two steps: "enter and leave at exit N, bearing A" while
+     * approaching, then -- once the car is on the ring -- a separate ROUNDABOUT_EXIT step with NO
+     * exit number and NO bearing (seen 2026-10: type 35 exit 3 / 225 deg, then type 46 alone for the
+     * last ~200 m). Drawn as is, the cluster's roundabout lost its exit mid-roundabout. This keeps
+     * the geometry of the ring step for the exit step that directly follows it; an exit step with no
+     * ring step before it (route joined on the ring, after a recalculation) is flagged instead, and
+     * the caller draws the stock EXIT_ROUNDABOUT glyph. Host-testable, one instance per reader.
+     */
+    static final class RingMemory {
+        private int lastEvent = 0;        // event of the current step
+        private int prevStepEvent = 0;    // event of the step before it
+        private boolean valid = false;    // angle/number below belong to the current ring
+        private int angle = 0;
+        private int number = 0;
+
+        /** @return {angle, number, exitOnly(0/1)} to use for this frame. */
+        int[] apply(int event, int angleIn, int numberIn) {
+            if (event != lastEvent) {
+                prevStepEvent = lastEvent;
+                lastEvent = event;
+            }
+            boolean ringStep = (event == 11 || event == 13);
+            if (ringStep) {
+                if (angleIn > 0 || numberIn > 0) {
+                    valid = true;
+                    angle = angleIn;
+                    number = numberIn;
+                }
+                return new int[]{ angleIn, numberIn, 0 };
+            }
+            if (event == 12) {
+                if (angleIn > 0 || numberIn > 0) {
+                    return new int[]{ angleIn, numberIn, 0 };          // the phone said it itself
+                }
+                if (valid && (prevStepEvent == 11 || prevStepEvent == 13)) {
+                    return new int[]{ angle, number, 0 };              // same ring, keep its picture
+                }
+                return new int[]{ 0, 0, 1 };                           // nothing to draw it from
+            }
+            valid = false;                                             // left the ring
+            return new int[]{ angleIn, numberIn, 0 };
+        }
+
+        void reset() {
+            lastEvent = 0;
+            prevStepEvent = 0;
+            valid = false;
+        }
+    }
+
+    static final int MAIN_ELEMENT_EXIT_ROUNDABOUT_TRS_RIGHT = 26;
+    static final int MAIN_ELEMENT_EXIT_ROUNDABOUT_TRS_LEFT = 27;
 
     private AANavReader(NavigationHandler handler) {
         this.handler = handler;
@@ -318,12 +373,21 @@ public final class AANavReader implements Runnable {
                     + ": dist=" + dist + "m time=" + time + "s");
         }
 		
+        int[] ringFix = ring.apply(event, angle, number);
+        angle = ringFix[0];
+        number = ringFix[1];
+        boolean exitOnlyStep = ringFix[2] == 1;
         int effAngle = effectiveAngle(event, angle, number);    // real bearing (Maps) or synth from exit number (Yandex)
         // The manoeuvre's own glyph. It is what maneuver_1 shows once the manoeuvre is near; while it
         // is still far, maneuver_1 shows FOLLOW_STREET and this glyph can only appear as the preview
         // in maneuver_2 (Config.SHOW_NEXT_MANEUVER) -- so it is only worth building in those cases.
         int mainElement = mapMainElement(event, side);
         int direction = mapDirection(event, side, effAngle);
+        if (exitOnlyStep) {
+            // A bare "leave the roundabout" with no ring geometry to keep: the stock exit glyph.
+            mainElement = (side == 1) ? MAIN_ELEMENT_EXIT_ROUNDABOUT_TRS_LEFT : MAIN_ELEMENT_EXIT_ROUNDABOUT_TRS_RIGHT;
+            direction = 0;
+        }
 		// Exit-road spoke on a roundabout, "" otherwise.
         String sideStreets = buildRingSideStreets(event, effAngle);
 		
@@ -334,7 +398,7 @@ public final class AANavReader implements Runnable {
 			boolean schematic = Config.SHOW_JUNCTION_SCHEMATIC
 					&& ClusterCaps.isNavCapable();
 
-			if (schematic && (event == 11 || event == 12 || event == 13)) {
+			if (schematic && !exitOnlyStep && (event == 11 || event == 12 || event == 13)) {
 				// Roundabout: always meaningful here, since AA gives an exit number on every roundabout
 				// maneuver regardless of whether lane data is also available.
 				sideStreets = JunctionSchematic.buildRoundabout(effAngle, number);
@@ -882,6 +946,7 @@ public final class AANavReader implements Runnable {
             return;
         }
         cleared = true;
+        ring.reset();
         // Mirror the router (processOnce): clear ONLY the active path. Crucially, on a non-nav
         // cluster we must not poke the navsd shadows -- poke()->process() emits navsd BAP regardless
         // of isNavCapable(), and the shadows ARE constructed on a non-nav EU unit (factory "All"), so
