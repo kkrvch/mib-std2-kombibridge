@@ -63,7 +63,23 @@ NavigationServiceListener {
         // cluster, when AA is inactive, the unit's own next-turn street + signpost instead.
         try {
             if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
-                turnToInfo_Status.turnToInfo.setContent(NavState.street != null ? NavState.street : "");
+                String street = NavState.street != null ? NavState.street : "";
+                if (NavState.streetWantsCurrentPosition) {
+                    // Not near yet and AA named no current road: the unit's own map-matched street
+                    // (the same value CurrentPositionInfo falls back to), else the next-turn road.
+                    String own = null;
+                    try {
+                        NavigationService ns = this.getNavigationService();
+                        if (ns.getNavigationStatus() == 0) {
+                            own = ns.getCurrentPositionInfo();
+                        }
+                    } catch (Throwable t2) {
+                        own = null;
+                    }
+                    street = (own != null && own.length() > 0) ? own
+                            : (NavState.nextRoad != null ? NavState.nextRoad : "");
+                }
+                turnToInfo_Status.turnToInfo.setContent(street);
                 turnToInfo_Status.signPost.setContent("");
             } else if (ClusterCaps.isNavCapable()) {
                 NavigationTurnToInfo n = this.getNavigationService().getTurnToInfo();

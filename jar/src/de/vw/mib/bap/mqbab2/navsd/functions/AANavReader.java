@@ -457,8 +457,15 @@ public final class AANavReader implements Runnable {
         NavState.direction      = direction;
         NavState.currentRoad    = (currentRoad != null) ? currentRoad : "";
         NavState.destinationName = (destination != null) ? destination : "";
+        // The street line names the road the manoeuvre turns into only once it is near; while the
+        // arrow is FOLLOW_STREET or the PREPARE_* glyph it names the road the car is on (user
+        // request 2026-10). AA's current road when the phone sends one; otherwise TurnToInfo asks
+        // the unit's own map-matching for it (NavState.streetWantsCurrentPosition).
         NavState.street         = rerouting ? ""
-                : turnToStreet(road, currentRoad, shown);                         // -> TurnToInfo
+                : turnToStreet(road, currentRoad, imminent);                      // -> TurnToInfo
+        NavState.nextRoad       = (road != null) ? road : "";
+        NavState.streetWantsCurrentPosition = !rerouting && !imminent
+                && (currentRoad == null || currentRoad.length() == 0);
         NavState.sideStreets    = sideStreets;
         NavState.approaching    = imminent;
         NavState.distanceMeters = dist;                          // raw metres (stock formatter in the shadow)

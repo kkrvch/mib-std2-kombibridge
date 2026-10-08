@@ -65,7 +65,7 @@ regardless, and every stock-service call is wrapped so a non-routing engine can 
 | `RGStatus` | 17 | route-guidance active flag | `NavState.ACTIVE` |
 | `ManeuverDescriptor` | 23 | the arrow: `mainElement` + `direction` (+ a roundabout exit spoke in `sidestreets`); `maneuver_2` = the small "then" arrow (see below) | GAL event + side/angle/exit number; IPC line 5 |
 | `DistanceToNextManeuver` | 18 | distance to the turn + the approach-segment bargraph | GAL dist |
-| `TurnToInfo` | 20 | the street line: the road the manoeuvre turns into; while the manoeuvre is still far (FOLLOW_STREET), the road the car is on | GAL road; IPC line 6 |
+| `TurnToInfo` | 20 | the street line: the road the manoeuvre turns into once it is near; before that (FOLLOW_STREET and the PREPARE_* stage) the road the car is on — AA's current road, else the unit's own map-matched street, else the next road | GAL road; IPC line 6; `getCurrentPositionInfo()` |
 | `CurrentPositionInfo` | 19 | the current road (stock fills it only while its own guidance is idle; the cluster may not show it during guidance) | IPC line 6 (0x8007 `current_road`) |
 | `LaneGuidance` | 24 | the lane row of the junction ahead (a BAP **array**, max 6 lanes, not a property) | `NavState.lanes` |
 | `DistanceToDestination` | 21 | distance to the destination | `NavState.destinationMeters` |
