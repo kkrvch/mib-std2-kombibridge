@@ -232,7 +232,6 @@ public final class AANavReader implements Runnable {
                     + " lanes=" + taggedLine(lines, '2')  // raw shim payload: "<count> <lane0> <lane1> ..."
                     + " next=" + taggedLine(lines, '5')   // raw shim payload: "<event> <side> <angle> <number>"
                     + " cur='" + taggedLine(lines, '6') + "'"  // the road the car is on now
-                    + " destName='" + taggedLine(lines, '7') + "'"  // the destination address
                     + " q4='" + quaternaryFor(event, number) + "' road=" + road);
         }
 
@@ -274,8 +273,7 @@ public final class AANavReader implements Runnable {
             // No rerouting TEXT here: the cluster gets the stock RECALC_ROUTE glyph instead and
             // renders its own, locale-dependent caption for it (see publishNavsd).
             publishNavsd(event, side, angle, number, road, dist, time,
-                    packNextManeuver(taggedLine(lines, '5')), taggedLine(lines, '6'),
-                    taggedLine(lines, '7'), rerouting);
+                    packNextManeuver(taggedLine(lines, '5')), taggedLine(lines, '6'), rerouting);
         } else {
             if (statusEdge && handler != null) {
                 try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
@@ -362,7 +360,7 @@ public final class AANavReader implements Runnable {
 
     // ===== nav-capable path: NavState + navsd shadows ==========================================
     private void publishNavsd(int event, int side, int angle, int number, String road, int dist, int time,
-                              int[] next, String currentRoad, String destination, boolean rerouting) {
+                              int[] next, String currentRoad, boolean rerouting) {
         de.aatokombi.MediaViewMode.guidance(false);
         // Only the glyph waits: street, countdown and destination keep running meanwhile.
         boolean imminent = maneuverImminent(dist, time);
@@ -456,7 +454,6 @@ public final class AANavReader implements Runnable {
         NavState.mainElement    = mainElement;
         NavState.direction      = direction;
         NavState.currentRoad    = (currentRoad != null) ? currentRoad : "";
-        NavState.destinationName = (destination != null) ? destination : "";
         // The street line names the road the manoeuvre turns into only once it is near; while the
         // arrow is FOLLOW_STREET or the PREPARE_* glyph it names the road the car is on (user
         // request 2026-10). AA's current road when the phone sends one; otherwise TurnToInfo asks
@@ -487,7 +484,6 @@ public final class AANavReader implements Runnable {
         DistanceToNextManeuver.poke();
         TurnToInfo.poke();
         CurrentPositionInfo.poke();          // fn 19
-        DestinationInfo.poke();              // fn 46
         LaneGuidance.poke();                 // fn 24
         DistanceToDestination.poke();        // fn 21
         TimeToDestination.poke();            // fn 22
@@ -972,8 +968,6 @@ public final class AANavReader implements Runnable {
                 NavState.nextManeuver = null;
                 NavState.currentRoad = "";
                 CurrentPositionInfo.poke();
-                NavState.destinationName = "";
-                DestinationInfo.poke();
                 LaneGuidance.poke();
                 // Zero before poking: a stale destination outliving its route would otherwise be the
                 // one number on the cluster nobody can tell is stale.
@@ -1032,7 +1026,8 @@ public final class AANavReader implements Runnable {
      * after it are 1.7 extras, each tagged with its own marker and written only when it has content,
      * so they are matched by marker rather than by position: "2 " = lane guidance, "3 " = the phone's
      * own distance string, "4 " = distance/time to the destination, "5 " = the manoeuvre after the
-     * current one, "6 " = the road the car is on now, "7 " = the destination address,
+     * current one, "6 " = the road the car is on now, "7 " = the destination address (not used by
+     * the jar since DestinationInfo was rolled back),
      * "8 " = the phone's arrival clock string,
      * "9 " = the instruction text when it differs from the road. Lane line "2v " is the current
      * variable-direction encoding; "2 " remains accepted for a jar deployed with an older shim.

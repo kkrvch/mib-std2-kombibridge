@@ -21,9 +21,6 @@ public final class NavState {
     // map-matched street (NavigationService.getCurrentPositionInfo), falling back to nextRoad.
     public static volatile boolean streetWantsCurrentPosition = false;
     public static volatile String  nextRoad       = "";
-    // The destination as the phone names it (1.7 0x8006 NavigationDestination.address, IPC line 7):
-    // one free-form string, an address or a place name; "" = the phone did not say. -> DestinationInfo (fid 46).
-    public static volatile String  destinationName = "";
     // Junction-glyph geometry -> ManeuverDescriptor col3 (Maneuver_1.sidestreets, a BAPString(17)).
     // On a nav-capable cluster this may be a MULTI-character schematic string (see JunctionSchematic)
 	// -- each character is an independent side-street spoke on the same 0..255 CCW scale as `direction`,
