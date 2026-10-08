@@ -310,7 +310,25 @@ public final class AANavReader implements Runnable {
     static final int MAIN_ELEMENT_TURN_ON_MAINROAD = 14;
     // The stock "get ready" glyphs (ASL MAIN_ELEMENT C28..C31, confirmed by name in the generated
     // ASLNavigationBapPropertyManager constants).
+    static final int MAIN_ELEMENT_DOUBLE_TURN = 35;    // ASL C35 / BAP 0x23, drawn only at 64 / 192
     static final int MAIN_ELEMENT_PREPARE_TURN = 28;
+
+    /**
+     * DOUBLE_TURN direction for a near manoeuvre, or -1: only a left/right TURN followed by a next
+     * step (AA steps[1]) that is a turn to the OTHER side. 64 = "left, then right", 192 = "right,
+     * then left" (AID-verified; the PQ shim in MIBHMI decomposes it the same way).
+     */
+    static int doubleTurnDirection(int mainElement, int side, int[] next) {
+        if (mainElement != MAIN_ELEMENT_TURN || next == null || (side != 1 && side != 2)) {
+            return -1;
+        }
+        int nextSide = next[1];
+        if (mapMainElement(next[0], nextSide) != MAIN_ELEMENT_TURN || nextSide == side
+                || (nextSide != 1 && nextSide != 2)) {
+            return -1;
+        }
+        return (side == 1) ? 64 : 192;
+    }
     static final int MAIN_ELEMENT_PREPARE_ROUNDABOUT = 29;
     static final int MAIN_ELEMENT_PREPARE_SQUARE = 30;
     static final int MAIN_ELEMENT_PREPARE_UTURN = 31;
@@ -426,6 +444,13 @@ public final class AANavReader implements Runnable {
         boolean shown = imminent || preparing;     // maneuver_1 names the manoeuvre itself
         NavState.nextManeuver   = Config.SHOW_NEXT_MANEUVER
                 ? nextManeuverFor(shown, mainElement, direction, sideStreets, next) : null;
+        int doubleDir = (Config.SHOW_DOUBLE_TURN && imminent && !rerouting)
+                ? doubleTurnDirection(mainElement, side, next) : -1;
+        if (doubleDir >= 0) {
+            mainElement = MAIN_ELEMENT_DOUBLE_TURN;
+            direction = doubleDir;
+            sideStreets = "";
+        }
         if (preparing) {
             // Middle stage: the stock "get ready" glyph turned the manoeuvre's way, no junction
             // geometry yet (the stock validator clears sidestreets for these glyphs anyway).

@@ -407,6 +407,16 @@ public final class NavMappingTest {
         eq("reset forgets the ring",         ringOut(r3, 12, 0, 0), "0/0 exit-only");
     }
 
+    private static void doubleTurn() {
+        eq("left then right",   AANavReader.doubleTurnDirection(13, 1, new int[]{4, 2, 0, 0}), 64);
+        eq("right then left",   AANavReader.doubleTurnDirection(13, 2, new int[]{4, 1, 0, 0}), 192);
+        eq("same side: no",     AANavReader.doubleTurnDirection(13, 2, new int[]{4, 2, 0, 0}), -1);
+        eq("no next step",      AANavReader.doubleTurnDirection(13, 2, null), -1);
+        eq("next is a ring",    AANavReader.doubleTurnDirection(13, 2, new int[]{13, 1, 90, 1}), -1);
+        eq("first is a u-turn", AANavReader.doubleTurnDirection(25, 2, new int[]{4, 1, 0, 0}), -1);
+        eq("slight then sharp", AANavReader.doubleTurnDirection(13, 1, new int[]{5, 2, 0, 0}), 64);
+    }
+
     private static void prepareStage() {
         int m = de.aatokombi.Config.MANEUVER_PREPARE_METERS;
         int s = de.aatokombi.Config.MANEUVER_PREPARE_SECONDS;
@@ -662,7 +672,7 @@ public final class NavMappingTest {
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
                            "directions", "roundabout angles", "imminence",
-						   "next maneuver", "current road", "playback mode", "prepare stage", "eta clock", "i18n", "ring continuity", "junction schematic" };
+						   "next maneuver", "current road", "playback mode", "prepare stage", "eta clock", "i18n", "ring continuity", "double turn", "junction schematic" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -683,6 +693,7 @@ public final class NavMappingTest {
                 case 14: etaClock(); break;
                 case 15: i18n(); break;
                 case 16: ringContinuity(); break;
+                case 17: doubleTurn(); break;
                 default: junctionSchematic(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));

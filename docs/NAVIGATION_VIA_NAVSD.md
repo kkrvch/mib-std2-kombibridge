@@ -115,6 +115,15 @@ only for the real ones (`{3,4,5,13..27,32..35}`) — the bargraph *is* the appro
 thresholds are in the native nav engine (Java only forwards the DSI array in
 `HsmTargetBap.dsiNavigationUpdateBapManeuverDescriptor`), so the two numbers above are ours.
 
+## Double turn
+
+With `Config.SHOW_DOUBLE_TURN` (default on), a near left/right `TURN` whose next AA step
+(`steps[1]`, IPC line 5) is a turn to the other side is drawn as the stock `DOUBLE_TURN` glyph (35).
+Verified on the AID with a synthetic second step: direction 64 draws "left, then right", 192
+"right, then left"; a same-side pair has no glyph and stays a plain turn. AA gives no distance
+between steps, so any second step counts. `maneuver_2` keeps the next step, but the AID was seen to
+ignore it. Google Maps, Yandex and 2GIS sent no second step on any trip so far.
+
 ## Rerouting
 
 While the phone reports `NavigationState = REROUTING` (3, protocol 1.7; Google Maps and 2GIS send it
