@@ -401,7 +401,8 @@ public final class AANavReader implements Runnable {
 			if (schematic && !exitOnlyStep && (event == 11 || event == 12 || event == 13)) {
 				// Roundabout: always meaningful here, since AA gives an exit number on every roundabout
 				// maneuver regardless of whether lane data is also available.
-				sideStreets = JunctionSchematic.buildRoundabout(effAngle, number);
+				sideStreets = JunctionSchematic.buildRoundabout(effAngle, number,
+						mainElement != 22);                // 22 = ROUNDABOUT_TRS_LEFT (clockwise ring)
 				logSchematic("roundabout", mainElement, direction, sideStreets);
 			} else if (schematic && (mainElement == MAIN_ELEMENT_FOLLOW_STREET
 					|| mainElement == MAIN_ELEMENT_TURN || mainElement == MAIN_ELEMENT_TURN_ON_MAINROAD)) {

@@ -75,10 +75,16 @@ final class JunctionSchematic {
      *                   any other value (angle truly unknown) yields a base-only schematic ("").
      * @param exitNumber 1-based ordinal of the exit taken (AA's roundabout_exit_number); 0 or
      *                   negative is treated as "unknown" (0 passed exits, taken spoke only).
+     * @param counterClockwise true for a right-hand-traffic ring (ROUNDABOUT_TRS_RIGHT, entered
+     *                   turning right): the exits passed lie on the arc the car actually drives,
+     *                   entry -&gt; right -&gt; ahead -&gt; left, i.e. increasing on the 0..255 CCW
+     *                   scale; false (TRS_LEFT) the other way round. Until 2026-10 the shorter arc
+     *                   was used, which put the passed exits of a 3rd-exit-left ring on the LEFT,
+     *                   where no exit is passed -- and the AID drew none of them.
      * @return a string of distinct spoke characters (up to ROUNDABOUT_ANGLES.length, 15), or "" if
      *         effAngle is not usable. Never throws.
      */
-    static String buildRoundabout(int effAngle, int exitNumber) {
+    static String buildRoundabout(int effAngle, int exitNumber, boolean counterClockwise) {
         try {
             if (effAngle < 1 || effAngle > 360) {
                 return "";                                  // no bearing at all -> base-only schematic
@@ -97,11 +103,13 @@ final class JunctionSchematic {
 
             int[] raw = new int[passed + 1];
             if (passed > 0) {
-                // Shorter arc from the entry (128) to the taken exit; passed exits spread evenly
-                // along it. [HW-TUNE], see class comment: direction of "shorter" is an assumption.
-                int fwd = ((takenD - 128) % 256 + 256) % 256;
-                int back = 256 - fwd;
-                int arc = (fwd <= back) ? fwd : -back;
+                // The arc from the entry (128) to the taken exit in the direction of travel; passed
+                // exits spread evenly along it. [HW-TUNE: the AID's acceptance is being verified]
+                int fwd = ((takenD - 128) % 256 + 256) % 256;      // going CCW (increasing)
+                if (fwd == 0) {
+                    fwd = 256;                                     // taken exit = back the way you came
+                }
+                int arc = counterClockwise ? fwd : -(256 - fwd);
                 for (int i = 0; i < passed; i++) {
                     raw[i] = (128 + arc * (i + 1) / (passed + 1)) & 0xFF;
                 }

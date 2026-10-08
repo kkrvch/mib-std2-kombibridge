@@ -467,7 +467,7 @@ public final class NavMappingTest {
 
         // -- buildRoundabout (fine 22.5-deg grid, ROUNDABOUT_ANGLES) ---------------------------------
         // First exit taken (nothing passed): exactly one spoke, at the taken exit's own bearing.
-        String r1 = JunctionSchematic.buildRoundabout(180, 1);
+        String r1 = JunctionSchematic.buildRoundabout(180, 1, true);
         eq("roundabout exit1 spoke count", r1.length(), 1);
         eq("roundabout exit1 spoke value", (int) r1.charAt(0), 0);
 
@@ -475,24 +475,29 @@ public final class NavMappingTest {
         // the two passed exits are spread along the shorter arc from the entry (raw 107, 86) and,
         // on the fine grid, each keeps its own slot -> three distinct spokes {0x70,0x50,0x40}.
         // The taken exit's own snapped bearing is always last.
-        String r3 = JunctionSchematic.buildRoundabout(270, 3);
-        eq("roundabout exit3 (fine grid)", r3, charStr(112, 80, 64));
+        String r3 = JunctionSchematic.buildRoundabout(270, 3, true);
+        // Right-hand traffic: the two exits passed are on the right and straight ahead.
+        eq("roundabout exit3 (fine grid)", r3, charStr(192, 0, 64));
         eq("roundabout exit3 taken spoke is last", (int) r3.charAt(r3.length() - 1), 64);
 
         // The OTHER 2026-09 field-test case (Yandex roundabout, effAngle synthesised from exit=2):
         // both spokes sit exactly on grid positions, so this is byte-for-byte what was actually
         // logged on the car ({0xc0,0x00}).
-        String r2 = JunctionSchematic.buildRoundabout(180, 2);
+        String r2 = JunctionSchematic.buildRoundabout(180, 2, true);
         eq("roundabout exit2 (matches the field log)", r2, charStr(192, 0));
 
         // No usable bearing at all (angle out of AA's 1..360 range, e.g. AND no exit number to
         // synthesize one from) -> base-only schematic, i.e. an empty spoke string, never a throw.
-        eq("roundabout no angle (0)",   JunctionSchematic.buildRoundabout(0, 3), "");
-        eq("roundabout no angle (361)", JunctionSchematic.buildRoundabout(361, 3), "");
+        // 2026-10 field case: Maps exit 3 at 225 deg (front-left), right-hand traffic.
+        eq("roundabout 225/3 ccw", JunctionSchematic.buildRoundabout(225, 3, true), charStr(176, 240, 32));
+        // Left-hand traffic mirrors it: exit 3 on the right, the passed ones left and ahead.
+        eq("roundabout 90/3 cw",   JunctionSchematic.buildRoundabout(90, 3, false), charStr(64, 0, 192));
+        eq("roundabout no angle (0)",   JunctionSchematic.buildRoundabout(0, 3, true), "");
+        eq("roundabout no angle (361)", JunctionSchematic.buildRoundabout(361, 3, true), "");
 
         // A huge / garbled exit number must still terminate (MAX_PASSED_EXITS clamp) and produce a
         // string within the BAPString(17) capacity, never an exception or a runaway loop.
-        String huge = JunctionSchematic.buildRoundabout(270, 999);
+        String huge = JunctionSchematic.buildRoundabout(270, 999, true);
         if (huge.length() > 17) {
             failed++;
             System.out.println("  FAIL roundabout huge exit number overflowed BAPString(17): len=" + huge.length());
@@ -644,7 +649,8 @@ public final class NavMappingTest {
 
     private static void eqNoThrowRoundabout(int effAngle, int exitNumber) {
         try {
-            JunctionSchematic.buildRoundabout(effAngle, exitNumber);
+            JunctionSchematic.buildRoundabout(effAngle, exitNumber, true);
+            JunctionSchematic.buildRoundabout(effAngle, exitNumber, false);
         } catch (Throwable t) {
             failed++;
             System.out.println("  FAIL buildRoundabout(" + effAngle + "," + exitNumber + ") threw: " + t);
