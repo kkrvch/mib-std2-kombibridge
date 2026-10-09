@@ -71,6 +71,13 @@ NavigationServiceListener {
                 String string = navigationService.getCurrentPositionInfo();
                 int navStatus = navigationService.getNavigationStatus();
                 String out = (string == null || navStatus != 0) ? "" : string;
+                if (out.length() == 0 && NavState.ACTIVE) {
+                    // navsd-shadow delta: the unit does not know the street either (e.g. a car park at
+                    // the start of a trip, before the car is on a mapped road): the navigator's own
+                    // line for the current step ("В сторону ул. Ленина") rather than nothing.
+                    String hint = NavState.nextRoad;
+                    out = (hint != null) ? hint : "";
+                }
                 currentPositionInfo_Status.positionInfo.setContent(out);
                 logStock(string, navStatus, out);
             } else {
