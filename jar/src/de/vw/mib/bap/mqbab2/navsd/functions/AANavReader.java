@@ -82,12 +82,18 @@ public final class AANavReader implements Runnable {
     static final class RingMemory {
         private int lastEvent = 0;        // event of the current step
         private int prevStepEvent = 0;    // event of the step before it
-        private boolean valid = false;    // angle/number below belong to the current ring
+        private boolean valid = false;    // angle/number/side below belong to the current ring
         private int angle = 0;
         private int number = 0;
+        private int side = 0;
 
-        /** @return {angle, number, exitOnly(0/1)} to use for this frame. */
-        int[] apply(int event, int angleIn, int numberIn) {
+        /**
+         * @return {angle, number, exitOnly(0/1), side} to use for this frame. The exit step that
+         * follows a ring step also keeps the RING's side: 2GIS sends its "leave the roundabout" step
+         * as the clockwise variant even on a counter-clockwise ring (2026-10), which flipped the
+         * glyph to ROUNDABOUT_TRS_LEFT halfway round.
+         */
+        int[] apply(int event, int sideIn, int angleIn, int numberIn) {
             if (event != lastEvent) {
                 prevStepEvent = lastEvent;
                 lastEvent = event;
@@ -98,20 +104,22 @@ public final class AANavReader implements Runnable {
                     valid = true;
                     angle = angleIn;
                     number = numberIn;
+                    side = sideIn;
                 }
-                return new int[]{ angleIn, numberIn, 0 };
+                return new int[]{ angleIn, numberIn, 0, sideIn };
             }
             if (event == 12) {
+                boolean sameRing = valid && (prevStepEvent == 11 || prevStepEvent == 13);
                 if (angleIn > 0 || numberIn > 0) {
-                    return new int[]{ angleIn, numberIn, 0 };          // the phone said it itself
+                    return new int[]{ angleIn, numberIn, 0, sameRing ? side : sideIn };  // its own geometry
                 }
-                if (valid && (prevStepEvent == 11 || prevStepEvent == 13)) {
-                    return new int[]{ angle, number, 0 };              // same ring, keep its picture
+                if (sameRing) {
+                    return new int[]{ angle, number, 0, side };        // same ring, keep its picture
                 }
-                return new int[]{ 0, 0, 1 };                           // nothing to draw it from
+                return new int[]{ 0, 0, 1, sideIn };                   // nothing to draw it from
             }
             valid = false;                                             // left the ring
-            return new int[]{ angleIn, numberIn, 0 };
+            return new int[]{ angleIn, numberIn, 0, sideIn };
         }
 
         void reset() {
@@ -451,9 +459,10 @@ public final class AANavReader implements Runnable {
                     + ": dist=" + dist + "m time=" + time + "s");
         }
 		
-        int[] ringFix = ring.apply(event, angle, number);
+        int[] ringFix = ring.apply(event, side, angle, number);
         angle = ringFix[0];
         number = ringFix[1];
+        side = ringFix[3];
         boolean exitOnlyStep = ringFix[2] == 1;
         int effAngle = effectiveAngle(event, angle, number);    // real bearing (Maps) or synth from exit number (Yandex)
         // The manoeuvre's own glyph. It is what maneuver_1 shows once the manoeuvre is near; while it

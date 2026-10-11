@@ -387,7 +387,7 @@ public final class NavMappingTest {
     }
 
     private static String ringOut(AANavReader.RingMemory r, int ev, int a, int n) {
-        int[] o = r.apply(ev, a, n);
+        int[] o = r.apply(ev, 2, a, n);
         return o[0] + "/" + o[1] + (o[2] == 1 ? " exit-only" : "");
     }
 
@@ -405,6 +405,11 @@ public final class NavMappingTest {
         ringOut(r3, 11, 270, 2);
         r3.reset();
         eq("reset forgets the ring",         ringOut(r3, 12, 0, 0), "0/0 exit-only");
+        // 2GIS: CCW ring (side 2), then its exit step as the CW variant (side 1) with its own data.
+        AANavReader.RingMemory r4 = new AANavReader.RingMemory();
+        r4.apply(13, 2, 225, 1);
+        eq("2GIS exit keeps the ring side",  r4.apply(12, 1, 225, 1)[3], 2);
+        eq("exit after a turn keeps its own", new AANavReader.RingMemory().apply(12, 1, 225, 1)[3], 1);
     }
 
     private static void doubleTurn() {
