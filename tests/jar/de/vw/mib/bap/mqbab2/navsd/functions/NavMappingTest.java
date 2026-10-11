@@ -432,6 +432,19 @@ public final class NavMappingTest {
         eq("exit: no prepare glyph",     AANavReader.prepareElementFor(15), -1);
         eq("arrival: no prepare glyph",  AANavReader.prepareElementFor(3), -1);
         eq("follow: no prepare glyph",   AANavReader.prepareElementFor(11), -1);
+        eq("prepare slight right -> 192", AANavReader.prepareDirection(28, 224), 192);
+        eq("prepare slight left -> 64",   AANavReader.prepareDirection(28, 32), 64);
+        eq("prepare sharp left -> 64",    AANavReader.prepareDirection(28, 96), 64);
+        eq("prepare sharp right -> 192",  AANavReader.prepareDirection(28, 160), 192);
+        eq("prepare straight stays 0",    AANavReader.prepareDirection(28, 0), 0);
+        eq("prepare ring untouched",      AANavReader.prepareDirection(29, 224), 224);
+        eq("prepare u-turn 192",          AANavReader.prepareDirection(31, 192), 192);
+        eq("ring 14 -> 16",               AANavReader.renderableDirection(21, 14), 16);
+        eq("ring 250 -> 0",               AANavReader.renderableDirection(21, 250), 0);
+        eq("turn 224 kept",               AANavReader.renderableDirection(13, 224), 224);
+        eq("fork unspecified 0 -> 64",    AANavReader.renderableDirection(19, 0), 64);
+        eq("exit right 200 -> 192",       AANavReader.renderableDirection(15, 200), 192);
+        eq("follow ignores direction",    AANavReader.renderableDirection(11, 77), 77);
     }
 	
     // ---- multi-spoke junction schematic (this class itself has no idea what cluster it runs on --

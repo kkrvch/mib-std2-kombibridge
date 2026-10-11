@@ -345,6 +345,68 @@ public final class AANavReader implements Runnable {
     }
 
     /**
+     * The direction a PREPARE_* glyph can actually be drawn with. The stock renderer (MIBHMI
+     * Guidance.doPrepareTurn / doPrepareUTurn) knows PREPARE_TURN only at 0 / 64 / 192 and
+     * PREPARE_UTURN only at 64 / 192 -- anything else draws NOTHING, which the AID did for every
+     * slight (224/32) and sharp (96/160) turn in the prepare stage (2026-10). So the turn's own
+     * direction is folded onto its side; PREPARE_ROUNDABOUT / PREPARE_SQUARE ignore it anyway.
+     */
+    // Directions each glyph has an image for, from the stock renderer (MIBHMI de.vw.mib.widgets.Guidance
+    // do<Glyph>()); any other direction draws nothing at all. null = the glyph ignores direction.
+    private static final int[] DIRS_TURN = { 0, 32, 64, 96, 160, 192, 224 };
+    private static final int[] DIRS_RING = { 0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240 };
+    private static final int[] DIRS_SIDES = { 64, 192 };
+    private static final int[] DIRS_SIDES_AHEAD = { 0, 64, 192 };
+    private static final int[] DIRS_EXIT_RIGHT = { 0, 192, 224 };
+    private static final int[] DIRS_EXIT_LEFT = { 0, 32, 64 };
+
+    static int[] renderableDirections(int mainElement) {
+        switch (mainElement) {
+            case 13: case 14:                   return DIRS_TURN;         // TURN, TURN_ON_MAINROAD
+            case 21: case 22: case 23: case 24: return DIRS_RING;         // ROUNDABOUT_TRS_*, SQUARE_TRS_*
+            case 12: case 19: case 25: case 31:
+            case 34: case 35:                   return DIRS_SIDES;        // CHANGE_LANE, FORK_2, UTURN, PREPARE_UTURN, MICHIGAN, DOUBLE
+            case 20: case 28:                   return DIRS_SIDES_AHEAD;  // FORK_3, PREPARE_TURN
+            case 15: case 32:                   return DIRS_EXIT_RIGHT;   // EXIT_RIGHT(_RAMP)
+            case 16: case 33:                   return DIRS_EXIT_LEFT;    // EXIT_LEFT(_RAMP)
+            default:                            return null;
+        }
+    }
+
+    /** The nearest direction (on the 0..255 circle) the glyph can draw; unchanged if it ignores it. */
+    static int renderableDirection(int mainElement, int direction) {
+        int[] set = renderableDirections(mainElement);
+        if (set == null) {
+            return direction;
+        }
+        int d = direction & 0xFF;
+        int best = set[0];
+        int bestDist = 256;
+        for (int i = 0; i < set.length; i++) {
+            int diff = Math.abs(set[i] - d);
+            if (diff > 128) {
+                diff = 256 - diff;
+            }
+            if (diff < bestDist) {
+                bestDist = diff;
+                best = set[i];
+            }
+        }
+        return best;
+    }
+
+    static int prepareDirection(int prepareElement, int direction) {
+        if (prepareElement != MAIN_ELEMENT_PREPARE_TURN && prepareElement != MAIN_ELEMENT_PREPARE_UTURN) {
+            return direction;
+        }
+        int d = direction & 0xFF;
+        if (d == 0 || d == 128) {
+            return (prepareElement == MAIN_ELEMENT_PREPARE_TURN) ? 0 : 64;
+        }
+        return (d < 128) ? 64 : 192;
+    }
+
+    /**
      * The prepare glyph for a manoeuvre glyph, or -1 when the cluster has none for it (exit, fork,
      * merge, arrival...): those stay FOLLOW_STREET until they are near.
      */
@@ -455,6 +517,7 @@ public final class AANavReader implements Runnable {
             // Middle stage: the stock "get ready" glyph turned the manoeuvre's way, no junction
             // geometry yet (the stock validator clears sidestreets for these glyphs anyway).
             mainElement = prepareElementFor(mainElement);
+            direction = prepareDirection(mainElement, direction);
             sideStreets = "";
         } else if (!imminent) {
             // Far: maneuver_1 is a plain "follow the street", with no junction geometry around it.
@@ -476,6 +539,7 @@ public final class AANavReader implements Runnable {
             shown = false;
             NavState.laneState = NavState.NO_LANES;
         }
+        direction = renderableDirection(mainElement, direction);   // never a direction the glyph lacks
         NavState.mainElement    = mainElement;
         NavState.direction      = direction;
         NavState.currentRoad    = (currentRoad != null) ? currentRoad : "";
