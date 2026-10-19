@@ -546,6 +546,59 @@ static void test_dest_eta(){
   CHECK(std::strcmp(g_st.destEta,"5:42 PM")==0, "destEta='%s'", g_st.destEta);
 }
 
+// ---- ServiceDiscoveryResponse: SKIP_THIS_BLUETOOTH ---------------------------------------------
+// Minimal reader for the checks: the n-th length-delimited field f of a message.
+static int pb_get(const unsigned char* p,int n,int f,int idx,const unsigned char** out,int* outLen){
+  int i=0,seen=0;
+  while(i<n){
+    unsigned k=0; int sh=0; do{ k|=(unsigned)(p[i]&0x7f)<<sh; sh+=7; }while(p[i++]&0x80);
+    int w=k&7;
+    if(w==0){ while(p[i++]&0x80){} continue; }
+    if(w!=2) return 0;
+    unsigned L=0; sh=0; do{ L|=(unsigned)(p[i]&0x7f)<<sh; sh+=7; }while(p[i++]&0x80);
+    if((int)(k>>3)==f && seen++==idx){ *out=p+i; *outLen=(int)L; return 1; }
+    i+=(int)L;
+  }
+  return 0;
+}
+static void test_sdp_skip_bluetooth(){
+  Buf bt;   bt.s(1,"AA:BB:CC:DD:EE:FF"); { Buf m; m.v(1,2); m.v(1,4); bt.tag(2,2); bt.varint((unsigned)m.n);
+            std::memcpy(bt.b+bt.n,m.b,m.n); bt.n+=m.n; }
+  Buf cdBt; cdBt.v(1,8); cdBt.m(6,bt); cdBt.v(9,1);
+  Buf cdV;  cdV.v(1,3); { Buf big; for(int k=0;k<20;k++) big.s(2,"xxxxxxxxxx"); cdV.m(3,big); }
+  Buf sdp;  sdp.m(1,cdV); sdp.m(1,cdBt); sdp.s(2,"make"); sdp.v(5,1);
+  unsigned char out[2048];
+  u32 n=sdp_skip_bluetooth(sdp.b,(u32)sdp.n,out,sizeof out);
+  CHECK(n==(u32)sdp.n+2, "rewritten length %u (orig %d)", n, sdp.n);
+  // expected: the same message with the address swapped
+  Buf bt2;  bt2.s(1,"SKIP_THIS_BLUETOOTH"); { Buf m; m.v(1,2); m.v(1,4); bt2.tag(2,2); bt2.varint((unsigned)m.n);
+            std::memcpy(bt2.b+bt2.n,m.b,m.n); bt2.n+=m.n; }
+  Buf cd2;  cd2.v(1,8); cd2.m(6,bt2); cd2.v(9,1);
+  Buf exp;  exp.m(1,cdV); exp.m(1,cd2); exp.s(2,"make"); exp.v(5,1);
+  CHECK(n==(u32)exp.n && std::memcmp(out,exp.b,exp.n)==0, "rewritten bytes differ");
+  const unsigned char* c; int cl; const unsigned char* b; int bl; const unsigned char* a; int al;
+  CHECK(pb_get(out,(int)n,1,1,&c,&cl) && pb_get(c,cl,6,0,&b,&bl) && pb_get(b,bl,1,0,&a,&al)
+        && al==19 && std::memcmp(a,"SKIP_THIS_BLUETOOTH",19)==0, "address not replaced");
+  // already skipped -> untouched (0)
+  CHECK(sdp_skip_bluetooth(exp.b,(u32)exp.n,out,sizeof out)==0, "second rewrite should be a no-op");
+  // no Bluetooth channel -> 0
+  Buf nob; nob.m(1,cdV); nob.s(2,"make");
+  CHECK(sdp_skip_bluetooth(nob.b,(u32)nob.n,out,sizeof out)==0, "no BT channel must return 0");
+  // output too small -> 0
+  CHECK(sdp_skip_bluetooth(sdp.b,(u32)sdp.n,out,20)==0, "small output must return 0");
+  // every truncation -> 0 or a well-formed shorter rewrite, never an over-read (ASan)
+  for(int k=0;k<sdp.n;k++) (void)sdp_skip_bluetooth(sdp.b,(u32)k,out,sizeof out);
+  // random bytes
+  unsigned seed=7;
+  for(int r=0;r<3000;r++){
+    unsigned char junk[300]; int jn=(int)(seed%300);
+    for(int k=0;k<jn;k++){ seed=seed*1103515245u+12345u; junk[k]=(unsigned char)(seed>>16); }
+    if(jn>3){ junk[0]=0x0a; junk[1]=(unsigned char)(jn-2>127?127:jn-2); }
+    (void)sdp_skip_bluetooth(junk,(u32)jn,out,sizeof out);
+    seed=seed*1103515245u+12345u;
+  }
+}
+
 int main(){
   struct { const char* name; void(*fn)(); } tests[] = {
     {"five lanes (golden frame)",     test_five_lanes},
@@ -568,6 +621,7 @@ int main(){
     {"long road truncation",          test_long_road},
     {"truncated frames",              test_truncations},
     {"fuzz",                          test_fuzz},
+    {"SDP: skip phone Bluetooth",     test_sdp_skip_bluetooth},
   };
   for(unsigned i=0;i<sizeof tests/sizeof tests[0];i++){
     int before=g_fail;

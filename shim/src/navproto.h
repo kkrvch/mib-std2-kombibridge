@@ -420,4 +420,101 @@ static void parse_curpos(const u8* p,u32 len){
   }
 }
 
+// ===== ServiceDiscoveryResponse: opt out of the phone's Bluetooth set-up ======================
+// With 1.7 advertised, current Android Auto runs its car-pairing flow late: it waits ~2 min in
+// STATE_REQUESTING_CAR_PAIRING_PREPARATION for a 1.7 head unit to say it is ready (the 1.3-era
+// libgal never does), then sends BluetoothPairingRequest mid-music. The head unit answers
+// "delayed, then already paired", the phone re-routes its Bluetooth audio, and the media player
+// pauses. Observed on the car at 121 s after connect, every session; on 1.3 the same exchange
+// happens in the first 2 s, before any music.
+// The protocol has an opt-out: BluetoothChannel.adapter_address = "SKIP_THIS_BLUETOOTH" and the
+// phone skips its Bluetooth state machine. The car's own Bluetooth (HFP calls, contacts) is set up
+// by the head unit as it is without Android Auto, so nothing is lost.
+// Layout: ServiceDiscoveryResponse { repeated ChannelDescriptor = 1 }, ChannelDescriptor
+// { BluetoothChannel = 6 }, BluetoothChannel { string adapter_address = 1; packed methods = 2 }.
+// in/n = the message WITHOUT its 2-byte id. Writes the rewritten message to out and returns its
+// length; returns 0 (send the original unchanged) when there is no Bluetooth channel, it already
+// says SKIP_THIS_BLUETOOTH, or anything does not parse or fit. Never reads outside in[0..n).
+static const char SDP_SKIP_BT[] = "SKIP_THIS_BLUETOOTH";
+static int sdp_rd(const u8* p, u32 n, u32* i, u32* v){
+  u32 r=0;
+  for(int sh=0; sh<35 && *i<n; sh+=7){ u8 b=p[(*i)++]; r|=(u32)(b&0x7f)<<sh; if(!(b&0x80)){ *v=r; return 1; } }
+  return 0;
+}
+static u32 sdp_wr(u8* o, u32 v){ u32 k=0; while(v>=0x80){ o[k++]=(u8)(v|0x80); v>>=7; } o[k++]=(u8)v; return k; }
+// Skips one field's value (the key already read); 0 on a truncated or unknown wire type.
+static int sdp_skipval(const u8* p, u32 n, u32* i, u32 wt){
+  u32 v;
+  if(wt==0) return sdp_rd(p,n,i,&v);
+  if(wt==1){ if(n-*i<8) return 0; *i+=8; return 1; }
+  if(wt==5){ if(n-*i<4) return 0; *i+=4; return 1; }
+  if(wt==2){ if(!sdp_rd(p,n,i,&v) || v>n-*i) return 0; *i+=v; return 1; }
+  return 0;
+}
+static u32 sdp_copy(u8* out, u32 o, u32 cap, const u8* src, u32 len){
+  if(len>cap-o) return 0xffffffffu;
+  for(u32 k=0;k<len;k++) out[o+k]=src[k];
+  return o+len;
+}
+// One BluetoothChannel with field 1 replaced; returns its new length or 0.
+static u32 sdp_bt_rewrite(const u8* b, u32 n, u8* out, u32 cap, int* already){
+  u32 i=0, o=0; int seen=0;
+  while(i<n){
+    u32 ks=i, key; if(!sdp_rd(b,n,&i,&key)) return 0;
+    if((key>>3)==1 && (key&7)==2){
+      u32 L; if(!sdp_rd(b,n,&i,&L) || L>n-i) return 0;
+      if(L==sizeof SDP_SKIP_BT-1){
+        u32 k=0; while(k<L && b[i+k]==(u8)SDP_SKIP_BT[k]) k++;
+        if(k==L) *already=1;
+      }
+      i+=L; seen=1;
+      if(cap-o < 2+sizeof SDP_SKIP_BT) return 0;
+      out[o++]=0x0a; o+=sdp_wr(out+o, sizeof SDP_SKIP_BT-1);
+      o=sdp_copy(out,o,cap,(const u8*)SDP_SKIP_BT,sizeof SDP_SKIP_BT-1); if(o==0xffffffffu) return 0;
+      continue;
+    }
+    if(!sdp_skipval(b,n,&i,key&7)) return 0;
+    o=sdp_copy(out,o,cap,b+ks,i-ks); if(o==0xffffffffu) return 0;
+  }
+  return seen ? o : 0;
+}
+static u8 g_sdpDesc[1024], g_sdpBt[256];
+static u32 sdp_skip_bluetooth(const u8* in, u32 n, u8* out, u32 cap){
+  u32 i=0, o=0; int changed=0;
+  while(i<n){
+    u32 ks=i, key; if(!sdp_rd(in,n,&i,&key)) return 0;
+    if((key>>3)==1 && (key&7)==2){                       // ChannelDescriptor
+      u32 L; if(!sdp_rd(in,n,&i,&L) || L>n-i) return 0;
+      const u8* c=in+i; u32 j=0, t=0; int has=0;
+      while(j<L){
+        u32 cks=j, ck; if(!sdp_rd(c,L,&j,&ck)) return 0;
+        if((ck>>3)==6 && (ck&7)==2){                     // BluetoothChannel
+          u32 bl; if(!sdp_rd(c,L,&j,&bl) || bl>L-j) return 0;
+          int already=0;
+          u32 nb=sdp_bt_rewrite(c+j,bl,g_sdpBt,sizeof g_sdpBt,&already);
+          if(!nb || already) return 0;
+          if(sizeof g_sdpDesc-t < 6+nb) return 0;
+          g_sdpDesc[t++]=(u8)((6<<3)|2); t+=sdp_wr(g_sdpDesc+t,nb);
+          t=sdp_copy(g_sdpDesc,t,sizeof g_sdpDesc,g_sdpBt,nb); if(t==0xffffffffu) return 0;
+          j+=bl; has=1; continue;
+        }
+        if(!sdp_skipval(c,L,&j,ck&7)) return 0;
+        t=sdp_copy(g_sdpDesc,t,sizeof g_sdpDesc,c+cks,j-cks); if(t==0xffffffffu) return 0;
+      }
+      i+=L;
+      if(has){
+        if(cap-o < 6+t) return 0;
+        out[o++]=(u8)((1<<3)|2); o+=sdp_wr(out+o,t);
+        o=sdp_copy(out,o,cap,g_sdpDesc,t); if(o==0xffffffffu) return 0;
+        changed=1; continue;
+      }
+      o=sdp_copy(out,o,cap,in+ks,i-ks); if(o==0xffffffffu) return 0;
+      continue;
+    }
+    if(!sdp_skipval(in,n,&i,key&7)) return 0;
+    o=sdp_copy(out,o,cap,in+ks,i-ks); if(o==0xffffffffu) return 0;
+  }
+  return changed ? o : 0;
+}
+
 #endif // NAVPROTO_H

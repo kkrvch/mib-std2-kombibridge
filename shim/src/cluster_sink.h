@@ -856,7 +856,9 @@ void cluster_discovery(void* /*self*/,void* /*sdr*/){}
 // Replaces the single `bl MessageRouter::queueOutgoing` in Controller::sendServiceDiscoveryResponse.
 // Same arguments; data = 2-byte message id (6) + serialized ServiceDiscoveryResponse.
 extern "C" __attribute__((used)) int sdr_queue_hook(u32 router,u32 channel,const u8* data,u32 len){
-  qout_t q=(qout_t)ref(R_QUEUE_OUT);
+  // Through the Bluetooth-skip wrapper (navshim_fs.cpp mr_queue_outgoing): this BL bypasses the
+  // PLT/GOT the wrapper hooks, so the SDR would otherwise go out without SKIP_THIS_BLUETOOTH.
+  qout_t q=(qout_t)(void*)&mr_queue_outgoing;
   g_cl.sdrSeen++;
   if(g_clusterId!=0xff && g_clusterInId!=0xff && data && len>=2){
     g_cl.sdrMainVideo=0; g_cl.sdrMainInput=0;

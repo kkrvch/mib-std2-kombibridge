@@ -21,7 +21,8 @@ typedef unsigned long  usize;
 // ===== .galrefs: absolute VAs in libgal; the injector relativizes them (R_ARM_RELATIVE) =====
 // At runtime g_ref[i] = libbase + value. All target functions are ARM (bit0 = 0).
 enum { R_REGISTER=0, R_NAV_VTABLE=1, R_GOT_MEMSET=2, R_ONCHOPEN=3, R_MEDIA_VTABLE=4,
-       R_MR_SHUTDOWN=5, R_VIDEO_DATA=6, R_VIDEO_CONFIG=7, R_QUEUE_OUT=8, N_REFS };
+       R_MR_SHUTDOWN=5, R_VIDEO_DATA=6, R_VIDEO_CONFIG=7, R_QUEUE_OUT=8,
+       R_ROUTE_GOT=9, R_ROUTE_FN=10, R_QOUT_GOT=11, R_QOUT_FN=12, N_REFS };
 // These slots are PLACEHOLDERS (0). The injector (inject.py) resolves the per-firmware absolute
 // VAs from the TARGET libgal's own .dynsym / relocations / .plt and writes them into these slots
 // before relativizing them. So the shim is no longer locked to one libgal build — see shim/README.md.
@@ -36,8 +37,10 @@ enum { R_REGISTER=0, R_NAV_VTABLE=1, R_GOT_MEMSET=2, R_ONCHOPEN=3, R_MEDIA_VTABL
 //   R_VIDEO_DATA   = VideoSink::handleDataAvailable           (.dynsym symbol; continuation +16)
 //   R_VIDEO_CONFIG = VideoSink::handleCodecConfig             (.dynsym symbol; continuation +16)
 //   R_QUEUE_OUT    = MessageRouter::queueOutgoing             (.dynsym symbol; cluster-sink sends)
+//   R_ROUTE_GOT/FN = MessageRouter::routeMessage   GOT slot (R_ARM_JUMP_SLOT) / function (.dynsym)
+//   R_QOUT_GOT/FN  = MessageRouter::queueOutgoing  GOT slot (R_ARM_JUMP_SLOT) / function (.dynsym)
 extern "C" __attribute__((section(".galrefs"), used))
-volatile u32 g_ref[N_REFS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+volatile u32 g_ref[N_REFS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static inline u32 ref(int i){ return g_ref[i]; }            // = libbase + VA
 
 // ===== minimal freestanding libc =====
@@ -1060,6 +1063,55 @@ static u8 g_mediaEp[0x40] __attribute__((aligned(8)));
 // therefore always re-arms; a second init on the same live session (no shutdown between) is skipped.
 static void* g_inited_receiver = 0;
 
+// ===== MessageRouter hooks: two control-channel fixes that AA 1.7 needs ========================
+// libgal calls its own exported MessageRouter methods through the PLT, so pointing their GOT slots
+// at the wrappers below catches every caller. The wrappers call the real functions directly (their
+// .dynsym addresses), so the GOT is written once and never read back. The GOT lives in libgal's RW
+// segment (no RELRO); installed on the first GalReceiver::init, kept for the life of the process.
+typedef int (*mr_route_t)(void*,u32,const void*);
+typedef int (*mr_qout_t)(void*,u32,const void*,u32);
+enum { ID_SERVICE_DISCOVERY_RESPONSE = 0x0006, ID_BATTERY_STATUS_NOTIFICATION = 0x0017 };
+static u8 g_sdpOut[2048];
+
+// Outgoing: the ServiceDiscoveryResponse gets BluetoothChannel.adapter_address =
+// "SKIP_THIS_BLUETOOTH" (navproto.h sdp_skip_bluetooth explains why). queueOutgoing copies the
+// bytes (BluetoothEndpoint::sendPairingResponse frees its buffer right after the call), so a
+// static buffer is fine; discovery runs once per session on the receive thread.
+extern "C" __attribute__((used)) int mr_queue_outgoing(void* self, u32 ch, const void* data, u32 len){
+  const u8* p=(const u8*)data;
+  if(p && len>2 && len<sizeof g_sdpOut && (((u32)p[0]<<8)|p[1])==ID_SERVICE_DISCOVERY_RESPONSE){
+    u32 nl = sdp_skip_bluetooth(p+2, len-2, g_sdpOut+2, sizeof g_sdpOut-2);
+    if(nl){
+      g_sdpOut[0]=p[0]; g_sdpOut[1]=p[1];
+      return ((mr_qout_t)ref(R_QOUT_FN))(self, ch, g_sdpOut, nl+2);
+    }
+  }
+  return ((mr_qout_t)ref(R_QOUT_FN))(self, ch, data, len);
+}
+
+// Incoming: BatteryStatusNotification (control channel, newer than libgal's 1.3 Controller) is
+// accepted silently. Unhandled, MessageRouter answers it with an "unexpected message" frame; observed
+// on the car twice at a low phone battery, each followed by the session ending within a second.
+// It is a notification — the phone expects no reply.
+extern "C" __attribute__((used)) int mr_route_message(void* self, u32 ch, const void* bufref){
+  if((ch&0xff)==0 && bufref){
+    const u32* io = *(const u32* const*)((const u8*)bufref+4);   // shared_ptr<IoBuffer> -> IoBuffer*
+    if(io){
+      const u8* base=(const u8*)io[0]; u32 off=io[2], size=io[3];
+      if(base && size>=off+2 && (((u32)base[off]<<8)|base[off+1])==ID_BATTERY_STATUS_NOTIFICATION)
+        return 0;
+    }
+  }
+  return ((mr_route_t)ref(R_ROUTE_FN))(self, ch, bufref);
+}
+static u32 g_routerHooked = 0;
+static void install_router_hooks(){
+  if(g_routerHooked) return;
+  g_routerHooked = 1;
+  *(volatile u32*)ref(R_QOUT_GOT)  = (u32)&mr_queue_outgoing;
+  *(volatile u32*)ref(R_ROUTE_GOT) = (u32)&mr_route_message;
+}
+
 typedef void (*reg_t)(void*,void*);
 
 // These two entry trampolines are enabled only by --video-probe. The injector verifies the target
@@ -1117,6 +1169,7 @@ extern "C" __attribute__((used)) void gal_nav_inject(void* receiver){
   if(receiver == g_inited_receiver) return;   // already armed for THIS receiver
   g_inited_receiver = receiver;               // re-arm on each new receiver (AA reconnect)
   resolve_libc();
+  install_router_hooks();                          // before discovery is answered
   if(!p_fopen){ return; }                          // no libc → continuing would be pointless/unsafe
   my_memset(g_navEp,0,sizeof g_navEp);
   my_memset(g_mediaEp,0,sizeof g_mediaEp);

@@ -25,6 +25,10 @@ TRAMPOLINE_VIDEO_CONFIG='video_config_trampoline'
 #   4 R_MEDIA_VTABLE _ZTV27MediaPlaybackStatusEndpoint     (.dynsym; navshim adds +8 at runtime)
 #   5 R_MR_SHUTDOWN  MessageRouter::shutdown               (.dynsym; call displaced from the 1st BL
 #                                                           of GalReceiver::shutdown)
+#   6 R_ROUTE_GOT    MessageRouter::routeMessage GOT slot  (R_ARM_JUMP_SLOT; navshim repoints it)
+#   7 R_ROUTE_FN     MessageRouter::routeMessage           (.dynsym; the wrapper calls it directly)
+#   8 R_QOUT_GOT     MessageRouter::queueOutgoing GOT slot (R_ARM_JUMP_SLOT; navshim repoints it)
+#   9 R_QOUT_FN      MessageRouter::queueOutgoing          (.dynsym; the wrapper calls it directly)
 SYM_REGISTER='_ZN11GalReceiver15registerServiceEP20ProtocolEndpointBase'
 SYM_NAV_VTABLE='_ZTV24NavigationStatusEndpoint'
 SYM_ONCHOPEN='_ZN20ProtocolEndpointBase15onChannelOpenedEh'  # the call displaced from init's tail
@@ -38,6 +42,8 @@ SYM_VIDEO_CONFIG='_ZN9VideoSink17handleCodecConfigEPvj'
 SYM_QUEUE_OUT='_ZN13MessageRouter13queueOutgoingEhPvj'
 SYM_SEND_SDR='_ZN10Controller28sendServiceDiscoveryResponseEv'
 CLUSTER_SDR_HOOK='sdr_queue_hook'
+SYM_MR_ROUTE='_ZN13MessageRouter12routeMessageEhRK10shared_ptrI8IoBufferE'  # every incoming message
+SYM_MR_QOUT='_ZN13MessageRouter13queueOutgoingEhPvj'                        # every outgoing message
 
 def g16(b,o): return struct.unpack_from('<H',b,o)[0]
 def g32(b,o): return struct.unpack_from('<I',b,o)[0]
@@ -132,6 +138,10 @@ def resolve_galrefs(e,raw,n_slots):
               sym(SYM_MEDIA_VTABLE), sym(SYM_MR_SHUTDOWN),
               syms.get(SYM_VIDEO_DATA,0), syms.get(SYM_VIDEO_CONFIG,0),
               syms.get(SYM_QUEUE_OUT,0)]
+    # MessageRouter hooks (navshim install_router_hooks): GOT slot + real function, in that order.
+    for nm in (SYM_MR_ROUTE, SYM_MR_QOUT):
+        if nm not in js: sys.exit("ERROR: no JUMP_SLOT relocation for %s in libgal"%nm)
+        resolved += [js[nm], sym(nm)]
     if len(resolved)!=n_slots:
         sys.exit("ERROR: g_ref slot count mismatch: navshim has %d, inject.py resolves %d"
                  %(n_slots,len(resolved)))
@@ -334,7 +344,8 @@ def main():
     # --- AUTO-RESOLVE the per-firmware addresses from THIS libgal and bake them into .galrefs ---
     resolved,(init_foff,init_va),(sd_foff,sd_va)=resolve_galrefs(e,raw,len(galrefs))
     names=['R_REGISTER','R_NAV_VTABLE','R_GOT_MEMSET','R_ONCHOPEN','R_MEDIA_VTABLE','R_MR_SHUTDOWN',
-           'R_VIDEO_DATA','R_VIDEO_CONFIG','R_QUEUE_OUT']
+           'R_VIDEO_DATA','R_VIDEO_CONFIG','R_QUEUE_OUT',
+           'R_ROUTE_GOT','R_ROUTE_FN','R_QOUT_GOT','R_QOUT_FN']
     print("resolved galrefs from libgal:")
     for nm,val in zip(names,resolved): print("    %-12s = 0x%x"%(nm,val))
     for off,val in zip(galrefs,resolved):     # write resolved VAs into the blob's .galrefs slots
