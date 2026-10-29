@@ -13,6 +13,9 @@ shim/lib/*.so
 
 # distribution outputs — patched firmware binary must never be published; built locally
 dist/
+output/
+.kombibridge-build-*/
+.kombibridge-previous-*/
 
 # extracted/decompiled stock classes from MIBHMI.jar
 jar/reference/
@@ -25,6 +28,11 @@ jar/reference/
 
 # some misc info
 misc/
+
+# Local research and developer-only CarPlay diagnostics
+/internal/
+/tools/carplay/
+/.venv/
 
 # some trash
 **__pycache__

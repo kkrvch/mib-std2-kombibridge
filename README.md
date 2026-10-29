@@ -164,7 +164,16 @@ Use the toolbox's **"Dump files"** menu item to copy these from the unit to your
 ```
 Everything runs in Docker: it converts the `.jxe` to a jar, builds the toolchain image (cached
 after the first run), compiles both artifacts inside the container with the repo bind-mounted, and
-drops the two deployables in `dist/`. It adapts to your firmware automatically (the libgal patch
+drops the two deployables in `dist/`.
+
+On Windows, start Docker Desktop with Linux containers and double-click `build.bat`. It asks for
+`MIBHMI.jxe` and the stock `libext.google.gal.receiver.so` in two Open dialogs, builds, and opens
+the `dist` folder with the results. From PowerShell it takes the same arguments as `build.sh`:
+```powershell
+.\build.bat C:\path\to\MIBHMI.jxe C:\path\to\libext.google.gal.receiver.so
+```
+No Git Bash, WSL distribution or host Python is needed, and the window stays open afterwards so
+errors remain visible. The build adapts to your firmware automatically (the libgal patch
 resolves its per-build addresses from the file you pass, and the jar is rebuilt against your unit's
 `MIBHMI.jar`).
 
