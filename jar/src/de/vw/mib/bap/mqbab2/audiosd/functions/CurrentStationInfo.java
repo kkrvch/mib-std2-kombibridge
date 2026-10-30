@@ -424,6 +424,7 @@ ExboxServiceListener {
             if (Config.SHOW_NAV
                     && connType == 3
                     && !de.vw.mib.bap.mqbab2.navsd.functions.ClusterCaps.isNavCapable()
+                    && de.aatokombi.MediaViewMode.showNavigation()
                     && de.vw.mib.asl.internal.androidauto.target.NavigationHandler.aaRouteGuidanceActive
                     && navPrimary != null && navPrimary.length() > 0) {
                 // Cluster renders top->bottom: secondary(S2), tertiary(T3), PRIMARY(P1,big), quaternary(Q4).
@@ -448,7 +449,7 @@ ExboxServiceListener {
                 currentStationInfo_Status.qi_Type = 0;
                 if (Config.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "' q4='" + navQ4 + "'");
             }
-            // otherwise (AA connected, no active route guidance) show the REAL now-playing track.
+            // No active route, or music selected by the wheel: show the real now-playing track.
             else if (Config.SHOW_MEDIA && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
                 string = clampLine(mediaTitle);                       // line 1: track title
                 n = 72;

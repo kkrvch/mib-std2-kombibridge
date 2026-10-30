@@ -192,6 +192,11 @@ goes through `/dev/shmem`, a RAM filesystem).
 ### 4. Verify on the unit
 - Connect your phone over Android Auto and start navigation → the cluster's media tab shows the
   maneuver + street; play music with no active route → it shows the real Title/Artist/Album.
+- On MQB non-nav clusters, turn the wheel in the Audio menu during guidance to select music
+  (NEXT) or navigation (PREVIOUS). Repeated turns in the same direction keep the chosen view;
+  a new route starts with navigation. This works when `SHOW_NAV` and `SHOW_MEDIA` are enabled.
+  Nav-capable clusters and separate steering-wheel track buttons retain their normal behavior.
+  Wheel view selection is not implemented for the PQ input path.
 - If something's off, check that `/dev/shmem/aa_nav` and `/dev/shmem/aa_media` exist and advance
   while the phone is connected (the patched libgal writes them) and the `MIBLogger` output for
   `AANavReader` / `ShmemMediaReader` lines.
@@ -201,7 +206,7 @@ The defaults just work. All build-time switches live in one file —
 `jar/src/de/aatokombi/Config.java`; flip a constant and rebuild the jar:
 - `SHOW_NAV` — draw AA turn-by-turn on the cluster (the navsd **Navigation** menu on a nav-capable
   cluster, the media widget on a non-nav one). Default on.
-- `SHOW_MEDIA` — show the real now-playing track in the media widget when not navigating. Default on.
+- `SHOW_MEDIA` — show the real now-playing track when not navigating or when selected with the wheel. Default on.
 - `SHOW_MEDIA_PROGRESS` — add an ASCII playback progress bar to the now-playing track. Default off.
 - `SHOW_COVER_ART` — push the AA album cover to the cluster (AID / colour Virtual Cockpit only; inert
   on a monochrome cluster). Requires `SHOW_MEDIA`. Default off.

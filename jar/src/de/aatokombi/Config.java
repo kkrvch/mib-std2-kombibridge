@@ -22,8 +22,8 @@ public final class Config {
     public static final boolean SHOW_NAV = true;
 
     /**
-     * Show the now-playing track (song / artist / album) in the media widget when no route guidance
-     * is active. false -> the cluster keeps the stock "Android Auto" label instead.
+     * Show the now-playing track (song / artist / album) when no route guidance is active,
+     * or when music is selected with the wheel. false -> stock "Android Auto" label instead.
      */
     public static final boolean SHOW_MEDIA = true;
 

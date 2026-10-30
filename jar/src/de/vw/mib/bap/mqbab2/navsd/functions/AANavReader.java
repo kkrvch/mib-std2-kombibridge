@@ -242,6 +242,7 @@ public final class AANavReader implements Runnable {
 
     // ===== nav-capable path: NavState + navsd shadows ==========================================
     private void publishNavsd(int event, int side, int angle, int number, String road, int dist, int time) {
+        de.aatokombi.MediaViewMode.guidance(false);
         // Only the glyph waits: street, countdown and destination keep running meanwhile.
         boolean imminent = maneuverImminent(dist, time);
         if (imminent != lastImminent) {
@@ -371,6 +372,7 @@ public final class AANavReader implements Runnable {
 
     // ===== non-nav path: media now-playing widget =============================================
     private void publishMedia(int event, int side, int number, String road, int dist, String distText) {
+        de.aatokombi.MediaViewMode.guidance(true);
         // Cluster layout (top->bottom): secondary, tertiary, PRIMARY(big), quaternary.
         //   secondary = street, or the lane row while there is one; tertiary = maneuver word
         //   (+ roundabout exit); PRIMARY = arrow + distance ("> 300 m"); quaternary = destination.
@@ -606,6 +608,7 @@ public final class AANavReader implements Runnable {
 
     /** Clear the output of the path this cluster actually drives. */
     private void clearActive() {
+        de.aatokombi.MediaViewMode.guidance(false);
         if (cleared) {
             return;
         }
