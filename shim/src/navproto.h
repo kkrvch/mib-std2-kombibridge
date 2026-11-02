@@ -83,6 +83,14 @@ static void pb_str(PB* s,char* dst,int cap){
   int j=0;
   for(u32 i=0;i<n;i++){ char c=(char)s->p[i];
     if(c=='\n'||c=='\r'||c=='\t') c=' ';          // line 1 is newline-delimited; never break it
+    // Invisible characters the cluster font draws as a hyphen or a box: Google Maps puts SOFT
+    // HYPHENS into long Russian words ("Направляй\u00ADтесь" came out "Направляй-тесь", 2026-10).
+    // Dropped: U+00AD, U+200B..U+200D (zero-width), U+2060 (word joiner), U+FEFF (BOM).
+    { const u8* q=s->p+i; u32 left=n-i;
+      if(left>=2 && q[0]==0xC2 && q[1]==0xAD){ i+=1; continue; }
+      if(left>=3 && q[0]==0xE2 && q[1]==0x80 && q[2]>=0x8B && q[2]<=0x8D){ i+=2; continue; }
+      if(left>=3 && q[0]==0xE2 && q[1]==0x81 && q[2]==0xA0){ i+=2; continue; }
+      if(left>=3 && q[0]==0xEF && q[1]==0xBB && q[2]==0xBF){ i+=2; continue; } }
     if(j<cap-1) dst[j++]=c; }
   // Cut short: never leave half a UTF-8 sequence at the end (Cyrillic is 2 bytes a letter), or the
   // jar decodes a replacement glyph onto the cluster. Back off to the lead byte of the partial char.
@@ -211,6 +219,35 @@ static void parse_lane(PB s){
   }
 }
 
+// Copy src into dst[cap], cut at a whole UTF-8 character.
+static void str_fit(char* dst,int cap,const char* src){
+  int j=0; while(src[j] && j<cap-1){ dst[j]=src[j]; j++; }
+  if(src[j] && j>0){
+    int k=j; while(k>0 && (((u8)dst[k-1])&0xC0)==0x80) k--;
+    if(k>0){ u8 lead=(u8)dst[k-1]; int need=(lead>=0xF0)?4:(lead>=0xE0)?3:(lead>=0xC0)?2:1;
+             if(j-(k-1)<need) j=k-1; }
+  }
+  dst[j]=0;
+}
+static const char* str_find(const char* h,const char* n){
+  for(;*h;h++){ const char* a=h; const char* b=n; while(*b && *a==*b){ a++; b++; } if(!*b) return h; }
+  return 0;
+}
+// Google Maps (ru) sometimes puts the whole instruction into the road name:
+//   "здесь: ул. Садовая В сторону ул. Ленина"
+// Too long for the cluster line, and the first half ("here: <the road you turn at>") says nothing
+// the arrow does not. Kept: from "В сторону"/"в сторону" on; without it, the text after "здесь: ".
+static const char* road_clean(const char* t){
+  static const char* const here[]={ "здесь: ","Здесь: " };
+  for(unsigned i=0;i<sizeof here/sizeof here[0];i++){
+    const char* h=here[i]; const char* a=t; while(*h && *a==*h){ a++; h++; }
+    if(*h) continue;                                         // no "здесь: " prefix
+    const char* to=str_find(a," В сторону "); if(!to) to=str_find(a," в сторону ");
+    return to ? to+1 : a;
+  }
+  return t;
+}
+
 // A step is a COMPLETE snapshot of the manoeuvre, so everything it owns is cleared before parsing:
 // a field the phone omits means "not known now". Without this the roundabout exit number/angle of a
 // *_WITH_ANGLE manoeuvre survived into the next, angle-less one and the cluster drew a confidently
@@ -226,7 +263,9 @@ static void parse_step(PB s){
   // The cluster's street line wants a road name, so road_info wins and the instruction is only the
   // fallback for a phone that omits it. Held aside rather than written straight into g_st.road,
   // because protobuf fields may arrive in any order and field 2 must not overwrite field 4.
-  char cue[sizeof g_st.road]; cue[0]=0;
+  // Both read into larger buffers than g_st.road so road_clean sees the whole text before the cut.
+  char cue[160]; cue[0]=0;
+  char rn[160]; rn[0]=0;
   u32 f,w;
   while(pb_tag(&s,&f,&w)){
     if(w!=2){ pb_skip(&s,w); continue; }
@@ -241,12 +280,10 @@ static void parse_step(PB s){
                    while(pb_tag(&d,&rf,&rw)){
                      // Repeated, and a junction can carry several ("A4", "E40"). One line on the
                      // cluster, so the first non-empty name is the one that fits.
-                     if(rf==1&&rw==2 && !g_st.road[0]) pb_str(&d,g_st.road,sizeof g_st.road);
+                     if(rf==1&&rw==2 && !rn[0]) pb_str(&d,rn,sizeof rn);
                      else pb_skip(&d,rw); } }
   }
-  if(!g_st.road[0]){
-    for(usize i=0;i<sizeof g_st.road;i++){ g_st.road[i]=cue[i]; if(!cue[i]) break; }
-  }
+  str_fit(g_st.road,sizeof g_st.road,road_clean(rn[0] ? rn : cue));
   // The instruction itself, kept apart for the media widget's manoeuvre line (IPC line 9). Its own,
   // larger buffer: a spoken cue is longer than a road name. Re-read rather than copied from `cue`
   // above, which is sized for the road fallback.
