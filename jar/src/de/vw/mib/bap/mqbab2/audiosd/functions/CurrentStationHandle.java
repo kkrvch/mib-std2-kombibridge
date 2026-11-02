@@ -483,7 +483,7 @@ TvTunerServiceListener {
     }
 
     static {
-        MEDIA_LISTENER_IDS = new int[]{492571648, 526126080};
+        MEDIA_LISTENER_IDS = new int[]{810013, 810015};
         RADIO_LISTENER_IDS = new int[]{1324, 2486, 1412};
         TV_TUNER_LISTENER_IDS = new int[]{2662};
         SOUND_LISTENER_IDS = new int[]{1470};

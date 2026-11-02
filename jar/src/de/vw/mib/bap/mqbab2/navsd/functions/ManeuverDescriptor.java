@@ -14,7 +14,6 @@ import de.vw.mib.bap.mqbab2.common.api.stages.BAPStage;
 import de.vw.mib.bap.mqbab2.common.api.stages.BAPStageInitializer;
 import de.vw.mib.bap.mqbab2.common.api.stages.Function;
 import de.vw.mib.bap.mqbab2.generated.navsd.serializer.ManeuverDescriptor_Status;
-import de.vw.mib.bap.mqbab2.generated.navsd.serializer.ManeuverDescriptor_Status$Maneuver_1;
 import de.vw.mib.bap.mqbab2.navsd.api.ASLNavSDConstants;
 import java.util.Iterator;
 
@@ -76,8 +75,8 @@ NavigationServiceListener {
         return n2;
     }
 
-    private ManeuverDescriptor_Status$Maneuver_1 validateManeuverData(int n, int n2, String string, int n3) {
-        ManeuverDescriptor_Status$Maneuver_1 maneuverDescriptor_Status$Maneuver_1 = new ManeuverDescriptor_Status$Maneuver_1();
+    private ManeuverDescriptor_Status.Maneuver_1 validateManeuverData(int n, int n2, String string, int n3) {
+        ManeuverDescriptor_Status.Maneuver_1 maneuverDescriptor_Status$Maneuver_1 = new ManeuverDescriptor_Status.Maneuver_1();
         maneuverDescriptor_Status$Maneuver_1.direction = n;
         maneuverDescriptor_Status$Maneuver_1.mainElement = this.mapToBAPMainElement(n2);
         maneuverDescriptor_Status$Maneuver_1.sidestreets.setContent(string);
@@ -121,7 +120,7 @@ NavigationServiceListener {
     }
 
     private void fillManeuverDescriptor(ManeuverDescriptor_Status maneuverDescriptor_Status) {
-        ManeuverDescriptor_Status$Maneuver_1 maneuverDescriptor_Status$Maneuver_1;
+        ManeuverDescriptor_Status.Maneuver_1 maneuverDescriptor_Status$Maneuver_1;
         NavigationManeuverDescriptorElement navigationManeuverDescriptorElement;
         NavigationService navigationService = this.getNavigationService();
         Iterator iterator = navigationService.getManeuverDescriptor();
@@ -208,7 +207,7 @@ NavigationServiceListener {
                 // (NavState.sideStreets is "" then). For a roundabout, AANavReader synthesizes one
                 // EXIT-road spoke at the taken-exit bearing, so the glyph draws the exit you take.
                 String ss = (NavState.sideStreets != null) ? NavState.sideStreets : "";
-                ManeuverDescriptor_Status$Maneuver_1 m = this.validateManeuverData(
+                ManeuverDescriptor_Status.Maneuver_1 m = this.validateManeuverData(
                         NavState.direction, NavState.mainElement, ss, NavState.zLevelGuidance);
                 maneuverDescriptor_Status.maneuver_1.direction = m.direction;
                 maneuverDescriptor_Status.maneuver_1.mainElement = m.mainElement;
@@ -219,7 +218,7 @@ NavigationServiceListener {
                 // is a pooled entity, so an untouched field would carry the previous value over.
                 NavState.NextManeuver next = NavState.nextManeuver;
                 if (next != null) {
-                    ManeuverDescriptor_Status$Maneuver_1 n2 = this.validateManeuverData(
+                    ManeuverDescriptor_Status.Maneuver_1 n2 = this.validateManeuverData(
                             next.direction, next.mainElement, next.sideStreets, 0);
                     maneuverDescriptor_Status.maneuver_2.direction = n2.direction;
                     maneuverDescriptor_Status.maneuver_2.mainElement = n2.mainElement;

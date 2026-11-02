@@ -99,7 +99,7 @@ implements TimerNotifier {
 
     private Timer getUpdateTimer() {
         if (this._updateTimer == null) {
-            this._updateTimer = this.getStageInitializer().createTimer((BAPStage)this, (TimerNotifier)this, (long)0, 0);
+            this._updateTimer = this.getStageInitializer().createTimer((BAPStage)this, (TimerNotifier)this, 200L, 0);
         }
         return this._updateTimer;
     }
@@ -113,7 +113,7 @@ implements TimerNotifier {
 
     private Timer getSuppressionTimer() {
         if (this._suppressionTimer == null) {
-            this._suppressionTimer = this.getStageInitializer().createTimer((BAPStage)this, (TimerNotifier)this, (long)0, 1);
+            this._suppressionTimer = this.getStageInitializer().createTimer((BAPStage)this, (TimerNotifier)this, 2000L, 1);
         }
         return this._suppressionTimer;
     }

@@ -18,7 +18,7 @@ import java.util.List;
  * the cluster navsd {@code InfoStates} function (BAP fid 38) consults for the Android-Auto branch of
  * its "route guidance active" state — when it returns true, InfoStates reports state 6, which the
  * cluster shows as the "Navigation on the mobile device is active" placeholder. Forcing it false when
- * {@link Config#SUPPRESS_NAV_ACTIVE_PLACEHOLDER} is on collapses every datapool-895953920 writer at the
+ * {@link Config#SUPPRESS_NAV_ACTIVE_PLACEHOLDER} is on collapses every datapool-2910005 writer at the
  * consumer (RequestHandler's hardcoded-true write + the ASLHandler cached-field republishes), and is
  * immune to the re-latch those republishes would otherwise cause. AAtoKombi's own turn-by-turn injection
  * does not read this method (it keys off NavigationHandler.aaRouteGuidanceActive), so suppressing it only
@@ -28,7 +28,7 @@ public class AndroidAutoASLDataAdapter
 extends ASLDataPoolAdapter
 implements AndroidAutoService {
     private APIFactoryInterface apiFactory;
-    private static final int[] ANDROID_AUTO_ASL_PROPERTY_IDS_TO_LISTEN_TO = new int[]{895953920};
+    private static final int[] ANDROID_AUTO_ASL_PROPERTY_IDS_TO_LISTEN_TO = new int[]{2910005};
 
     public AndroidAutoASLDataAdapter(APIFactoryInterface aPIFactoryInterface, ASLDatapool aSLDatapool) {
         super(aSLDatapool);
@@ -40,7 +40,7 @@ implements AndroidAutoService {
         if (Config.SUPPRESS_NAV_ACTIVE_PLACEHOLDER) {
             return false;
         }
-        return this.getDataPool().getBoolean(895953920, false);
+        return this.getDataPool().getBoolean(2910005, false);
     }
 
     public void datapoolValueChanged(int n) {

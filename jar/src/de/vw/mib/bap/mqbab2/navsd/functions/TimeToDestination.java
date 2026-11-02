@@ -37,7 +37,7 @@ implements Property,
 ASLNavSDConstants,
 NavigationServiceListener,
 SystemServiceListener {
-    protected static final int[] NAVIGATION_LISTENER_IDS = new int[]{732, 737153024, 750, 753930240};
+    protected static final int[] NAVIGATION_LISTENER_IDS = new int[]{732, 1110059, 750, 1110060};
     protected static final int[] SYSTEM_LISTENER_IDS = new int[]{1643};
     static Class class$de$vw$mib$bap$mqbab2$generated$navsd$serializer$TimeToDestination_Status;
 
