@@ -17,4 +17,8 @@ if [ -f /work/shim/lib/libext.google.gal.receiver.so ]; then
 else
   echo "==> no shim/lib/libext.google.gal.receiver.so — skipping shim (jar-only build)"
 fi
+if [ "${CLUSTER_SINK:-0}" = "1" ]; then
+  echo "==> building native/build/libkb_dm.so (DisplayManager hook, AA cluster map)"
+  ( cd /work/native && ./build.sh )
+fi
 echo "==> done."

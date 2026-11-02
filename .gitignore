@@ -16,6 +16,7 @@ dist/
 output/
 .kombibridge-build-*/
 .kombibridge-previous-*/
+dist-*/
 
 # extracted/decompiled stock classes from MIBHMI.jar
 jar/reference/

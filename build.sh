@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # build.sh — one button: turn the TWO files the toolbox "Dump files" puts on the SD card into the
-# TWO deployable artifacts. Everything runs in Docker — no local JDK 8 / clang / lld / jxe2jar /
+# TWO deployable artifacts. Everything runs in Docker — no local JDK 8 / clang / lld / Python /
 # pyelftools needed, just Docker.
 #
 #   ./build.sh <MIBHMI.jxe> <stock libext.google.gal.receiver.so> [outdir=dist]
@@ -14,14 +14,13 @@
 #   <outdir>/libext.google.gal.receiver.so  -> custom/sal/libext.google.gal.receiver.so  (patched)
 #
 # Pipeline:
-#   MIBHMI.jxe --(ghcr.io/adi961/jxe2jar)--> MIBHMI.jar --+
+#   MIBHMI.jxe --(tools/jxe2jar, in Docker)--> MIBHMI.jar --+
 #                                                          +--> Docker toolchain --> 2 deployable files
 #   stock libgal -----------------------------------------+    (javac+jar ; clang/lld/inject)
 set -euo pipefail
 cd "$(dirname "$0")"
 
 IMAGE="aatokombi-build"
-JXE2JAR_IMAGE="${JXE2JAR_IMAGE:-ghcr.io/adi961/jxe2jar:latest}"
 
 JXE="${1:-}"; GAL="${2:-}"; OUT="${3:-dist}"
 usage(){ echo "usage: ./build.sh <MIBHMI.jxe> <stock libext.google.gal.receiver.so> [outdir]"; exit 1; }
@@ -33,23 +32,30 @@ abspath(){ ( cd "$(dirname "$1")" && printf '%s/%s\n' "$(pwd)" "$(basename "$1")
 JXE="$(abspath "$JXE")"; GAL="$(abspath "$GAL")"
 mkdir -p "$OUT"; OUT="$(abspath "$OUT")"
 
-# 1) MIBHMI.jxe -> MIBHMI.jar  (adi961's jxe2jar image; amd64 toolchain, emulated on arm64 — slow).
-#    The conversion is deterministic per firmware, so we CACHE it keyed on the .jxe's hash and skip
-#    it on rebuilds where only the mod sources changed. Delete jar/lib/MIBHMI.jar to force a redo.
+# 0) the toolchain image (cached after the first run) — it also runs the jxe2jar converter
+echo "==> [0/4] building toolchain image '$IMAGE' (first run downloads the base image)"
+docker build -t "$IMAGE" -f docker/Dockerfile .
+
+# 1) MIBHMI.jxe -> MIBHMI.jar with the vendored converter (tools/jxe2jar, Python 3).
+#    It replaced ghcr.io/adi961/jxe2jar, whose conversion corrupted int constants (e.g. the
+#    NavigationMapAdapter event ids) and dropped InnerClasses/throws information.
+#    Cached, keyed on the .jxe AND the converter sources, so a converter fix re-converts once.
+#    Delete jar/lib/MIBHMI.jar to force a redo.
 mkdir -p jar/lib shim/lib
 JXE_ID="$(shasum -a256 "$JXE" | cut -d' ' -f1)"
+CONV_ID="$(cat tools/jxe2jar/*.py | shasum -a256 | cut -d' ' -f1)"
 STAMP="jar/lib/.MIBHMI.jxe.sha256"
-if [ -f jar/lib/MIBHMI.jar ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$JXE_ID" ]; then
-  echo "==> [1/4] jxe2jar: cached jar/lib/MIBHMI.jar matches this .jxe — skipping conversion"
+if [ -f jar/lib/MIBHMI.jar ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$JXE_ID $CONV_ID" ]; then
+  echo "==> [1/4] jxe2jar: cached jar/lib/MIBHMI.jar matches this .jxe and converter — skipping"
 else
   WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
   cp "$JXE" "$WORK/MIBHMI.jxe"
-  echo "==> [1/4] jxe2jar: MIBHMI.jxe -> MIBHMI.jar  ($JXE2JAR_IMAGE)  [emulated, one-time per firmware]"
-  docker run --rm --platform linux/amd64 -v "$WORK":/data "$JXE2JAR_IMAGE" \
-    bash -c "python2 JXE2JAR.py /data/MIBHMI.jxe /data/MIBHMI.jar && chown $(id -u):$(id -g) /data/MIBHMI.jar"
+  echo "==> [1/4] jxe2jar: MIBHMI.jxe -> MIBHMI.jar  (tools/jxe2jar, several minutes, once per firmware)"
+  docker run --rm -v "$PWD":/work -v "$WORK":/data --user "$(id -u):$(id -g)" -e HOME=/tmp -w /data \
+    "$IMAGE" python3 -B /work/tools/jxe2jar/jxe2jar.py /data/MIBHMI.jxe /data/MIBHMI.jar
   [ -f "$WORK/MIBHMI.jar" ] || { echo "ERROR: jxe2jar produced no MIBHMI.jar"; exit 1; }
   cp -f "$WORK/MIBHMI.jar" jar/lib/MIBHMI.jar
-  echo "$JXE_ID" > "$STAMP"
+  echo "$JXE_ID $CONV_ID" > "$STAMP"
   echo "    MIBHMI.jar: $(wc -c < jar/lib/MIBHMI.jar) bytes (cached for next time)"
 fi
 
@@ -58,16 +64,22 @@ stage(){ if [ "$1" -ef "$2" ]; then echo "    (already in place: $2)"; else cp -
 stage "$GAL" shim/lib/libext.google.gal.receiver.so
 
 # 3) build BOTH artifacts in the toolchain container (image cached after the first run)
-echo "==> [2/4] building toolchain image '$IMAGE' (first run downloads the base image)"
-docker build -t "$IMAGE" -f docker/Dockerfile .
-echo "==> [3/4] running build in container"
-docker run --rm -v "$PWD":/work -w /work --user "$(id -u):$(id -g)" -e HOME=/tmp \
+echo "==> [2/4] running build in container"
+docker run --rm -v "$PWD":/work -w /work --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp -e VIDEO_PROBE="${VIDEO_PROBE:-0}" -e VIDEO_PROBE_DEEP="${VIDEO_PROBE_DEEP:-0}" \
+  -e VIDEO_PIPELINE="${VIDEO_PIPELINE:-0}" -e CLUSTER_SINK="${CLUSTER_SINK:-0}" \
+  -e CLUSTER_DEFINES="${CLUSTER_DEFINES:-}" \
   "$IMAGE" /work/docker/entrypoint.sh
 
 # 4) collect the two deployables
-echo "==> [4/4] collect -> $OUT"
+echo "==> [3/4] collect -> $OUT"
 cp -f jar/build/AAtoKombi.jar                   "$OUT/AAtoKombi.jar"
 cp -f shim/build/libext.google.gal.receiver.so  "$OUT/libext.google.gal.receiver.so"
+if [ "${CLUSTER_SINK:-0}" = "1" ] && [ -f native/build/libkb_dm.so ]; then
+  cp -f native/build/libkb_dm.so                "$OUT/libkb_dm.so"
+  cp -f native/install/install_dm_hook.sh native/install/uninstall_dm_hook.sh "$OUT/"
+  echo "  + libkb_dm.so (DisplayManager hook for the AA cluster map) and its install scripts"
+fi
 
 echo
 echo "OK. Two files ready in $OUT :"
