@@ -159,6 +159,11 @@ public final class AANavReader implements Runnable {
     /** Called by the framework timer every POLL_MS. Must never throw. */
     public void run() {
         try {
+            de.aatokombi.ClusterVideo.poll();
+        } catch (Throwable t) {
+            // AA cluster video state (CLUSTER_SINK libgal): never disturbs the nav poll
+        }
+        try {
             processOnce();
         } catch (Throwable t) {
             // never let the poll disturb the HMI

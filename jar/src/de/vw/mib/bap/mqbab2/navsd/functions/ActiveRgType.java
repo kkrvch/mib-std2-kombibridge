@@ -17,6 +17,8 @@ import de.vw.mib.bap.mqbab2.common.api.stages.Function;
 import de.vw.mib.bap.mqbab2.generated.navsd.serializer.ActiveRgType_SetGet;
 import de.vw.mib.bap.mqbab2.generated.navsd.serializer.ActiveRgType_Status;
 import de.vw.mib.bap.mqbab2.navsd.api.ASLNavSDConstants;
+import de.aatokombi.ClusterVideo;
+import de.aatokombi.Config;
 
 public final class ActiveRgType
 extends Function
@@ -24,14 +26,11 @@ implements Property,
 ASLNavSDConstants,
 NavigationServiceListener,
 ConfigurationServiceListener {
-    // FIRMWARE-SPECIFIC. These attribute IDs are MHI2-derived (from adi961's High sources) and do
-    // NOT match this STD2 stock (the dev unit's stock uses {485494784, 0x5000080, 128} / config -1050869632).
-    // The dispatcher (ASLDataPoolAdapter._registeredDelegates) matches by EXACT id with no wildcard,
-    // so with wrong ids the unit's own-navigation push updates never arrive. Regenerate these from
-    // the TARGET firmware's MIBHMI.jar stock at build time (see build.sh shadow regen step). Until
-    // then nav-capable fall-back works only by the cluster's pull/GET, not by push. [FW-REGEN]
+    // Attribute IDs of the stock ActiveRgType. The old jxe->jar conversion byte-swapped ldc ints
+    // ({485494784, 0x5000080, 128} / -1050869632 there); the fixed tools/jxe2jar gives exactly these
+    // values from this firmware's stock class, so they are correct for MST2 as well as MHI2.
     protected static final int[] NAVIGATION_LISTENER_IDS = new int[]{1110044, -2147483643, Integer.MIN_VALUE};
-    private static final int[] CONFIG_LISTENER_IDS = new int[]{-2147459647}; // [FW-REGEN] stock = -1050869632
+    private static final int[] CONFIG_LISTENER_IDS = new int[]{-2147459647};
     private int _currentBapRgType = 3;
     private boolean isWaitingForDsiAck = false;
     static Class class$de$vw$mib$bap$mqbab2$generated$navsd$serializer$ActiveRgType_Status;
@@ -124,8 +123,39 @@ ConfigurationServiceListener {
     public void indicationError(int n, BAPFunctionListener bAPFunctionListener) {
     }
 
+    /**
+     * Config.CLUSTER_OK_CYCLE: the driver's three cluster modes (de.aatokombi.ClusterVideo) replace
+     * the stock rgtype while an AA session has its cluster channel open on a nav-capable cluster.
+     */
+    private static int lastMapSwitchState = -1;
+
+    private static boolean aaCycle() {
+        return Config.CLUSTER_OK_CYCLE && ClusterCaps.isNavCapable() && ClusterVideo.session();
+    }
+
     public void setGetProperty(BAPEntity bAPEntity, PropertyListener propertyListener) {
         ActiveRgType_SetGet activeRgType_SetGet = (ActiveRgType_SetGet)bAPEntity;
+        boolean cycle = false;
+        try {
+            cycle = aaCycle();
+            int sw = -1;
+            try { sw = this.getNavigationService().getMapSwitchState(); } catch (Throwable t) {}
+            ClusterVideo.log("ActiveRgType SetGet rgtype=" + activeRgType_SetGet.rgtype
+                    + " current=" + this.getCurrentRgType() + " mapSwitchState=" + sw
+                    + " aaSession=" + ClusterVideo.session() + " aaVideo=" + ClusterVideo.alive()
+                    + " mode=" + ClusterVideo.modeName(ClusterVideo.mode()));
+        } catch (Throwable t) {}
+        if (cycle) {
+            // car log 2026-10-30: the cluster sends this as part of the head unit's "Map" button
+            // (SetGet rgtype=3, then mapSwitchState 5 -> 2); holding OK sends nothing
+            int rq = activeRgType_SetGet.rgtype;
+            if (rq == 0 || rq == 3) {
+                ClusterVideo.switchTo(rq);
+            }
+            this.setCurrentRgType(ClusterVideo.rgTypeForMode());
+            propertyListener.statusProperty(this.computeActiveRgType(), this);
+            return;
+        }
         if (ActiveRgType.inputParametersValid(activeRgType_SetGet)) {
             if (this.getNavigationService().getMapSwitchState() == 0 || this.getNavigationService().getMapSwitchState() == 1 || this.getNavigationService().getMapSwitchState() == 2) {
                 this.setCurrentRgType(activeRgType_SetGet.rgtype);
@@ -171,6 +201,10 @@ ConfigurationServiceListener {
     }
 
     private void setCurrentRGType(ActiveRgType_Status activeRgType_Status) {
+        if (aaCycle()) {
+            activeRgType_Status.rgtype = ClusterVideo.rgTypeForMode();
+            return;
+        }
         // Behave exactly like stock: AA-inactive on a nav cluster (own nav keeps its gate),
         // AND the whole non-nav case -- where the media path owns the output and we must not hijack
         // navsd. Wrapped so a non-routing engine can never crash navsd.
@@ -208,6 +242,26 @@ ConfigurationServiceListener {
             this.getLogger().trace(16).append("updateNavigationData(NavigationService, int).getNavigationService().getMapSwitchState() = ").append(this.getNavigationService().getMapSwitchState()).log();
         }
         if (n == -2147483643) {
+            int before = this.getCurrentRgType();
+            this.updateMapSwitch();
+            try {
+                int sw = this.getNavigationService().getMapSwitchState();
+                ClusterVideo.log("ActiveRgType mapSwitchState=" + sw + " rgtype " + before + "->" + this.getCurrentRgType());
+                // only a CHANGE of the head unit's switch (its "Map" button) picks a mode
+                if (sw == 1 || sw == 3) ClusterVideo.noteHuSwitch(0);
+                else if (sw == 2 || sw == 5) ClusterVideo.noteHuSwitch(3);
+                // 3 -> 4 -> 1: to arrows, 5 -> 2: to the map (car log 2026-10-30)
+                if (sw != lastMapSwitchState && aaCycle() && (sw == 1 || sw == 2 || sw == 3 || sw == 5)) {
+                    ClusterVideo.switchTo(sw == 1 || sw == 3 ? 0 : 3);
+                }
+                lastMapSwitchState = sw;
+            } catch (Throwable t) {}
+        }
+        this.process(-1);
+    }
+
+    private void updateMapSwitch() {
+        {
             switch (this.getNavigationService().getMapSwitchState()) {
                 case 3: {
                     this.setCurrentRgType(0);
@@ -234,7 +288,6 @@ ConfigurationServiceListener {
                 }
             }
         }
-        this.process(-1);
     }
 
     public void updateConfigurationData(ConfigurationService configurationService, int n) {

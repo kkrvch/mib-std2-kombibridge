@@ -24,6 +24,7 @@ import de.vw.mib.asl.internal.androidauto.api.impl.ASLAndroidAutoExBoxServiceImp
 import de.vw.mib.asl.internal.androidauto.api.impl.ExboxGuidanceListenerImpl;
 import de.vw.mib.asl.internal.media.clients.player.TrackInfo;
 import de.vw.mib.genericevents.EventGeneric;
+import de.vw.mib.genericevents.GenericEventException;
 import de.vw.mib.genericevents.GenericEvents;
 import de.vw.mib.log4mib.LogMessage;
 import de.vw.mib.threads.AsyncServiceFactory;
@@ -36,6 +37,7 @@ import org.dsi.ifc.androidauto2.TelephonyState;
 import org.dsi.ifc.androidauto2.TrackData;
 import org.dsi.ifc.base.DSIListener;
 import org.dsi.ifc.global.ResourceLocator;
+import org.osgi.framework.InvalidSyntaxException;
 import org.osgi.framework.ServiceReference;
 
 import java.io.FileInputStream;
@@ -67,9 +69,9 @@ public class AndroidAutoTarget
     private /*final*/ String _classname;
     private ASLAndroidAutoExBoxServiceImpl apiImpl;
     private NavigationHandler navigationHandler;
-    // NOTE: the MST2 jxe->jar decompile corrupted these large int constants (jxe2jar artifact).
-    // The framework runtime expects target id 1590002 (== the repo/MHI2 value), confirming the
-    // VW ASL framework uses the same constants on MST2 as on MHI2. Use the repo values.
+    // NOTE: the old jxe->jar conversion (ghcr.io/adi961/jxe2jar) corrupted these large int
+    // constants. The fixed converter (tools/jxe2jar) yields exactly these values from the stock
+    // AndroidAutoTarget, so they are now confirmed against the unit's own bytecode.
     /*final*/ int[] OBSERVED_EVENTS = new int[]{6100005, 6100006, 6100016, 6100017, 6100025, 4000045, 4000015, 4000024, 4000021, 4000007, 4300038};
     /*final*/ int[] DSI_ANDROIDAUTO2_ATTR = new int[]{1, 6, 2, 3, 4, 5, 7, 8};
     static /* synthetic */ Class class$org$dsi$ifc$androidauto2$DSIAndroidAuto2;
@@ -77,7 +79,7 @@ public class AndroidAutoTarget
     static /* synthetic */ Class class$de$vw$mib$threads$AsyncServiceFactory;
     static /* synthetic */ Class class$de$vw$mib$popup$PopupInformationHandler;
 
-    public AndroidAutoTarget(GenericEvents genericEvents, int n, String string) {
+    public AndroidAutoTarget(GenericEvents genericEvents, int n, String string) throws Exception {
         super(genericEvents, n, string);
         this._classname = "AndroidAutoTarget";
         if (this.isTraceEnabled()) {
@@ -86,7 +88,7 @@ public class AndroidAutoTarget
         this.initHandler();
     }
 
-    public AndroidAutoTarget(GenericEvents genericEvents, String string) {
+    public AndroidAutoTarget(GenericEvents genericEvents, String string) throws Exception {
         super(genericEvents, string);
         this._classname = "AndroidAutoTarget";
         if (this.isTraceEnabled()) {
@@ -95,7 +97,7 @@ public class AndroidAutoTarget
         this.initHandler();
     }
 
-    public AndroidAutoTarget(GenericEvents genericEvents, int n) {
+    public AndroidAutoTarget(GenericEvents genericEvents, int n) throws Exception {
         super(genericEvents, n);
         this._classname = "AndroidAutoTarget";
         if (this.isTraceEnabled()) {
@@ -132,6 +134,7 @@ public class AndroidAutoTarget
         // stock; the media branch is off too). Defensive: must never break target construction.
         // AAtoKombi: at DEBUG, ask the patched GAL library for its per-trip dump (see TripDump).
         try { de.aatokombi.TripDump.apply(); } catch (Throwable t) {}
+        try { de.aatokombi.ClusterVideo.applyMode(); } catch (Throwable t) {}
         try {
             if (Config.SHOW_NAV) de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
         } catch (Throwable t) {}
@@ -149,7 +152,7 @@ public class AndroidAutoTarget
     }
 
     // @Override
-    public void gotEvent(EventGeneric eventGeneric) {
+    public void gotEvent(EventGeneric eventGeneric) throws Exception {
         if (this.aslEventHandler == null) {
             // An event can be dispatched here from the AbstractTarget super-constructor
             // (register() -> gotEvent()) BEFORE initHandler() runs and BEFORE the framework
@@ -207,7 +210,7 @@ public class AndroidAutoTarget
         return this.dsiAndroidAuto2;
     }
 
-    public void startup() {
+    public void startup() throws GenericEventException, InvalidSyntaxException {
         ServiceReference[] serviceReferenceArray;
         if (this.isTraceEnabled()) {
             this.trace().append("AndroidAutoTarget").append(".startup()").log();

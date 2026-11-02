@@ -142,7 +142,7 @@ firmware builds. (Development was done on **`MST2_EU_SK_ZR_P0480T`**.)
 
 ### 0. Prerequisites (once)
 - **The deployment toolbox** ([olli991/mib-std2-pq-zr-toolbox](https://github.com/olli991/mib-std2-pq-zr-toolbox)) set up for your unit.
-- **Docker** — the whole build runs in containers (jxe2jar + the JDK 8 / clang / lld / pyelftools
+- **Docker** — the whole build runs in containers (the vendored `tools/jxe2jar` converter + the JDK 8 / clang / lld / pyelftools
   toolchain), so nothing else needs installing.
 
 ### 1. Pull the two files off the unit (with the toolbox)
@@ -162,6 +162,44 @@ Use the toolbox's **"Dump files"** menu item to copy these from the unit to your
 # -> dist/AAtoKombi.jar                  (the HMI mod)
 # -> dist/libext.google.gal.receiver.so  (the patched libgal)
 ```
+
+To build the capture-only MST2 VideoSink probe, pass the environment variable through the Docker
+build:
+
+```sh
+VIDEO_PROBE=1 ./build.sh /path/to/your/MIBHMI.jxe /path/to/your/libext.google.gal.receiver.so dist-probe
+```
+
+The resulting `dist-probe/libext.google.gal.receiver.so` records callback counters in
+`/dev/shmem/aa_video_probe`; it does not render video to the cluster. In PowerShell, use
+`$env:VIDEO_PROBE = "1"` before invoking the script with Bash.
+
+The heavy one-shot forensic collector is opt-in with `VIDEO_PROBE_DEEP=1`; it is intended for a
+single controlled diagnostic run and is not the normal probe mode.
+
+The first runtime stage of the actual video patch is opt-in with `VIDEO_PIPELINE=1`. It adds a
+bounded RAM-only H.264 ingress queue and IDR recovery, while leaving decoder/display disabled until
+their recovered firmware ABI is wired in. This stage is separate from the forensic collector.
+
+Android Auto map on the Active Info Display (experimental) is opt-in with `CLUSTER_SINK=1`. The
+patched libgal advertises a second, cluster-type H.264 display to the phone and passes its stream
+to DisplayManager through shared memory; `native/libkb_dm.so`, preloaded into DisplayManager, sends
+it to the cluster in place of the stock map video. See `native/README.md` (install, off switches,
+risks) and `shim/DESIGN_VIDEO_PIPELINE.md`. If Android Auto stops connecting, put the normal libgal
+back; if the unit resets at boot, remove the hook with `native/install/uninstall_dm_hook.sh`.
+
+```sh
+CLUSTER_SINK=1 ./build.sh /path/to/your/MIBHMI.jxe /path/to/your/libext.google.gal.receiver.so dist-cluster
+# -> dist-cluster/{AAtoKombi.jar, libext.google.gal.receiver.so, libkb_dm.so, install_dm_hook.sh, uninstall_dm_hook.sh}
+```
+
+If Docker reports `Operation not permitted` while writing `shim/build/navshim.o`, remove only the
+generated shim artifacts and rerun the same command:
+
+```powershell
+Remove-Item shim/build/navshim.o,shim/build/navshim.so,shim/build/libext.google.gal.receiver.so -Force -ErrorAction SilentlyContinue
+```
+
 Everything runs in Docker: it converts the `.jxe` to a jar, builds the toolchain image (cached
 after the first run), compiles both artifacts inside the container with the repo bind-mounted, and
 drops the two deployables in `dist/`.

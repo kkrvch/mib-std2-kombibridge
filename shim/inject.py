@@ -13,6 +13,8 @@ R_RELATIVE=23
 R_JUMP_SLOT=22
 TRAMPOLINE_SYM='init_trampoline'
 TRAMPOLINE_SYM2='shutdown_trampoline'
+TRAMPOLINE_VIDEO_DATA='video_data_trampoline'
+TRAMPOLINE_VIDEO_CONFIG='video_config_trampoline'
 
 # --- per-firmware addresses are AUTO-RESOLVED from the target libgal (no hardcoding) ---
 # The blob's .galrefs slots (see navshim_fs.cpp g_ref[]) are filled here, in this exact order.
@@ -31,6 +33,11 @@ SYM_INIT='_ZN11GalReceiver4initERK10shared_ptrI20IControllerCallbacksE'
 SYM_MR_SHUTDOWN='_ZN13MessageRouter8shutdownEv'    # displaced from GalReceiver::shutdown's 1st BL
 SYM_GAL_SHUTDOWN='_ZN11GalReceiver8shutdownEv'     # the teardown fn we patch (symmetric to init)
 SYM_SENDVERSION='_ZN10Controller18sendVersionRequestEv'  # holds the advertised AA protocol version
+SYM_VIDEO_DATA='_ZN9VideoSink19handleDataAvailableEyRK10shared_ptrI8IoBufferEj'
+SYM_VIDEO_CONFIG='_ZN9VideoSink17handleCodecConfigEPvj'
+SYM_QUEUE_OUT='_ZN13MessageRouter13queueOutgoingEhPvj'
+SYM_SEND_SDR='_ZN10Controller28sendServiceDiscoveryResponseEv'
+CLUSTER_SDR_HOOK='sdr_queue_hook'
 
 def g16(b,o): return struct.unpack_from('<H',b,o)[0]
 def g32(b,o): return struct.unpack_from('<I',b,o)[0]
@@ -119,8 +126,12 @@ def resolve_galrefs(e,raw,n_slots):
     if mrsd_stub is None: sys.exit("ERROR: could not locate MessageRouter::shutdown PLT stub")
     # R_MR_SHUTDOWN is the REAL function addr (dynsym), so gal_shutdown_hook calls it directly,
     # bypassing the PLT stub — the same convention used for R_REGISTER.
+    # Video symbols are optional in the normal build: the extra slots remain zero and no target
+    # entry is patched. --video-probe checks them explicitly before enabling the hooks.
     resolved=[sym(SYM_REGISTER), sym(SYM_NAV_VTABLE), js['memset'], onch_stub,
-              sym(SYM_MEDIA_VTABLE), sym(SYM_MR_SHUTDOWN)]
+              sym(SYM_MEDIA_VTABLE), sym(SYM_MR_SHUTDOWN),
+              syms.get(SYM_VIDEO_DATA,0), syms.get(SYM_VIDEO_CONFIG,0),
+              syms.get(SYM_QUEUE_OUT,0)]
     if len(resolved)!=n_slots:
         sys.exit("ERROR: g_ref slot count mismatch: navshim has %d, inject.py resolves %d"
                  %(n_slots,len(resolved)))
@@ -162,6 +173,20 @@ def bl_target(word,pc):
     imm=word & 0xffffff
     if imm & 0x800000: imm-=0x1000000
     return (pc+8+(imm<<2)) & 0xffffffff
+
+def b_target(word,pc):
+    """Resolve an ARM B or BL instruction at virtual address pc."""
+    if (word & 0x0e000000) != 0x0a000000 or ((word >> 28) & 0xf) == 0xf:
+        return None
+    imm=word&0xffffff
+    if imm&0x800000: imm-=0x1000000
+    return (pc+8+(imm<<2))&0xffffffff
+
+def make_b(pc,target):
+    off=(target-(pc+8))>>2
+    if off < -0x800000 or off > 0x7fffff:
+        sys.exit("ERROR: B from 0x%x to 0x%x out of ±32MB range"%(pc,target))
+    return 0xea000000 | (off&0xffffff)
 
 def verify_patched_output(path, expected):
     """Fail closed if the written ELF is not exactly the patch layout we calculated.
@@ -217,6 +242,19 @@ def verify_patched_output(path, expected):
         if actual != target:
             raise ValueError("%s BL resolves to %s, not injected trampoline 0x%x" %
                              (label, 'non-BL' if actual is None else '0x%x'%actual, target))
+    vp=expected.get('video_probe')
+    if vp:
+        for label,foff,pc,target,word in (
+                ('video-data',vp['data_foff'],vp['data_pc'],vp['data_tramp'],vp['data_branch']),
+                ('video-config',vp['config_foff'],vp['config_pc'],vp['config_tramp'],vp['config_branch'])):
+            actual=b_target(g32(raw,foff),pc)
+            if actual != target or g32(raw,foff) != word:
+                raise ValueError("%s B does not resolve to injected trampoline 0x%x"%(label,target))
+    cs=expected.get('cluster_sdr')
+    if cs:
+        foff,pc,target=cs
+        if bl_target(g32(raw,foff),pc) != target:
+            raise ValueError("cluster SDR BL does not resolve to sdr_queue_hook 0x%x"%target)
     minor_patch=expected.get('minor_patch')
     if minor_patch is not None:
         mov,reg,minor=minor_patch
@@ -243,7 +281,8 @@ def blob_image_and_relocs(blob_path):
     galrefs=[gr['sh_addr']+i*4 for i in range(gr['sh_size']//4)]
     ds=e.get_section_by_name('.dynsym')
     ent={sy.name:sy['st_value'] for sy in ds.iter_symbols()
-         if sy.name in (TRAMPOLINE_SYM,TRAMPOLINE_SYM2)}
+         if sy.name in (TRAMPOLINE_SYM,TRAMPOLINE_SYM2,TRAMPOLINE_VIDEO_DATA,TRAMPOLINE_VIDEO_CONFIG,
+                        CLUSTER_SDR_HOOK)}
     return img,hi,relocs,galrefs,ent
 
 def main():
@@ -259,6 +298,11 @@ def main():
                          'phone send NavigationState (lanes, ETA) and STOP sending the legacy turn '
                          'events, which the shim no longer parses — so a session that negotiates '
                          'below 1.7 has no nav at all. Default: leave the firmware alone.')
+    ap.add_argument('--video-probe',action='store_true',
+                    help='also hook target VideoSink codec/data callbacks into the capture-only probe')
+    ap.add_argument('--cluster-sink',action='store_true',
+                    help='redirect the ServiceDiscoveryResponse send through sdr_queue_hook so the '
+                         'blob can advertise its experimental cluster video sink')
     a=ap.parse_args()
     raw=bytearray(open(a.gal,'rb').read())
     e=ELFFile(io.BytesIO(raw))
@@ -289,7 +333,8 @@ def main():
 
     # --- AUTO-RESOLVE the per-firmware addresses from THIS libgal and bake them into .galrefs ---
     resolved,(init_foff,init_va),(sd_foff,sd_va)=resolve_galrefs(e,raw,len(galrefs))
-    names=['R_REGISTER','R_NAV_VTABLE','R_GOT_MEMSET','R_ONCHOPEN','R_MEDIA_VTABLE','R_MR_SHUTDOWN']
+    names=['R_REGISTER','R_NAV_VTABLE','R_GOT_MEMSET','R_ONCHOPEN','R_MEDIA_VTABLE','R_MR_SHUTDOWN',
+           'R_VIDEO_DATA','R_VIDEO_CONFIG','R_QUEUE_OUT']
     print("resolved galrefs from libgal:")
     for nm,val in zip(names,resolved): print("    %-12s = 0x%x"%(nm,val))
     for off,val in zip(galrefs,resolved):     # write resolved VAs into the blob's .galrefs slots
@@ -308,6 +353,41 @@ def main():
         INIT_FOFF, init_pc, " [overridden]" if a.bl_offset is not None else " [auto]"))
     print("shutdown BL @ file offset 0x%x (vaddr 0x%x)%s"%(
         SD_FOFF, sd_pc, " [overridden]" if a.bl_offset_shutdown is not None else " [auto]"))
+
+    video_sites=None
+    if a.video_probe:
+        syms=dynsym_map(e); v2f=vaddr_to_foff(e)
+        for name in (SYM_VIDEO_DATA,SYM_VIDEO_CONFIG):
+            if name not in syms:
+                sys.exit("ERROR: --video-probe requires symbol %s"%name)
+        for name in (TRAMPOLINE_VIDEO_DATA,TRAMPOLINE_VIDEO_CONFIG):
+            if name not in ent:
+                sys.exit("ERROR: probe blob is missing %s"%name)
+        video_sites=(syms[SYM_VIDEO_DATA],syms[SYM_VIDEO_CONFIG],
+                     v2f(syms[SYM_VIDEO_DATA]),v2f(syms[SYM_VIDEO_CONFIG]))
+        expected_video=((0xE1A0C00D,0xE92DD870,0xE24CB004,0xE24DD014),
+                        (0xE5903034,0xE1A0C00D,0xE92DD800,0xE1A00003))
+        for i,(va,foff) in enumerate(zip(video_sites[:2],video_sites[2:])):
+            got=tuple(g32(raw,foff+4*j) for j in range(4))
+            if got != expected_video[i]:
+                sys.exit("ERROR: VideoSink probe prologue changed at 0x%x: %s"%(va,got))
+        print("video probe sites: data @0x%x, config @0x%x (prologue verified)"%(video_sites[0],video_sites[1]))
+
+    sdr_site=None
+    if a.cluster_sink:
+        syms=dynsym_map(e); v2f=vaddr_to_foff(e); js=jump_slot_map(e)
+        for name in (SYM_QUEUE_OUT,SYM_SEND_SDR):
+            if name not in syms: sys.exit("ERROR: --cluster-sink requires symbol %s"%name)
+        if SYM_QUEUE_OUT not in js: sys.exit("ERROR: no queueOutgoing JUMP_SLOT relocation in libgal")
+        if CLUSTER_SDR_HOOK not in ent: sys.exit("ERROR: blob lacks %s (build with CLUSTER_SINK=1)"%CLUSTER_SDR_HOOK)
+        qo_stub=plt_stub_for_got(e,raw,v2f,js[SYM_QUEUE_OUT])
+        if qo_stub is None: sys.exit("ERROR: could not locate queueOutgoing PLT stub")
+        first=find_bl_to(e,raw,v2f,syms,SYM_SEND_SDR,qo_stub,last=False)
+        last=find_bl_to(e,raw,v2f,syms,SYM_SEND_SDR,qo_stub,last=True)
+        if first[0] is None or first!=last:
+            sys.exit("ERROR: expected exactly one queueOutgoing BL in sendServiceDiscoveryResponse")
+        sdr_site=first
+        print("cluster sink: SDR queueOutgoing BL @0x%x (stub 0x%x)"%(sdr_site[1],qo_stub))
 
     # --- placement: new RWX segment at end of file ---
     new_vaddr=align(top,0x1000)
@@ -347,6 +427,21 @@ def main():
         INIT_FOFF, g32(raw,INIT_FOFF), init_bl, init_tramp))
     print("shutdown BL patch @0x%x: 0x%08x -> 0x%08x (trampoline @0x%x)"%(
         SD_FOFF, g32(raw,SD_FOFF), sd_bl, sd_tramp))
+    video_b=None
+    if a.video_probe:
+        vd_tramp=new_vaddr+ent[TRAMPOLINE_VIDEO_DATA]
+        vc_tramp=new_vaddr+ent[TRAMPOLINE_VIDEO_CONFIG]
+        video_b=(make_b(video_sites[0],vd_tramp),make_b(video_sites[1],vc_tramp))
+        print("video B patch data @0x%x: 0x%08x -> 0x%08x (trampoline @0x%x)"%(
+            video_sites[2],g32(raw,video_sites[2]),video_b[0],vd_tramp))
+        print("video B patch config @0x%x: 0x%08x -> 0x%08x (trampoline @0x%x)"%(
+            video_sites[3],g32(raw,video_sites[3]),video_b[1],vc_tramp))
+    sdr_bl=None
+    if sdr_site:
+        sdr_hook=new_vaddr+ent[CLUSTER_SDR_HOOK]
+        sdr_bl=make_bl(sdr_site[1],sdr_hook)
+        print("cluster SDR BL patch @0x%x: 0x%08x -> 0x%08x (hook @0x%x)"%(
+            sdr_site[0],g32(raw,sdr_site[0]),sdr_bl,sdr_hook))
     print("new segment: vaddr=0x%x foff=0x%x filesz=0x%x ; rel.dyn@vaddr0x%x (%d entries)"%(
         new_vaddr,new_foff,seg_filesz,rel_vaddr,n_old+n_new))
 
@@ -358,6 +453,11 @@ def main():
     # 1) BLs
     s32(raw,INIT_FOFF,init_bl)
     s32(raw,SD_FOFF,sd_bl)
+    if a.video_probe:
+        s32(raw,video_sites[2],video_b[0])
+        s32(raw,video_sites[3],video_b[1])
+    if sdr_bl is not None:
+        s32(raw,sdr_site[0],sdr_bl)
     # 2) add a 7th phdr (room exists: phoff+phnum*32 .. up to DT_HASH at 0x118)
     ph_new_off=e_phoff+e_phnum*e_phentsize
     assert ph_new_off+e_phentsize<=0x118, "no room for the phdr"
@@ -386,7 +486,13 @@ def main():
         'new_reloc_offsets':[new_vaddr+ro for ro in brelocs]+[new_vaddr+ro for ro in galrefs],
         'init_foff':INIT_FOFF, 'init_pc':init_pc, 'init_tramp':init_tramp,
         'shutdown_foff':SD_FOFF, 'shutdown_pc':sd_pc, 'shutdown_tramp':sd_tramp,
+        'video_probe': ({'data_foff':video_sites[2], 'data_pc':video_sites[0],
+                         'data_tramp':new_vaddr+ent[TRAMPOLINE_VIDEO_DATA], 'data_branch':video_b[0],
+                         'config_foff':video_sites[3], 'config_pc':video_sites[1],
+                         'config_tramp':new_vaddr+ent[TRAMPOLINE_VIDEO_CONFIG], 'config_branch':video_b[1]}
+                        if a.video_probe else None),
         'minor_patch':minor_patch,
+        'cluster_sdr': ((sdr_site[0],sdr_site[1],new_vaddr+ent[CLUSTER_SDR_HOOK]) if sdr_site else None),
     })
 
 if __name__=='__main__': main()

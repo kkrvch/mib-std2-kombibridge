@@ -58,6 +58,57 @@ public final class Config {
     public static final boolean SHOW_JUNCTION_SCHEMATIC = true;
 
     /**
+     * While the patched libgal (CLUSTER_SINK build) streams Android Auto's cluster map to the AID
+     * through native/libkb_dm.so, hide the unit's own cluster map: the built-in navigation then
+     * stops drawing it and DisplayManager stops encoding it (CPU), the same way the stock HMI hides
+     * it when the cluster asks for no map. Shown again when the phone's video stops. Uses the stock
+     * NavigationMapAdapter events (see KombiMap). No effect without the CLUSTER_SINK libgal.
+     */
+    public static final boolean HIDE_STOCK_KOMBI_MAP_DURING_AA_VIDEO = true;
+
+    /**
+     * Android Auto map on the AID (CLUSTER_SINK libgal + native/libkb_dm.so) only while AA route
+     * guidance runs. true: without guidance the phone gets no video focus on the cluster channel and
+     * sends no cluster video, so the AID shows the unit's own map; when guidance starts the phone
+     * is given focus and the AA map appears (it starts with a key frame), and 10 s after guidance
+     * ends the stock map is back. false: the AA map whenever Android Auto is connected.
+     * Read by the libgal through the flag file ClusterVideo.GUIDANCE_ONLY_FLAG, about once a second.
+     */
+    public static final boolean CLUSTER_MAP_ONLY_DURING_GUIDANCE = false;
+
+    /**
+     * EXPERIMENTAL. While Android Auto is connected with the CLUSTER_SINK libgal, the head unit's
+     * map/arrows button (menu "Navigation") walks the cluster through three modes:
+     *   AA map -> arrows -> the unit's own map -> arrows -> AA map
+     * (the button has two states; every switch to the map takes the other map mode). Holding OK on
+     * the steering wheel (CLUSTER_OK_HOLD_STATE, de.aatokombi.WheelKeys) steps AA map -> arrows ->
+     * stock map directly, if the head unit receives that key (MQB MHI2 does; unverified here). false: stock ActiveRgType behaviour (button = arrows / AA map).
+     */
+    public static final boolean CLUSTER_OK_CYCLE = true;
+    /**
+     * Steering-wheel OK (roller press, key 40) held to this key-panel state switches to the next
+     * mode, AA map -> arrows -> stock map -> AA map: 3 = first hold level (~0.8 s), 4 (~2 s),
+     * 5 (~3 s). Careful: in some AID views a held OK has its own meaning (e.g. resetting trip data),
+     * and the mode switch happens there too.
+     */
+    public static final int CLUSTER_OK_HOLD_STATE = 4;
+
+    /**
+     * EXPERIMENTAL. While the phone's map is on the AID, the steering-wheel zoom (the AID sends
+     * BAP NavSD MapScale, fid 45: steps +-1, or continuous 127 / -128 until 0) goes to Android
+     * Auto as keys on the cluster input channel instead of to the unit's own map. Whether the
+     * phone zooms its cluster map on these keys is not verified. Every MapScale request is logged.
+     */
+    public static final boolean CLUSTER_ZOOM_TO_AA = true;
+    /** Android KEYCODE_ZOOM_IN / KEYCODE_ZOOM_OUT, advertised by the libgal on the cluster input. */
+    public static final int CLUSTER_KEY_ZOOM_IN = 168;
+    public static final int CLUSTER_KEY_ZOOM_OUT = 169;
+    /** true: BAP "+1" means zoom OUT (swap if the car zooms the wrong way). */
+    public static final boolean CLUSTER_ZOOM_INVERT = false;
+    /** Repeat interval of a zoom key while the wheel is held (continuous zoom), ms. */
+    public static final int CLUSTER_ZOOM_REPEAT_MS = 400;
+
+    /**
      * Draw a second, smaller "then" arrow next to the main manoeuvre on the navsd Navigation menu
      * (ManeuverDescriptor.maneuver_2), the way the stock navigation shows a manoeuvre that follows
      * closely on the current one:
@@ -126,7 +177,7 @@ public final class Config {
      * Suppress the stock "Navigation on the mobile device is active" cluster placeholder.
      *
      * The placeholder is cluster navsd InfoStates (BAP fid 38) state 6, which fires when
-     * AndroidAutoASLDataAdapter.isAndroidAutoRouteGuidanceActive() (= ASLDatapool.getBoolean(895953920))
+     * AndroidAutoASLDataAdapter.isAndroidAutoRouteGuidanceActive() (= ASLDatapool.getBoolean(2910005))
      * is true — set true on every AA nav-focus grant regardless of an active route. When this flag is
      * on, AAtoKombi's AndroidAutoASLDataAdapter shadow forces that reader to false (the single point
      * InfoStates consults for the AA branch), so the cluster nav surface stays free for AAtoKombi's own
