@@ -53,63 +53,53 @@
 #define CLUSTER_DISPLAY_ID 1
 #endif
 #ifndef CLUSTER_RESOLUTION
-#define CLUSTER_RESOLUTION 1            // VideoCodecResolutionType 1 = 800x480, 2 = 1280x720 (see below)
+#define CLUSTER_RESOLUTION 2            // VideoCodecResolutionType 1 = 800x480, 2 = 1280x720 (see below)
 #endif
-// Geometry (car 2026-10-28): the AID does not fit the decoded picture into its window, it scales
-// it by a fixed factor made for the stock stream, 1024x384 cropped to 1010x376 (stock SPS:
-// Baseline 3.0, crop right 14 / bottom 8). An 800x480 picture therefore left ~23 % of the window
-// empty on the right and ran past it at the top and bottom. AA cannot encode 1010x376, so the
-// phone is asked for 1280x720 with 270x344 pixels of margin: it draws its UI centred in 1010x376
-// and fills the rest black (open-android-auto docs/video-resolution.md: margins are split evenly).
-// The SPS crop then cuts exactly that black frame away: 134/136 columns, 172/172 lines (crop
-// offsets come in units of 2 pixels), so the AID decodes a 1010x376 picture like the stock one.
-// Car 2026-11-02: it does NOT. Every 1280x720 stream (all runs since 2026-10-29) was dropped by
-// DisplayManager ~0.2 s after its first frame ("cluster: stock map", the cluster encoder pipeline
-// restarted), while both 800x480 runs played for minutes. Both phone SPS are Baseline level 3.1,
-// so the coded width (1280 > the stock 1024) is the likely limit, not the level. Default is
-// therefore 800x480 again, cropped like the stock stream (right/bottom only; the stock SPS never
-// crops left or top, which some decoders mishandle - also a suspect for the 1280x720 failure):
-// the SPS crop cuts the bottom 104 lines, the AID gets 800x376 = the stock window's height, and
-// the bottom content inset grows by 104 so the phone keeps its car marker and cards above the
-// cut. The right ~210 px of the window stay empty (no wider AA format fits).
+// Geometry. The AID shows the decoded picture 1:1 from its top-left corner in the stock window
+// (1024x384 coded, cropped to 1010x376: stock SPS Baseline 3.0, crop right 14 / bottom 8 - never
+// left or top). AA has no 1010x376 format.
+//  - 1280x720 with margins + a crop on all four sides (2026-10-29..11-02): DisplayManager dropped
+//    every stream ~0.2 s after its first frame.
+//  - 800x480, crop bottom 104 (2026-11-03): played for minutes. Picture 800x376 left-aligned, the
+//    right ~210 px of the window empty, so the car marker sat ~105 px left of the window centre.
+//  - default now, untested: 1280x720 WITHOUT margins, cropped right 270 / bottom 344 like the stock
+//    stream (only the left/top crop of the failed variant changes), the AID gets the top-left
+//    1010x376. The content insets keep the phone's car marker and cards inside that corner (and
+//    out of the AID's status and trip bars). Apps that ignore insets will draw partly outside.
+//    Fallback (CLUSTER_RESOLUTION=1): 800x480 cropped bottom 104, a 210 px left inset to move the
+//    centre of the phone's layout to the centre of the window.
 #ifndef CLUSTER_WIDTH_MARGIN
-#define CLUSTER_WIDTH_MARGIN (CLUSTER_RESOLUTION==2 ? 270 : 0)
+#define CLUSTER_WIDTH_MARGIN 0
 #endif
 #ifndef CLUSTER_HEIGHT_MARGIN
-#define CLUSTER_HEIGHT_MARGIN (CLUSTER_RESOLUTION==2 ? 344 : 0)
+#define CLUSTER_HEIGHT_MARGIN 0
 #endif
 #ifndef CLUSTER_CROP_TOP
-#define CLUSTER_CROP_TOP (CLUSTER_RESOLUTION==2 ? 172 : 0)      // pixels, even
-#endif
-#ifndef CLUSTER_CROP_BOTTOM
-#define CLUSTER_CROP_BOTTOM (CLUSTER_RESOLUTION==2 ? 172 : 104) // pixels, even
+#define CLUSTER_CROP_TOP 0                                        // pixels, even
 #endif
 #ifndef CLUSTER_CROP_LEFT
-#define CLUSTER_CROP_LEFT (CLUSTER_RESOLUTION==2 ? 134 : 0)     // pixels, even
+#define CLUSTER_CROP_LEFT 0                                       // pixels, even
+#endif
+#ifndef CLUSTER_CROP_BOTTOM
+#define CLUSTER_CROP_BOTTOM (CLUSTER_RESOLUTION==2 ? 344 : 104)   // pixels, even
 #endif
 #ifndef CLUSTER_CROP_RIGHT
-#define CLUSTER_CROP_RIGHT (CLUSTER_RESOLUTION==2 ? 136 : 0)    // pixels, even
+#define CLUSTER_CROP_RIGHT (CLUSTER_RESOLUTION==2 ? 270 : 0)      // pixels, even
 #endif
-// Insets inside the visible picture that the AID covers with its own UI (status bar on top, trip
-// bar at the bottom, the round dials of the "classic" view at the sides). Sent to the phone as
-// VideoConfiguration field 11 (UiConfig) subfield 2 = content insets {1 top, 2 bottom, 3 left,
-// 4 right}, as mib-cluster-map sends them: the phone keeps the car marker and cards out of them.
-// (Subfield 1 is different: it SHRINKS the picture with black borders; step 65 used it wrongly.) Values are pixels of the
-// 1010x376 picture; top/bottom follow the safe area mst2-cluster-nav measured for this AID
-// (y 56..306). Left/right are 0: the side dials only exist in one cluster view. All 0 = field
-// omitted. Unverified on this phone; if AA stops connecting, build with CLUSTER_INSET_TOP=0
-// CLUSTER_INSET_BOTTOM=0.
+// Content insets (VideoConfiguration field 11 UiConfig, subfield 2 {1 top, 2 bottom, 3 left,
+// 4 right}, pixels of the coded frame): the AID's status bar on top (56) and trip bar at the bottom
+// (70, safe area y 56..306 measured by mst2-cluster-nav), plus whatever the crop cuts away.
 #ifndef CLUSTER_INSET_TOP
 #define CLUSTER_INSET_TOP 56
 #endif
 #ifndef CLUSTER_INSET_BOTTOM
-#define CLUSTER_INSET_BOTTOM (CLUSTER_RESOLUTION==1 ? 70 + 104 : 70)
+#define CLUSTER_INSET_BOTTOM (70 + CLUSTER_CROP_BOTTOM)
 #endif
 #ifndef CLUSTER_INSET_LEFT
-#define CLUSTER_INSET_LEFT 0
+#define CLUSTER_INSET_LEFT (CLUSTER_RESOLUTION==2 ? 0 : 210)
 #endif
 #ifndef CLUSTER_INSET_RIGHT
-#define CLUSTER_INSET_RIGHT 0
+#define CLUSTER_INSET_RIGHT CLUSTER_CROP_RIGHT
 #endif
 #ifndef CLUSTER_VIEWING_DISTANCE
 #define CLUSTER_VIEWING_DISTANCE 700    // mm, as mib-cluster-map sends for its cluster screen
@@ -217,7 +207,7 @@ struct ClusterProbe {
   u32 sdrSeen, sdrPatched, sdrLen, sdrMainVideo, sdrMainInput, sdrError, inMsgs, inLastId, setups, starts, stops, focusReq, cfgMsgs, frames, idr, other;
   u32 sessionId, setupCodec, lastOtherId, bytes, maxAu, lastTsHi, lastTsLo, sent, sendFail;
   u32 cfgLen, prefixCount, spsCropped, focusChanges, bindReplies, bindReqLen, inputsSent, cmdSeq;
-  u32 idrSoft, idrCycle;
+  u32 idrSoft, idrCycle, secondIdr;
   u32 startIdrMs[4], startIdrN;   // ms from each Start to its first IDR (newest in [startIdrN-1&3])
   u8  bindReq[32];
   u8  cfg[512];
@@ -362,7 +352,7 @@ static void cluster_flush(){
   cl_kv(o,"setup=",g_cl.setups); cl_kv(o,"setup_codec=",g_cl.setupCodec);
   cl_kv(o,"start=",g_cl.starts); cl_kv(o,"session=",g_cl.sessionId); cl_kv(o,"stop=",g_cl.stops);
   cl_kv(o,"focus_req=",g_cl.focusReq); cl_kv(o,"focus_on=",g_focusOn);
-  cl_kv(o,"focus_changes=",g_cl.focusChanges); cl_kv(o,"idr_soft=",g_cl.idrSoft); cl_kv(o,"idr_cycle=",g_cl.idrCycle);
+  cl_kv(o,"focus_changes=",g_cl.focusChanges); cl_kv(o,"idr_soft=",g_cl.idrSoft); cl_kv(o,"idr_cycle=",g_cl.idrCycle); cl_kv(o,"second_idr=",g_cl.secondIdr);
   cl_kv(o,"start_idr_n=",g_cl.startIdrN);
   cl_kv(o,"start_idr_ms0=",g_cl.startIdrMs[0]); cl_kv(o,"start_idr_ms1=",g_cl.startIdrMs[1]);
   cl_kv(o,"start_idr_ms2=",g_cl.startIdrMs[2]); cl_kv(o,"start_idr_ms3=",g_cl.startIdrMs[3]); cl_kv(o,"bind_replies=",g_cl.bindReplies);
@@ -429,6 +419,10 @@ static u32 g_kvTried;
 static volatile u32 g_clStarted;     // between the phone's Start and Stop on the cluster channel
 static volatile u32 g_idrState;      // 0 idle, 1 focus taken away, waiting to give it back
 static volatile u32 g_idrT, g_idrLast, g_idrSoftT, g_idrCycleT, g_wantSince, g_startIdrT;
+static u32 g_dmPrev, g_secondIdrDone, g_secondIdrAt;          // reset per AA session (cluster_register)
+#ifndef CLUSTER_SECOND_IDR_MS
+#define CLUSTER_SECOND_IDR_MS 1500
+#endif
 static u32 g_tickerUp;
 static u8  g_spsPps[160]; static u32 g_spsPpsLen;   // rewritten SPS + PPS, Annex-B
 
@@ -740,6 +734,20 @@ static void* cl_ticker(void*){
     struct kbcv* v=g_kv; if(!v) continue;
     if(alive) v->alive_ms = now ? now : 1u;
     else if(v->alive_ms) v->alive_ms=0;
+    // The first picture after the AID switches to the phone stays broken until the phone's NEXT key
+    // frame (car 2026-11-03: garbage for ~30 s, the phone's IDR interval, or until a mode switch).
+    // So once per AA session, CLUSTER_SECOND_IDR_MS after DisplayManager first shows the phone,
+    // one restart for a fresh IDR (the stock map shows for the ~3 s of it).
+    {
+      u32 dmNow = (v->rd_alive_ms && now - v->rd_alive_ms < 2000u) ? 1u : 0u;
+      if(CLUSTER_SECOND_IDR_MS && dmNow && !g_dmPrev && !g_secondIdrDone && !g_secondIdrAt)
+        g_secondIdrAt = (now + (u32)CLUSTER_SECOND_IDR_MS) | 1u;
+      g_dmPrev = dmNow;
+      if(g_secondIdrAt && (i32)(now - g_secondIdrAt) >= 0 && g_clStarted && g_focusOn && !g_idrState){
+        g_secondIdrAt=0; g_secondIdrDone=1; g_cl.secondIdr++;
+        g_idrState=1; g_idrT=now; cl_send_focus_mode(2,1);
+      }
+    }
     if(CLUSTER_IDR_MODE==4 && g_idrState==1 && now-g_idrT>=(u32)CLUSTER_IDR_NATIVE_MS){
       g_idrState=0; cl_send_focus_mode(1,1);
     }
@@ -903,6 +911,7 @@ static void cluster_register(void* receiver,u32 router){
   my_memset(g_clusterEp,0,sizeof g_clusterEp);
   my_memset(g_clusterInEp,0,sizeof g_clusterInEp);
   cluster_reset();
+  g_dmPrev=0; g_secondIdrDone=0; g_secondIdrAt=0;
   if(!ref(R_QUEUE_OUT)) return;
   const u32* svt=(const u32*)ref(R_NAV_VTABLE);           // ProtocolEndpointBase slots 0..9
   u8 id=pick_free_id(router);

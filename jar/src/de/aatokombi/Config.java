@@ -105,6 +105,12 @@ public final class Config {
     public static final int CLUSTER_KEY_ZOOM_OUT = 169;
     /** true: BAP "+1" means zoom OUT (swap if the car zooms the wrong way). */
     public static final boolean CLUSTER_ZOOM_INVERT = false;
+    /**
+     * true: zoom as the AA rotary controller (keycode 65536, +-1 per step). Car 2026-11-03: the
+     * phone ignored KEYCODE_ZOOM_IN/OUT (168/169) on the cluster input (196 sent, no zoom).
+     * Unverified whether the cluster map zooms on the rotary either.
+     */
+    public static final boolean CLUSTER_ZOOM_ROTARY = true;
     /** Repeat interval of a zoom key while the wheel is held (continuous zoom), ms. */
     public static final int CLUSTER_ZOOM_REPEAT_MS = 400;
 

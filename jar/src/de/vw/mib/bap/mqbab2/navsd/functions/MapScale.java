@@ -127,6 +127,14 @@ NavigationServiceListener {
         boolean in = steps > 0;
         if (Config.CLUSTER_ZOOM_INVERT) in = !in;
         int key = in ? Config.CLUSTER_KEY_ZOOM_IN : Config.CLUSTER_KEY_ZOOM_OUT;
+        if (Config.CLUSTER_ZOOM_ROTARY) {
+            // the AA rotary controller (keycode 65536, relative), the only zoom-like input the
+            // DHU's cluster declares; one detent per BAP step, continuous zoom as one detent
+            if (type == 1 || type == 2) {
+                ClusterVideo.sendCommand("rot 65536 " + (in ? 1 : -1));
+            }
+            return;
+        }
         switch (type) {
             case 1: {
                 ClusterVideo.sendCommand("key " + key);
