@@ -59,6 +59,47 @@ public final class WheelKeys {
         ClusterVideo.log("wheel encoder kbd " + keyboard + " enc " + encoder + " steps " + steps + " (" + p4 + "," + p5 + ")");
     }
 
+    /**
+     * Car 2026-11-03: on the system key-panel instance only the rollers' turns (encoders 40, 44)
+     * and one roller's press (key 44) arrive; OK (right roller press) and View never do. On MHI2
+     * the DSI key panel has several instances and the MHI2 DSI traces (joeyQuery/MHI2-altScreen
+     * docs/cluster-controls.md) show View (35) and the roller press (40) there; luka-dev's Audi
+     * MHI2Q code registers its own DSIKeyPanelListener next to the stock one. So: one extra
+     * listener on each other instance 0..OTHER_INSTANCES, logging "wheel key/encoder iN ..." only
+     * (no actions, a duplicate of a system-instance key must not cycle twice). Never throws.
+     */
+    private static final int OTHER_INSTANCES = 7;
+
+    public static void attachOtherInstances(de.vw.mib.asl.framework.api.dsiproxy.DSIProxy proxy, int systemInstance) {
+        ClusterVideo.log("key panel: system instance " + systemInstance);
+        for (int i = 0; i <= OTHER_INSTANCES; i++) {
+            if (i == systemInstance) continue;
+            try {
+                org.dsi.ifc.keypanel.DSIKeyPanel panel = (org.dsi.ifc.keypanel.DSIKeyPanel)
+                        proxy.getService(null, org.dsi.ifc.keypanel.DSIKeyPanel.class, i);
+                InstanceListener l = new InstanceListener(i);
+                proxy.addResponseListener(null, org.dsi.ifc.keypanel.DSIKeyPanelListener.class, i, l);
+                if (panel != null) {
+                    panel.setNotification(new int[]{25, 23}, l);
+                }
+                ClusterVideo.log("key panel instance " + i + ": listener attached" + (panel == null ? " (no service)" : ""));
+            } catch (Throwable t) {
+                ClusterVideo.log("key panel instance " + i + ": " + t);
+            }
+        }
+    }
+
+    private static final class InstanceListener extends de.vw.mib.asl.internal.system.abtfeatures.DsiKeyPanelListenerAdapter {
+        private final int instance;
+        InstanceListener(int instance) { this.instance = instance; }
+        public void updateKey2(int keyboard, int code, int state, int p4, int p5) {
+            ClusterVideo.log("wheel key i" + instance + " kbd " + keyboard + " code " + code + " state " + state + " (" + p4 + "," + p5 + ")");
+        }
+        public void updateEncoder2(int keyboard, int encoder, int steps, int p4, int p5) {
+            ClusterVideo.log("wheel encoder i" + instance + " kbd " + keyboard + " enc " + encoder + " steps " + steps + " (" + p4 + "," + p5 + ")");
+        }
+    }
+
     /** Taken once by ClusterVideo.poll. */
     static boolean takeCycleRequest() {
         if (!cycleRequested) return false;

@@ -1,7 +1,8 @@
 /*
  * Decompiled with CFR 0.152 from the stock class (MIBHMI-fixed.jar). Shadow delta: every key /
  * encoder event of the head unit's key panel is first shown to de.aatokombi.WheelKeys
- * (steering-wheel OK hold, View; see there). Behaviour otherwise stock.
+ * (steering-wheel OK hold, View; see there), and WheelKeys registers extra listeners on the other
+ * key-panel instances. Behaviour otherwise stock.
  */
 package de.vw.mib.asl.internal.system;
 
@@ -265,6 +266,8 @@ ASLSystemKeyPanelHandling {
         this.dsiKeyPanel = (DSIKeyPanel)dSIProxy.getService(this, class$org$dsi$ifc$keypanel$DSIKeyPanel == null ? (class$org$dsi$ifc$keypanel$DSIKeyPanel = AslTargetSystemKeyPanelHandling.class$("org.dsi.ifc.keypanel.DSIKeyPanel")) : class$org$dsi$ifc$keypanel$DSIKeyPanel, configurationManagerDiag.getSystemKeyPanelInstance());
         dSIProxy.addResponseListener(this, class$org$dsi$ifc$keypanel$DSIKeyPanelListener == null ? (class$org$dsi$ifc$keypanel$DSIKeyPanelListener = AslTargetSystemKeyPanelHandling.class$("org.dsi.ifc.keypanel.DSIKeyPanelListener")) : class$org$dsi$ifc$keypanel$DSIKeyPanelListener, configurationManagerDiag.getSystemKeyPanelInstance(), this);
         this.dsiKeyPanel.setNotification(new int[]{25, 23, 20}, (DSIListener)this);
+        // Shadow delta: diagnostic listeners on the OTHER key-panel instances (OK / View search).
+        try { de.aatokombi.WheelKeys.attachOtherInstances(dSIProxy, configurationManagerDiag.getSystemKeyPanelInstance()); } catch (Throwable t) {}
     }
 
     public void updateGesture2(int n, int n2, int n3, boolean bl, int n4, int n5, int n6, int n7, int n8) {
