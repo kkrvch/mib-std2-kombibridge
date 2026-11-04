@@ -53,7 +53,7 @@
 #define CLUSTER_DISPLAY_ID 1
 #endif
 #ifndef CLUSTER_RESOLUTION
-#define CLUSTER_RESOLUTION 2            // VideoCodecResolutionType 1 = 800x480, 2 = 1280x720 (see below)
+#define CLUSTER_RESOLUTION 1            // VideoCodecResolutionType 1 = 800x480, 2 = 1280x720 (see below)
 #endif
 // Geometry. The AID shows the decoded picture 1:1 from its top-left corner in the stock window
 // (1024x384 coded, cropped to 1010x376: stock SPS Baseline 3.0, crop right 14 / bottom 8 - never
@@ -62,17 +62,25 @@
 //    every stream ~0.2 s after its first frame.
 //  - 800x480, crop bottom 104 (2026-11-03): played for minutes. Picture 800x376 left-aligned, the
 //    right ~210 px of the window empty, so the car marker sat ~105 px left of the window centre.
-//  - default now, untested: 1280x720 WITHOUT margins, cropped right 270 / bottom 344 like the stock
-//    stream (only the left/top crop of the failed variant changes), the AID gets the top-left
-//    1010x376. The content insets keep the phone's car marker and cards inside that corner (and
-//    out of the AID's status and trip bars). Apps that ignore insets will draw partly outside.
-//    Fallback (CLUSTER_RESOLUTION=1): 800x480 cropped bottom 104, a 210 px left inset to move the
-//    centre of the phone's layout to the centre of the window.
+//  - 1280x720 WITHOUT margins, cropped right 270 / bottom 344 (2026-11-03): dropped the same way.
+//    A coded width over 1024 (or that many macroblocks) is not accepted, whatever the crop.
+//  - default again: 800x480 cropped bottom 104, a 210 px left inset to move the centre of the
+//    phone's layout to the centre of the window. The picture cannot be moved right: a crop only
+//    removes pixels, and a wider coded picture would need the phone's slices rewritten (see
+//    slices_max in the probe: only possible if the phone codes one slice per macroblock row).
+// CLUSTER_SAR_W:H != 0 writes that sample aspect ratio into the SPS VUI (long shot: maybe the AID
+// stretches 800 to 1010 by it; 101:80 = 1010/800). 0 keeps the phone's VUI unchanged.
 #ifndef CLUSTER_WIDTH_MARGIN
 #define CLUSTER_WIDTH_MARGIN 0
 #endif
 #ifndef CLUSTER_HEIGHT_MARGIN
 #define CLUSTER_HEIGHT_MARGIN 0
+#endif
+#ifndef CLUSTER_SAR_W
+#define CLUSTER_SAR_W (CLUSTER_RESOLUTION==1 ? 101 : 0)
+#endif
+#ifndef CLUSTER_SAR_H
+#define CLUSTER_SAR_H 80
 #endif
 #ifndef CLUSTER_CROP_TOP
 #define CLUSTER_CROP_TOP 0                                        // pixels, even
@@ -207,7 +215,7 @@ struct ClusterProbe {
   u32 sdrSeen, sdrPatched, sdrLen, sdrMainVideo, sdrMainInput, sdrError, inMsgs, inLastId, setups, starts, stops, focusReq, cfgMsgs, frames, idr, other;
   u32 sessionId, setupCodec, lastOtherId, bytes, maxAu, lastTsHi, lastTsLo, sent, sendFail;
   u32 cfgLen, prefixCount, spsCropped, focusChanges, bindReplies, bindReqLen, inputsSent, cmdSeq;
-  u32 idrSoft, idrCycle, secondIdr;
+  u32 idrSoft, idrCycle, secondIdr, sarSet, slicesMax, slicesIdrMax, sliceFrames, mbSecondMax;
   u32 startIdrMs[4], startIdrN;   // ms from each Start to its first IDR (newest in [startIdrN-1&3])
   u8  bindReq[32];
   u8  cfg[512];
@@ -358,7 +366,9 @@ static void cluster_flush(){
   cl_kv(o,"start_idr_ms2=",g_cl.startIdrMs[2]); cl_kv(o,"start_idr_ms3=",g_cl.startIdrMs[3]); cl_kv(o,"bind_replies=",g_cl.bindReplies);
   cl_kv(o,"inputs_sent=",g_cl.inputsSent); cl_kv(o,"cmd_seq=",g_cl.cmdSeq); cl_kv(o,"hmi_video=",g_hmiVideo);
   cl_put(o,"bind_req="); cl_hex(o,g_cl.bindReq,g_cl.bindReqLen); *o++=' '; cl_kv(o,"guidance_only=",g_guideOnly); cl_kv(o,"nav_status=",g_st.status); cl_kv(o,"codec_cfg=",g_cl.cfgMsgs); cl_kv(o,"cfg_len=",g_cl.cfgLen);
-  cl_kv(o,"sps_cropped=",g_cl.spsCropped);
+  cl_kv(o,"sps_cropped=",g_cl.spsCropped); cl_kv(o,"sar_set=",g_cl.sarSet);
+  cl_kv(o,"slices_max=",g_cl.slicesMax); cl_kv(o,"slices_idr_max=",g_cl.slicesIdrMax);
+  cl_kv(o,"slice_frames=",g_cl.sliceFrames); cl_kv(o,"mb_second_max=",g_cl.mbSecondMax);
   cl_kv(o,"shm=",g_kv?1:0); cl_kv(o,"shm_frames=",g_kv?g_kv->frames:0); cl_kv(o,"shm_idr_req=",g_kv?g_kv->idr_requests:0);
   cl_kv(o,"shm_big=",g_kv?g_kv->dropped_big:0); cl_kv(o,"rd_frames=",g_kv?g_kv->rd_frames:0);
   cl_kv(o,"rd_state=",g_kv?g_kv->rd_state:0); cl_kv(o,"rd_ring_waits=",g_kv?g_kv->rd_ring_waits:0);
@@ -505,6 +515,19 @@ static u32 sps_crop(const u8* nal,u32 n,u8* out,u32 cap){
   bw_ue(&w,cl+CLUSTER_CROP_LEFT/2); bw_ue(&w,cr+CLUSTER_CROP_RIGHT/2);
   bw_ue(&w,ct+CLUSTER_CROP_TOP/2);  bw_ue(&w,cb+CLUSTER_CROP_BOTTOM/2);
   if(r.pos>stop) return 0;
+  if(CLUSTER_SAR_W && CLUSTER_SAR_H){
+    u32 vui = r.pos<stop ? br_bit(&r) : 0;
+    bw_bit(&w,1);                                    // vui_parameters_present_flag
+    bw_bit(&w,1); bw_u(&w,255,8);                    // aspect_ratio_info_present, Extended_SAR
+    bw_u(&w,CLUSTER_SAR_W,16); bw_u(&w,CLUSTER_SAR_H,16);
+    if(vui){
+      if(br_bit(&r)){ if(br_u(&r,8)==255){ br_u(&r,16); br_u(&r,16); } }  // drop the phone's SAR
+      if(r.pos>stop) return 0;
+    } else {
+      for(int k=0;k<8;k++) bw_bit(&w,0);             // overscan, signal type, chroma loc, timing,
+    }                                                // nal/vcl hrd, pic_struct, bitstream restr.
+    g_cl.sarSet++;
+  }
   while(r.pos<stop) bw_bit(&w,br_bit(&r));           // VUI and anything else, verbatim
   bw_bit(&w,1); while(w.pos&7) bw_bit(&w,0);         // rbsp trailing bits
   if(!w.ok) return 0;
@@ -552,9 +575,31 @@ static u32 cl_nal_flags(const u8* p,u32 n,u32* hasSps){
   return idr;
 }
 
+// Slices per access unit (sampled): tells whether the picture could be widened by rewriting
+// first_mb_in_slice (only with one slice per macroblock row). mbSecond = first_mb of slice 2.
+static u32 g_sliceTick;
+static void cl_count_slices(const u8* p,u32 n,u32 idr){
+  if(!idr && (++g_sliceTick&15u)) return;
+  u32 cnt=0, mb2=0;
+  for(u32 i=0;i+4<n;i++){
+    if(p[i]==0 && p[i+1]==0 && p[i+2]==1){
+      u32 t=p[i+3]&0x1f;
+      if(t==1 || t==5){
+        if(++cnt==2){ BitR r={p+i+4,(n-i-4)<8u?(n-i-4):8u,0}; mb2=br_ue(&r); }
+      }
+      i+=3;
+    }
+  }
+  g_cl.sliceFrames++;
+  if(cnt>g_cl.slicesMax) g_cl.slicesMax=cnt;
+  if(idr && cnt>g_cl.slicesIdrMax) g_cl.slicesIdrMax=cnt;
+  if(mb2>g_cl.mbSecondMax) g_cl.mbSecondMax=mb2;
+}
+
 static void cl_publish(const u8* au,u32 n){
   struct kbcv* v=g_kv; if(!v || !au || !n) return;
   u32 hasSps=0, idr=cl_nal_flags(au,n<4096?n:4096,&hasSps);
+  cl_count_slices(au,n,idr);
   u32 pre = (idr && !hasSps) ? g_spsPpsLen : 0;
   if(pre+n>KBCV_AU_MAX){ v->dropped_big++; v->want_idr=1; return; }
   u32 seq=v->write_seq+1; if(!seq) seq=1;
