@@ -215,6 +215,7 @@ struct ClusterProbe {
   u32 sdrSeen, sdrPatched, sdrLen, sdrMainVideo, sdrMainInput, sdrError, inMsgs, inLastId, setups, starts, stops, focusReq, cfgMsgs, frames, idr, other;
   u32 sessionId, setupCodec, lastOtherId, bytes, maxAu, lastTsHi, lastTsLo, sent, sendFail;
   u32 cfgLen, prefixCount, spsCropped, focusChanges, bindReplies, bindReqLen, inputsSent, cmdSeq;
+  u32 insetsSent, insets[4];
   u32 idrSoft, idrCycle, secondIdr, sarSet, slicesMax, slicesIdrMax, sliceFrames, mbSecondMax;
   u32 startIdrMs[4], startIdrN;   // ms from each Start to its first IDR (newest in [startIdrN-1&3])
   u8  bindReq[32];
@@ -367,6 +368,8 @@ static void cluster_flush(){
   cl_kv(o,"inputs_sent=",g_cl.inputsSent); cl_kv(o,"cmd_seq=",g_cl.cmdSeq); cl_kv(o,"hmi_video=",g_hmiVideo);
   cl_put(o,"bind_req="); cl_hex(o,g_cl.bindReq,g_cl.bindReqLen); *o++=' '; cl_kv(o,"guidance_only=",g_guideOnly); cl_kv(o,"nav_status=",g_st.status); cl_kv(o,"codec_cfg=",g_cl.cfgMsgs); cl_kv(o,"cfg_len=",g_cl.cfgLen);
   cl_kv(o,"sps_cropped=",g_cl.spsCropped); cl_kv(o,"sar_set=",g_cl.sarSet);
+  cl_kv(o,"insets_sent=",g_cl.insetsSent); cl_kv(o,"insets_t=",g_cl.insets[0]); cl_kv(o,"insets_b=",g_cl.insets[1]);
+  cl_kv(o,"insets_l=",g_cl.insets[2]); cl_kv(o,"insets_r=",g_cl.insets[3]);
   cl_kv(o,"slices_max=",g_cl.slicesMax); cl_kv(o,"slices_idr_max=",g_cl.slicesIdrMax);
   cl_kv(o,"slice_frames=",g_cl.sliceFrames); cl_kv(o,"mb_second_max=",g_cl.mbSecondMax);
   cl_kv(o,"shm=",g_kv?1:0); cl_kv(o,"shm_frames=",g_kv?g_kv->frames:0); cl_kv(o,"shm_idr_req=",g_kv?g_kv->idr_requests:0);
@@ -737,7 +740,41 @@ static int cl_word(const char*& p,const char* w){
   if(*w || (*q && *q!=' ')) return 0;
   p=q; return 1;
 }
+// Content insets at run time, for tuning on the car (telnet):
+//   echo "110 174 210 0" > /dev/shmem/aa_cluster_insets      top bottom left right (pixels)
+//   optional 5th number: 0 = UpdateUiConfigRequest {1 UiConfig} (default), 1 = UiConfig bare
+// Sent as 0x8009 on the cluster video channel each time the file content changes (and once more
+// after every Start). UNVERIFIED: the message layout (open-android-auto names 0x8009
+// UPDATE_UI_CONFIG_REQUEST); the phone's answer, if any, shows as last_other_id in the probe.
+#define CLUSTER_INSETS_FILE "/dev/shmem/aa_cluster_insets"
+static u32 g_insChecked, g_insHash, g_insWant[5], g_insHave;
+static void cl_send_insets(){
+  u8 in[24], ui[40], m[48]; u8* r=in;
+  for(u32 k=0;k<4;k++) if(g_insWant[k]) r=cl_field_u(r,k+1,g_insWant[k]);
+  u8* t=ui; t=cl_field_bytes(t,2,in,(u32)(r-in)); t=cl_field_u(t,4,CLUSTER_UI_THEME);
+  u32 n=(u32)(t-ui);
+  if(g_insWant[4]==1){ cl_send(0x8009,ui,n); }
+  else { u8* o=cl_field_bytes(m,1,ui,n); cl_send(0x8009,m,(u32)(o-m)); }
+  g_cl.insetsSent++;
+  g_cl.insets[0]=g_insWant[0]; g_cl.insets[1]=g_insWant[1]; g_cl.insets[2]=g_insWant[2]; g_cl.insets[3]=g_insWant[3];
+}
+static void cl_poll_insets(u32 now){
+  if(g_insChecked && now-g_insChecked<500u) return;
+  g_insChecked=now|1u;
+  if(!p_fopen || !p_fread) return;
+  void* f=p_fopen(CLUSTER_INSETS_FILE,"r"); if(!f) return;
+  char buf[96]; usize n=p_fread(buf,1,sizeof buf-1,f); p_fclose(f); buf[n]=0;
+  u32 h=2166136261u; for(usize i=0;i<n;i++) h=(h^(u8)buf[i])*16777619u;
+  if(h==g_insHash && g_insHave) return;
+  const char* c=buf; i32 v[5]; u32 k=0; my_memset(v,0,sizeof v);
+  while(k<5 && cl_parse_int(c,&v[k])) k++;
+  if(k<4) return;
+  g_insHash=h; g_insHave=1;
+  for(u32 j=0;j<5;j++) g_insWant[j]=v[j]<0?0u:(u32)v[j];
+  if(g_clStarted) cl_send_insets();
+}
 static void cl_poll_commands(u32 now){
+  cl_poll_insets(now);
   if(g_repCode && now-g_repStart>=(u32)CLUSTER_REP_MAX_MS) g_repCode=0;
   if(g_repCode && g_repMs && now-g_repT>=g_repMs){ g_repT=now; cl_key(g_repCode); }
   if(g_cmdChecked && now-g_cmdChecked<100u) return;
@@ -888,6 +925,7 @@ int cluster_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
     while(g_ackPending){ __sync_fetch_and_sub(&g_ackPending,1u); cl_ack(); }
     g_budget=(int)(CLUSTER_BURST_MS*(u32)(CLUSTER_KBPS/8)); g_budgetMs=cl_now_ms();
     g_clStarted=1;
+    if(g_insHave) cl_send_insets();                       // tuned insets survive a Stop/Start
   } else if(id==0x8002){
     g_cl.stops++;
     g_clStarted=0;
