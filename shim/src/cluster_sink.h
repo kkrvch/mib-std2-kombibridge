@@ -210,7 +210,7 @@ struct ClusterProbe {
   u32 sessionId, setupCodec, lastOtherId, bytes, maxAu, lastTsHi, lastTsLo, sent, sendFail;
   u32 cfgLen, prefixCount, spsCropped, focusChanges, bindReplies, bindReqLen, inputsSent, cmdSeq;
   u32 insetsFile, insets[4], cmdReads, cmdBytes, cmdLines;
-  u32 idrSoft, idrCycle, secondIdr, ackConsumed, ackTimeouts, focusGated;
+  u32 idrSoft, idrCycle, secondIdr, ackConsumed, ackTimeouts, focusGated, dhu;
   u32 startIdrMs[4], startIdrN;   // ms from each Start to its first IDR (newest in [startIdrN-1&3])
   u8  bindReq[32];
   u8  cfg[512];
@@ -311,17 +311,44 @@ static void cl_load_insets(u32* in4){
   }
   for(u32 j=0;j<4;j++) g_cl.insets[j]=in4[j];
 }
+// Head unit identity as Google's Desktop Head Unit (plan item 7), the same values MIB2 Toolbox's
+// "Android Auto custom apps patch" writes into MIB2 High's gal.json: with them the phone lets
+// third-party (sideloaded) apps run on Android Auto. Only while /tsd/var/aatokombi/dhu exists,
+// read at each connection. ServiceDiscoveryResponse fields of this libgal: 2 make, 3 model,
+// 4 year, 5 vehicle_id, 7 head_unit_make, 8 head_unit_model, 9 sw build, 10 sw version.
+// Not verified that current Android Auto versions still honour it; the phone will probably see
+// a new car.
+#define CLUSTER_DHU_FILE "/tsd/var/aatokombi/dhu"
+static u32 cl_dhu_on(){
+  if(!p_fopen || !p_fclose) return 0;
+  void* f=p_fopen(CLUSTER_DHU_FILE,"r"); if(!f) return 0;
+  p_fclose(f); return 1;
+}
+static u32 cl_slen(const char* t){ u32 n=0; while(t[n]) n++; return n; }
+static u8* cl_field_str(u8* o,u8* end,u32 field,const char* t){
+  u32 n=cl_slen(t); if(o+n+6>end) return 0;
+  return cl_field_bytes(o,field,(const u8*)t,n);
+}
+static u8* cl_put_dhu(u8* o,u8* end){
+  static const char* const v[11]={0,0,"Google","Desktop Head Unit","2015","0001",0,
+                                  "Google","Desktop Head Unit","2015-09-16-2258745","1.0-windows"};
+  for(u32 f=2;f<=10;f++){ if(!v[f]) continue; o=cl_field_str(o,end,f,v[f]); if(!o) return 0; }
+  return o;
+}
 // out <- 2-byte id + rewritten SDR + cluster video service + cluster input service.
 static u32 cl_rewrite_sdr(const u8* in,u32 n,u8* out,u32 cap){
   u8* o=out; u8* end=out+cap;
   if(n<2) return 0;
   *o++=in[0]; *o++=in[1];
   const u8* p=in+2; u32 pn_all=n-2, i=0, f, wt, fs, pn; const u8* pl;
+  u32 dhu=cl_dhu_on(); g_cl.dhu=dhu;
   while(i<pn_all){
     if(!cl_next(p,pn_all,&i,&f,&wt,&fs,&pl,&pn)) return 0;
     if(f==1 && wt==2){ o=cl_rewrite_service(o,end,pl,pn); if(!o) return 0; }
+    else if(dhu && wt==2 && f>=2 && f<=10 && f!=6){ /* replaced below */ }
     else { if(o+(i-fs)>end) return 0; for(u32 k=fs;k<i;k++) *o++=p[k]; }
   }
+  if(dhu){ o=cl_put_dhu(o,end); if(!o) return 0; }
   // cluster video
   u8 vc[64], ms[112], sv[128]; u8* q;
   q=vc; q=cl_field_u(q,1,CLUSTER_RESOLUTION); q=cl_field_u(q,2,CLUSTER_FRAME_RATE);
@@ -393,7 +420,7 @@ static void cluster_flush(){
   cl_kv(o,"rd_state=",g_kv?g_kv->rd_state:0); cl_kv(o,"rd_ring_waits=",g_kv?g_kv->rd_ring_waits:0);
   cl_kv(o,"rd_ring_lost=",g_kv?g_kv->rd_ring_lost:0);
   cl_kv(o,"ack_pending=",g_ackPending); cl_kv(o,"ack_consumed=",g_cl.ackConsumed); cl_kv(o,"ack_timeouts=",g_cl.ackTimeouts);
-  cl_kv(o,"focus_gated=",g_cl.focusGated); cl_kv(o,"kbps_cap=",CLUSTER_KBPS);
+  cl_kv(o,"focus_gated=",g_cl.focusGated); cl_kv(o,"dhu=",g_cl.dhu); cl_kv(o,"kbps_cap=",CLUSTER_KBPS);
   cl_kv(o,"frames=",g_cl.frames); cl_kv(o,"idr=",g_cl.idr); cl_kv(o,"bytes=",g_cl.bytes);
   cl_kv(o,"max_au=",g_cl.maxAu); cl_kv(o,"ts_hi=",g_cl.lastTsHi); cl_kv(o,"ts_lo=",g_cl.lastTsLo);
   cl_kv(o,"sent=",g_cl.sent); cl_kv(o,"send_fail=",g_cl.sendFail);
