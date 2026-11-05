@@ -61,7 +61,14 @@ struct kbcv {
   /* first slot sequence of the current generation (set by the writer at the phone's Start): a
    * key frame from before it belongs to the previous stream and must not start the reader */
   volatile unsigned gen_first_seq;
-  unsigned reserved[3];
+  /* reader: monotonic ms of DisplayManager's last pass through the cluster encoder's reader (it
+   * runs while the cluster takes video at all, stock or phone): "the receiver is ready" */
+  volatile unsigned rd_ready_ms;
+  /* reader: newest slot sequence it has taken from the ring (handed to the cluster or skipped);
+   * the writer acknowledges a phone frame only once the reader is past it */
+  volatile unsigned rd_seq;
+  /* reader: 1 = sets rd_ready_ms / rd_seq (an older libkb_dm.so leaves 0) */
+  volatile unsigned rd_caps;
   struct kbcv_slot slot[KBCV_SLOTS];
 };
 

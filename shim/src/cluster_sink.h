@@ -210,7 +210,7 @@ struct ClusterProbe {
   u32 sessionId, setupCodec, lastOtherId, bytes, maxAu, lastTsHi, lastTsLo, sent, sendFail;
   u32 cfgLen, prefixCount, spsCropped, focusChanges, bindReplies, bindReqLen, inputsSent, cmdSeq;
   u32 insetsFile, insets[4], cmdReads, cmdBytes, cmdLines;
-  u32 idrSoft, idrCycle, secondIdr;
+  u32 idrSoft, idrCycle, secondIdr, ackConsumed, ackTimeouts, focusGated;
   u32 startIdrMs[4], startIdrN;   // ms from each Start to its first IDR (newest in [startIdrN-1&3])
   u8  bindReq[32];
   u8  cfg[512];
@@ -392,7 +392,8 @@ static void cluster_flush(){
   cl_kv(o,"shm_big=",g_kv?g_kv->dropped_big:0); cl_kv(o,"rd_frames=",g_kv?g_kv->rd_frames:0);
   cl_kv(o,"rd_state=",g_kv?g_kv->rd_state:0); cl_kv(o,"rd_ring_waits=",g_kv?g_kv->rd_ring_waits:0);
   cl_kv(o,"rd_ring_lost=",g_kv?g_kv->rd_ring_lost:0);
-  cl_kv(o,"ack_pending=",g_ackPending); cl_kv(o,"kbps_cap=",CLUSTER_KBPS);
+  cl_kv(o,"ack_pending=",g_ackPending); cl_kv(o,"ack_consumed=",g_cl.ackConsumed); cl_kv(o,"ack_timeouts=",g_cl.ackTimeouts);
+  cl_kv(o,"focus_gated=",g_cl.focusGated); cl_kv(o,"kbps_cap=",CLUSTER_KBPS);
   cl_kv(o,"frames=",g_cl.frames); cl_kv(o,"idr=",g_cl.idr); cl_kv(o,"bytes=",g_cl.bytes);
   cl_kv(o,"max_au=",g_cl.maxAu); cl_kv(o,"ts_hi=",g_cl.lastTsHi); cl_kv(o,"ts_lo=",g_cl.lastTsLo);
   cl_kv(o,"sent=",g_cl.sent); cl_kv(o,"send_fail=",g_cl.sendFail);
@@ -581,6 +582,7 @@ static u32 cl_nal_flags(const u8* p,u32 n,u32* hasSps){
 }
 
 
+static u32 g_pubSeq;                 // ring slot of the frame just published (0 = none)
 static void cl_publish(const u8* au,u32 n){
   struct kbcv* v=g_kv; if(!v || !au || !n) return;
   u32 hasSps=0, idr=cl_nal_flags(au,n<4096?n:4096,&hasSps);
@@ -594,7 +596,7 @@ static void cl_publish(const u8* au,u32 n){
   for(u32 i=0;i<n;i++) sl->data[pre+i]=au[i];
   sl->size=pre+n; sl->flags=idr?KBCV_FLAG_IDR:0;
   __sync_synchronize();
-  sl->seq=seq; v->write_seq=seq;
+  sl->seq=seq; v->write_seq=seq; g_pubSeq=seq;
   v->frames++;
   if(idr){
     v->idr++; g_idrSoftT=0; g_wantSince=0;
@@ -614,16 +616,69 @@ static void cl_refill(u32 now){
   int cap=(int)(CLUSTER_BURST_MS*(u32)(CLUSTER_KBPS/8));
   int b=g_budget+add; if(b>cap) b=cap; g_budget=b;
 }
-// A data frame of n bytes arrived: acknowledge now if the budget allows, else later (ticker).
-static void cl_ack_paced(u32 n){
-  cl_refill(cl_now_ms());
-  g_budget-= (int)n;
-  if(g_ackPending==0 && g_budget>=0) cl_ack();
-  else __sync_fetch_and_add(&g_ackPending,1u);
+// Acknowledgements. AA's flow control: the phone keeps at most max_unacked frames in flight.
+// Two ways to acknowledge a data frame:
+//  - by budget (always so before 2026-11-05): when it arrives, if the CLUSTER_KBPS budget allows;
+//  - by consumption (default while DisplayManager shows the phone's video): only once libkb_dm.so
+//    has taken it from the ring (kv->rd_seq), so the phone is paced by what really goes to the
+//    cluster over MOST, not by our estimate. Not while the stock map shows (DisplayManager does
+//    not read the ring then; the phone would stall), not with an older libkb_dm.so (rd_caps 0),
+//    not while /tsd/var/aatokombi/ack-on-arrival exists. Safety: a frame waits at most
+//    CLUSTER_ACK_MAX_WAIT_MS.
+#ifndef CLUSTER_ACK_MAX_WAIT_MS
+#define CLUSTER_ACK_MAX_WAIT_MS 500
+#endif
+#define CLUSTER_ACK_FILE "/tsd/var/aatokombi/ack-on-arrival"
+#define CL_PEND 64u
+static u32 g_pendSeq[CL_PEND], g_pendT[CL_PEND];
+static volatile u32 g_pendHead, g_pendLock;       // g_ackPending = entries; oldest at g_pendHead
+static u32 g_ackFileChk, g_ackFile;
+static void cl_pend_lock(){ while(__sync_lock_test_and_set(&g_pendLock,1u)){} }
+static void cl_pend_unlock(){ __sync_lock_release(&g_pendLock); }
+static u32 cl_ack_by_consumption(u32 now){
+  struct kbcv* v=g_kv;
+  if(!v || !v->rd_caps || v->rd_state!=1 || !v->rd_alive_ms || now-v->rd_alive_ms>=1000u) return 0;
+  if(!g_ackFileChk || now-g_ackFileChk>=2000u){
+    g_ackFileChk=now|1u; g_ackFile=0;
+    if(p_fopen && p_fclose){ void* f=p_fopen(CLUSTER_ACK_FILE,"r"); if(f){ p_fclose(f); g_ackFile=1; } }
+  }
+  return g_ackFile ? 0u : 1u;
 }
+// Release what may be acknowledged now (called on arrival and from the ticker).
 static void cl_release_acks(u32 now){
   cl_refill(now);
-  while(g_ackPending && g_budget>=0){ __sync_fetch_and_sub(&g_ackPending,1u); cl_ack(); }
+  u32 cons=cl_ack_by_consumption(now);
+  struct kbcv* v=g_kv;
+  cl_pend_lock();
+  while(g_ackPending){
+    u32 h=g_pendHead%CL_PEND, sq=g_pendSeq[h];
+    u32 ok;
+    if(now-g_pendT[h] >= (u32)CLUSTER_ACK_MAX_WAIT_MS){ ok=1; g_cl.ackTimeouts++; }
+    else if(cons) ok = (!sq || (v && (i32)(v->rd_seq - sq) >= 0)) ? 1u : 0u;
+    else ok = g_budget>=0 ? 1u : 0u;
+    if(!ok) break;
+    g_pendHead++; g_ackPending--;
+    if(cons) g_cl.ackConsumed++;
+    cl_ack();
+  }
+  cl_pend_unlock();
+}
+// A data frame of n bytes arrived (published as ring slot seq, 0 = not published).
+static void cl_ack_paced(u32 n,u32 seq){
+  u32 now=cl_now_ms();
+  cl_refill(now);
+  g_budget-= (int)n;
+  cl_pend_lock();
+  if(g_ackPending>=CL_PEND){ g_pendHead++; g_ackPending--; cl_ack(); }   // never lose a credit
+  u32 t=(g_pendHead+g_ackPending)%CL_PEND; g_pendSeq[t]=seq; g_pendT[t]=now; g_ackPending++;
+  cl_pend_unlock();
+  cl_release_acks(now);
+}
+// Start / Stop: return every credit the phone still counts.
+static void cl_ack_all(){
+  cl_pend_lock();
+  while(g_ackPending){ g_pendHead++; g_ackPending--; cl_ack(); }
+  cl_pend_unlock();
 }
 // /dev/shmem/aa_cluster_video for the HMI: "<alive> <dm> <tick>". alive = the phone's cluster
 // stream is started; dm = DisplayManager is actually handing those frames to the cluster
@@ -651,15 +706,50 @@ static u32 cl_guidance_only(u32 now){
   }
   return g_guideOnly;
 }
+// Receiver readiness (plan item 4): the phone gets focus on the cluster only while DisplayManager's
+// cluster reader runs (libkb_dm.so rd_ready_ms: the cluster takes video at all), so its Start and
+// first key frame come when they can be shown, and it does not encode for nothing while the AID
+// shows something else. Ready after CLUSTER_READY_ON_MS of reader activity, not ready after
+// CLUSTER_READY_OFF_MS without. Off (old behaviour) with an older libkb_dm.so (rd_caps 0) or
+// while /tsd/var/aatokombi/focus-always exists.
+#ifndef CLUSTER_READY_ON_MS
+#define CLUSTER_READY_ON_MS 300
+#endif
+#ifndef CLUSTER_READY_OFF_MS
+#define CLUSTER_READY_OFF_MS 5000
+#endif
+#define CLUSTER_FOCUS_ALWAYS_FILE "/tsd/var/aatokombi/focus-always"
+static u32 g_readySince, g_readyChk, g_focusAlways;
+static u32 cl_receiver_ready(u32 now){
+  struct kbcv* v=g_kv;
+  if(!v || !v->rd_caps) return 1u;
+  if(!g_readyChk || now-g_readyChk>=2000u){
+    g_readyChk=now|1u; g_focusAlways=0;
+    if(p_fopen && p_fclose){ void* f=p_fopen(CLUSTER_FOCUS_ALWAYS_FILE,"r"); if(f){ p_fclose(f); g_focusAlways=1; } }
+  }
+  if(g_focusAlways) return 1u;
+  u32 r=v->rd_ready_ms;
+  u32 fresh = (r && now-r < 1000u) ? 1u : 0u;
+  if(fresh){ if(!g_readySince) g_readySince=now|1u; }
+  if(!r || now-r >= (u32)CLUSTER_READY_OFF_MS){ g_readySince=0; return 0u; }
+  if(!g_readySince) return g_focusOn;                 // stale but not yet off: keep what we have
+  return (now-g_readySince >= (u32)CLUSTER_READY_ON_MS || g_focusOn) ? 1u : 0u;
+}
 // Whether the phone should stream the cluster map now.
 static u32 cl_want_video(u32 now){
   if(!g_hmiVideo) return 0u;
+  if(!cl_receiver_ready(now)){ return 0u; }
   if(!cl_guidance_only(now)) return 1u;
   if(g_st.status==1u || g_st.status==3u){ g_guideMs=now|1u; return 1u; }   // ACTIVE / REROUTING
   return (g_guideMs && now-g_guideMs < (u32)CLUSTER_GUIDANCE_HOLD_MS) ? 1u : 0u;
 }
+static u32 g_focusChangeT;
 static void cl_apply_focus(u32 want){
   if(want==g_focusOn) return;
+  u32 now=cl_now_ms();
+  if(g_focusChangeT && now-g_focusChangeT<2000u) return;   // no flapping
+  g_focusChangeT=now|1u;
+  if(!want && g_kv && g_kv->rd_caps && g_hmiVideo) g_cl.focusGated++;
   g_focusOn=want;
   cl_send_focus_mode(want?1u:2u,1);                    // PROJECTED / NATIVE, unsolicited
   g_cl.focusChanges++;
@@ -854,6 +944,7 @@ int cluster_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
       au=p+8; an=n-8;
     }
     if(id==0x0001 && au) cl_store_config(au,an);
+    g_pubSeq=0;
     if(id==0x0000 && au && g_kv) cl_publish(au,an);
     if(id==0x0001 || (g_cl.frames==0 && g_cl.cfgLen==0 && au && an<=sizeof g_cl.cfg)){
       if(id==0x0001) g_cl.cfgMsgs++;
@@ -867,7 +958,7 @@ int cluster_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
         g_cl.prefixCount++;
       }
     }
-    if(id==0x0000) cl_ack_paced(an); else cl_ack();
+    if(id==0x0000) cl_ack_paced(an, g_kv ? g_pubSeq : 0u); else cl_ack();
     if(id==0x0001 || g_cl.frames<=4 || (g_cl.frames&63u)==0) cluster_flush();
     return 0;
   }
@@ -887,13 +978,13 @@ int cluster_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
     cl_video_session_start();
     if(g_kv){ g_kv->gen_first_seq = g_kv->write_seq + 1u; __sync_synchronize(); g_kv->generation++; }
     // The phone keeps unacknowledged frames counted across Stop/Start: return every credit.
-    while(g_ackPending){ __sync_fetch_and_sub(&g_ackPending,1u); cl_ack(); }
+    cl_ack_all();
     g_budget=(int)(CLUSTER_BURST_MS*(u32)(CLUSTER_KBPS/8)); g_budgetMs=cl_now_ms();
     g_clStarted=1;
   } else if(id==0x8002){
     g_cl.stops++;
     g_clStarted=0;
-    while(g_ackPending){ __sync_fetch_and_sub(&g_ackPending,1u); cl_ack(); }
+    cl_ack_all();
   } else if(id==0x8007){
     g_cl.focusReq++; cl_send_focus_mode(g_focusOn?1u:2u,0);
   } else {

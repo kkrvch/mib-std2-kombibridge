@@ -359,6 +359,7 @@ static uint32_t take_frame(void)
     while (next_seq != head) {
         unsigned seq = ++next_seq, size;
         struct kbcv_slot *s = &kv->slot[seq % KBCV_SLOTS];
+        kv->rd_seq = seq;                                  /* taken or skipped: the libgal may ack it */
         if (s->seq != seq) { need_idr = 1; continue; }
         size = s->size;
         if (size > sizeof(frame)) continue;
@@ -407,6 +408,10 @@ EXPORT void *mmfbq_get_and_wait(void *q, const struct timespec *deadline)
     if (!reader_return || (uintptr_t)__builtin_return_address(0) != reader_return)
         return real_get_and_wait(q, deadline);
 
+    if (q && q == cluster_queue && !switched_off() && kv_open()) {
+        kv->rd_caps = 1;
+        kv->rd_ready_ms = now_ms() | 1u;                   /* the cluster takes video: phone may stream */
+    }
     if (q && q == cluster_queue && phone_alive() && !phone && !ring_has_idr()) {
         if (!idr_wait_logged) { idr_wait_logged = 1; LOG("phone video waits for a key frame: stock map meanwhile"); }
         kv->want_idr = 1;                                  /* the libgal may restart the stream */
