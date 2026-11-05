@@ -81,6 +81,13 @@ static struct element ours;
 static uint8_t frame[KBCV_SLOT_BYTES];
 static unsigned next_seq, generation;
 static int phone, need_idr, wait_stock_idr, ring_stalled;
+/* The AID's decoder shows the first picture after the stock stream broken (purple, smeared) until
+ * the next key frame, even when that first picture IS a key frame (car 2026-11-04). So the first
+ * phone IDR after each switch from the stock map goes to the encoder twice: the second copy is
+ * then the reference for the phone's P-frames. Off while VAR_DIR/no-dup-idr exists. */
+#define NO_DUP_FILE         VAR_DIR "/no-dup-idr"
+static int dup_pending, dup_now, frame_idr;
+static uint32_t frame_size;
 static unsigned idr_wait_ms;
 static int disabled_for_good;
 static unsigned switch_checked, switch_off;
@@ -365,6 +372,7 @@ static uint32_t take_frame(void)
         }
         if (need_idr && idr_wait_ms) { LOGV("key frame after ms", now_ms() - idr_wait_ms); idr_wait_ms = 0; }
         need_idr = 0;
+        frame_idr = (s->flags & KBCV_FLAG_IDR) ? 1 : 0;
         kv->rd_frames++;
         return size;
     }
@@ -406,6 +414,7 @@ EXPORT void *mmfbq_get_and_wait(void *q, const struct timespec *deadline)
         if (!phone) {
             idr_wait_logged = 0;
             phone = 1; need_idr = 1; guard_busy(1);
+            dup_pending = !exists(NO_DUP_FILE); dup_now = 0;
             if (kv) next_seq = resync_seq(kv->write_seq);   /* start at the newest IDR in the ring */
             if (kv) kv->rd_state = 1;
             LOG("cluster: Android Auto video");
@@ -415,9 +424,18 @@ EXPORT void *mmfbq_get_and_wait(void *q, const struct timespec *deadline)
             void *e;
             unsigned head, size;
             while ((e = real_get(q)) != NULL) real_done(q, e);   /* stock frame back, unused */
+            if (dup_now) {                                 /* the same IDR once more */
+                dup_now = 0;
+                ours.data = frame; ours.size = frame_size; kv->rd_alive_ms = now_ms() | 1u;
+                LOG("first key frame sent twice");
+                return &ours;
+            }
             head = kv->write_seq;
             size = take_frame();
-            if (size) { ours.data = frame; ours.size = size; kv->rd_alive_ms = now_ms() | 1u; return &ours; }
+            if (size) {
+                if (dup_pending && frame_idr) { dup_pending = 0; dup_now = 1; frame_size = size; }
+                ours.data = frame; ours.size = size; kv->rd_alive_ms = now_ms() | 1u; return &ours;
+            }
             /* lost the picture (stream restart, frames skipped): back to the stock map until the
              * phone's next key frame rather than leaving the AID without frames */
             if (need_idr && idr_wait_ms && now_ms() - idr_wait_ms >= IDR_FALLBACK_MS) break;
@@ -448,6 +466,7 @@ EXPORT void *mmfbq_get_and_wait(void *q, const struct timespec *deadline)
     }
     if (phone) {
         phone = 0; wait_stock_idr = 1; guard_busy(0);
+        dup_pending = 0; dup_now = 0;
         if (kv) kv->rd_alive_ms = 0;
         if (kv) kv->rd_state = 0;
         LOG("cluster: stock map");

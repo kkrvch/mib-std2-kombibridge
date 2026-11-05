@@ -43,6 +43,7 @@ public final class ClusterVideo {
     private static int lastMapMode = MODE_STOCK_MAP;
 
     private static int cmdSeq = -1;
+    private static int cmdLogged, cmdErrLogged;
     private static final String[] cmdLines = new String[4];
     private static int cmdNext;
 
@@ -149,8 +150,11 @@ public final class ClusterVideo {
             }
             java.io.FileWriter w = new java.io.FileWriter(CMD_PATH);
             try { w.write(sb.toString()); } finally { w.close(); }
+            if (cmdLogged < 5) { cmdLogged++; log("command written: " + cmdSeq + " " + cmd); }
         } catch (Throwable t) {
-            // no CLUSTER_SINK libgal: nothing reads the file anyway
+            // no CLUSTER_SINK libgal: nothing reads the file anyway; but say why (car 2026-11-05:
+            // zoom commands never reached the libgal, cmd_seq 0)
+            if (cmdErrLogged < 5) { cmdErrLogged++; log("command not written: " + cmd + ": " + t); }
         }
     }
 

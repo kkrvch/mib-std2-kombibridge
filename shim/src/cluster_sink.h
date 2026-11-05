@@ -53,7 +53,7 @@
 #define CLUSTER_DISPLAY_ID 1
 #endif
 #ifndef CLUSTER_RESOLUTION
-#define CLUSTER_RESOLUTION 1            // VideoCodecResolutionType 1 = 800x480, 2 = 1280x720 (see below)
+#define CLUSTER_RESOLUTION 1            // VideoCodecResolutionType 1 = 800x480 (the only one the AID takes)
 #endif
 // Geometry. The AID shows the decoded picture 1:1 from its top-left corner in the stock window
 // (1024x384 coded, cropped to 1010x376: stock SPS Baseline 3.0, crop right 14 / bottom 8 - never
@@ -63,24 +63,18 @@
 //  - 800x480, crop bottom 104 (2026-11-03): played for minutes. Picture 800x376 left-aligned, the
 //    right ~210 px of the window empty, so the car marker sat ~105 px left of the window centre.
 //  - 1280x720 WITHOUT margins, cropped right 270 / bottom 344 (2026-11-03): dropped the same way.
-//    A coded width over 1024 (or that many macroblocks) is not accepted, whatever the crop.
-//  - default again: 800x480 cropped bottom 104, a 210 px left inset to move the centre of the
-//    phone's layout to the centre of the window. The picture cannot be moved right: a crop only
-//    removes pixels, and a wider coded picture would need the phone's slices rewritten (see
-//    slices_max in the probe: only possible if the phone codes one slice per macroblock row).
-// CLUSTER_SAR_W:H != 0 writes that sample aspect ratio into the SPS VUI (long shot: maybe the AID
-// stretches 800 to 1010 by it; 101:80 = 1010/800). 0 keeps the phone's VUI unchanged.
+//    slog 2026-11-05: ~0.2 s after the first 1280 frame the AID reports its MOST stream sink
+//    unavailable ("StreamSink becomes unavailable"), the HMI switches the cluster transmission off
+//    and DisplayManager stops the encoder. The AID's decoder refuses the format: not fixable here.
+//  - 800x480 cropped bottom 104 (default): a 210 px left inset moves the centre of the phone's
+//    layout to the centre of the window. The picture cannot be moved right: a crop only removes
+//    pixels, and the phone codes one slice per frame (probe 2026-11-04), so no wider picture can be
+//    built from its slices. An SPS VUI sample aspect ratio 101:80 did not stretch it (2026-11-04).
 #ifndef CLUSTER_WIDTH_MARGIN
 #define CLUSTER_WIDTH_MARGIN 0
 #endif
 #ifndef CLUSTER_HEIGHT_MARGIN
 #define CLUSTER_HEIGHT_MARGIN 0
-#endif
-#ifndef CLUSTER_SAR_W
-#define CLUSTER_SAR_W (CLUSTER_RESOLUTION==1 ? 101 : 0)
-#endif
-#ifndef CLUSTER_SAR_H
-#define CLUSTER_SAR_H 80
 #endif
 #ifndef CLUSTER_CROP_TOP
 #define CLUSTER_CROP_TOP 0                                        // pixels, even
@@ -89,10 +83,10 @@
 #define CLUSTER_CROP_LEFT 0                                       // pixels, even
 #endif
 #ifndef CLUSTER_CROP_BOTTOM
-#define CLUSTER_CROP_BOTTOM (CLUSTER_RESOLUTION==2 ? 344 : 104)   // pixels, even
+#define CLUSTER_CROP_BOTTOM 104                                   // pixels, even
 #endif
 #ifndef CLUSTER_CROP_RIGHT
-#define CLUSTER_CROP_RIGHT (CLUSTER_RESOLUTION==2 ? 270 : 0)      // pixels, even
+#define CLUSTER_CROP_RIGHT 0                                      // pixels, even
 #endif
 // Content insets (VideoConfiguration field 11 UiConfig, subfield 2 {1 top, 2 bottom, 3 left,
 // 4 right}, pixels of the coded frame): the AID's status bar on top (56) and trip bar at the bottom
@@ -104,7 +98,7 @@
 #define CLUSTER_INSET_BOTTOM (70 + CLUSTER_CROP_BOTTOM)
 #endif
 #ifndef CLUSTER_INSET_LEFT
-#define CLUSTER_INSET_LEFT (CLUSTER_RESOLUTION==2 ? 0 : 210)
+#define CLUSTER_INSET_LEFT 210
 #endif
 #ifndef CLUSTER_INSET_RIGHT
 #define CLUSTER_INSET_RIGHT CLUSTER_CROP_RIGHT
@@ -215,8 +209,8 @@ struct ClusterProbe {
   u32 sdrSeen, sdrPatched, sdrLen, sdrMainVideo, sdrMainInput, sdrError, inMsgs, inLastId, setups, starts, stops, focusReq, cfgMsgs, frames, idr, other;
   u32 sessionId, setupCodec, lastOtherId, bytes, maxAu, lastTsHi, lastTsLo, sent, sendFail;
   u32 cfgLen, prefixCount, spsCropped, focusChanges, bindReplies, bindReqLen, inputsSent, cmdSeq;
-  u32 insetsSent, insets[4];
-  u32 idrSoft, idrCycle, secondIdr, sarSet, slicesMax, slicesIdrMax, sliceFrames, mbSecondMax;
+  u32 insetsFile, insets[4], cmdReads, cmdBytes, cmdLines;
+  u32 idrSoft, idrCycle, secondIdr;
   u32 startIdrMs[4], startIdrN;   // ms from each Start to its first IDR (newest in [startIdrN-1&3])
   u8  bindReq[32];
   u8  cfg[512];
@@ -292,6 +286,31 @@ static u8* cl_rewrite_service(u8* o,u8* end,const u8* sv,u32 sn){
   }
   return cl_ld(o,end,1,tmp,(u32)(t-tmp),0,0);
 }
+// Content insets for tuning on the car without a rebuild: /tsd/var/aatokombi/insets holds
+// "top bottom left right" (pixels); it is read each time the phone connects, so a change takes
+// effect on the next connection. No file (or a bad one): the CLUSTER_INSET_* values.
+// (A run-time 0x8009 UpdateUiConfigRequest, car 2026-11-05, made the phone drop the connection.)
+#define CLUSTER_INSETS_FILE "/tsd/var/aatokombi/insets"
+static void cl_load_insets(u32* in4){
+  in4[0]=CLUSTER_INSET_TOP; in4[1]=CLUSTER_INSET_BOTTOM; in4[2]=CLUSTER_INSET_LEFT; in4[3]=CLUSTER_INSET_RIGHT;
+  g_cl.insetsFile=0;
+  if(p_fopen && p_fread && p_fclose){
+    void* f=p_fopen(CLUSTER_INSETS_FILE,"r");
+    if(f){
+      char b[64]; usize n=p_fread(b,1,sizeof b-1,f); p_fclose(f); b[n]=0;
+      u32 v[4], k=0; const char* c=b;
+      while(k<4){
+        while(*c==' '||*c=='\t'||*c==',') c++;
+        if(*c<'0'||*c>'9') break;
+        u32 x=0; while(*c>='0'&&*c<='9'&&x<10000u){ x=x*10u+(u32)(*c-'0'); c++; }
+        v[k++]=x;
+      }
+      if(k==4 && v[0]+v[1]<480u && v[2]+v[3]<800u){ for(u32 j=0;j<4;j++) in4[j]=v[j]; g_cl.insetsFile=1; }
+      else g_cl.insetsFile=2;                                    // present but unusable
+    }
+  }
+  for(u32 j=0;j<4;j++) g_cl.insets[j]=in4[j];
+}
 // out <- 2-byte id + rewritten SDR + cluster video service + cluster input service.
 static u32 cl_rewrite_sdr(const u8* in,u32 n,u8* out,u32 cap){
   u8* o=out; u8* end=out+cap;
@@ -314,12 +333,10 @@ static u32 cl_rewrite_sdr(const u8* in,u32 n,u8* out,u32 cap){
     // DisplayParams.contentInsets; field 4 = UI theme. Field 1 is deliberately NOT used: it
     // shrinks the encoded picture and draws black borders (mib-cluster-map, car-tested).
     u8 ui[40]; u8* t=ui;
-    if((CLUSTER_INSET_TOP+CLUSTER_INSET_BOTTOM+CLUSTER_INSET_LEFT+CLUSTER_INSET_RIGHT)!=0){
+    u32 ins[4]; cl_load_insets(ins);
+    if(ins[0]+ins[1]+ins[2]+ins[3]){
       u8 in[24]; u8* r=in;
-      if(CLUSTER_INSET_TOP)    r=cl_field_u(r,1,CLUSTER_INSET_TOP);
-      if(CLUSTER_INSET_BOTTOM) r=cl_field_u(r,2,CLUSTER_INSET_BOTTOM);
-      if(CLUSTER_INSET_LEFT)   r=cl_field_u(r,3,CLUSTER_INSET_LEFT);
-      if(CLUSTER_INSET_RIGHT)  r=cl_field_u(r,4,CLUSTER_INSET_RIGHT);
+      for(u32 k=0;k<4;k++) if(ins[k]) r=cl_field_u(r,k+1,ins[k]);
       t=cl_field_bytes(t,2,in,(u32)(r-in));
     }
     t=cl_field_u(t,4,CLUSTER_UI_THEME);
@@ -367,11 +384,10 @@ static void cluster_flush(){
   cl_kv(o,"start_idr_ms2=",g_cl.startIdrMs[2]); cl_kv(o,"start_idr_ms3=",g_cl.startIdrMs[3]); cl_kv(o,"bind_replies=",g_cl.bindReplies);
   cl_kv(o,"inputs_sent=",g_cl.inputsSent); cl_kv(o,"cmd_seq=",g_cl.cmdSeq); cl_kv(o,"hmi_video=",g_hmiVideo);
   cl_put(o,"bind_req="); cl_hex(o,g_cl.bindReq,g_cl.bindReqLen); *o++=' '; cl_kv(o,"guidance_only=",g_guideOnly); cl_kv(o,"nav_status=",g_st.status); cl_kv(o,"codec_cfg=",g_cl.cfgMsgs); cl_kv(o,"cfg_len=",g_cl.cfgLen);
-  cl_kv(o,"sps_cropped=",g_cl.spsCropped); cl_kv(o,"sar_set=",g_cl.sarSet);
-  cl_kv(o,"insets_sent=",g_cl.insetsSent); cl_kv(o,"insets_t=",g_cl.insets[0]); cl_kv(o,"insets_b=",g_cl.insets[1]);
+  cl_kv(o,"sps_cropped=",g_cl.spsCropped);
+  cl_kv(o,"insets_file=",g_cl.insetsFile); cl_kv(o,"insets_t=",g_cl.insets[0]); cl_kv(o,"insets_b=",g_cl.insets[1]);
   cl_kv(o,"insets_l=",g_cl.insets[2]); cl_kv(o,"insets_r=",g_cl.insets[3]);
-  cl_kv(o,"slices_max=",g_cl.slicesMax); cl_kv(o,"slices_idr_max=",g_cl.slicesIdrMax);
-  cl_kv(o,"slice_frames=",g_cl.sliceFrames); cl_kv(o,"mb_second_max=",g_cl.mbSecondMax);
+  cl_kv(o,"cmd_reads=",g_cl.cmdReads); cl_kv(o,"cmd_bytes=",g_cl.cmdBytes); cl_kv(o,"cmd_lines=",g_cl.cmdLines);
   cl_kv(o,"shm=",g_kv?1:0); cl_kv(o,"shm_frames=",g_kv?g_kv->frames:0); cl_kv(o,"shm_idr_req=",g_kv?g_kv->idr_requests:0);
   cl_kv(o,"shm_big=",g_kv?g_kv->dropped_big:0); cl_kv(o,"rd_frames=",g_kv?g_kv->rd_frames:0);
   cl_kv(o,"rd_state=",g_kv?g_kv->rd_state:0); cl_kv(o,"rd_ring_waits=",g_kv?g_kv->rd_ring_waits:0);
@@ -432,7 +448,7 @@ static u32 g_kvTried;
 static volatile u32 g_clStarted;     // between the phone's Start and Stop on the cluster channel
 static volatile u32 g_idrState;      // 0 idle, 1 focus taken away, waiting to give it back
 static volatile u32 g_idrT, g_idrLast, g_idrSoftT, g_idrCycleT, g_wantSince, g_startIdrT;
-static u32 g_dmPrev, g_secondIdrDone, g_secondIdrAt;          // reset per AA session (cluster_register)
+static u32 g_dmPrev, g_secondIdrDone, g_secondIdrAt;          // reset per AA session (cluster_register); Done = ms of the last one
 #ifndef CLUSTER_SECOND_IDR_MS
 #define CLUSTER_SECOND_IDR_MS 1500
 #endif
@@ -460,9 +476,8 @@ static int kv_map(){
     v->sem_ok = (p_sem_init && p_sem_init(&v->frame_ready,1,0)==0) ? 1u : 0u;
   }
   v->alive_ms=0;
-  v->width=1280u-CLUSTER_CROP_LEFT-CLUSTER_CROP_RIGHT;
-  v->height=(CLUSTER_RESOLUTION==2?720u:480u)-CLUSTER_CROP_TOP-CLUSTER_CROP_BOTTOM;
-  if(CLUSTER_RESOLUTION==1) v->width=800u-CLUSTER_CROP_LEFT-CLUSTER_CROP_RIGHT;
+  v->width=800u-CLUSTER_CROP_LEFT-CLUSTER_CROP_RIGHT;
+  v->height=480u-CLUSTER_CROP_TOP-CLUSTER_CROP_BOTTOM;
   v->version=KBCV_VERSION;
   __sync_synchronize();
   v->magic=KBCV_MAGIC;
@@ -518,19 +533,6 @@ static u32 sps_crop(const u8* nal,u32 n,u8* out,u32 cap){
   bw_ue(&w,cl+CLUSTER_CROP_LEFT/2); bw_ue(&w,cr+CLUSTER_CROP_RIGHT/2);
   bw_ue(&w,ct+CLUSTER_CROP_TOP/2);  bw_ue(&w,cb+CLUSTER_CROP_BOTTOM/2);
   if(r.pos>stop) return 0;
-  if(CLUSTER_SAR_W && CLUSTER_SAR_H){
-    u32 vui = r.pos<stop ? br_bit(&r) : 0;
-    bw_bit(&w,1);                                    // vui_parameters_present_flag
-    bw_bit(&w,1); bw_u(&w,255,8);                    // aspect_ratio_info_present, Extended_SAR
-    bw_u(&w,CLUSTER_SAR_W,16); bw_u(&w,CLUSTER_SAR_H,16);
-    if(vui){
-      if(br_bit(&r)){ if(br_u(&r,8)==255){ br_u(&r,16); br_u(&r,16); } }  // drop the phone's SAR
-      if(r.pos>stop) return 0;
-    } else {
-      for(int k=0;k<8;k++) bw_bit(&w,0);             // overscan, signal type, chroma loc, timing,
-    }                                                // nal/vcl hrd, pic_struct, bitstream restr.
-    g_cl.sarSet++;
-  }
   while(r.pos<stop) bw_bit(&w,br_bit(&r));           // VUI and anything else, verbatim
   bw_bit(&w,1); while(w.pos&7) bw_bit(&w,0);         // rbsp trailing bits
   if(!w.ok) return 0;
@@ -578,31 +580,10 @@ static u32 cl_nal_flags(const u8* p,u32 n,u32* hasSps){
   return idr;
 }
 
-// Slices per access unit (sampled): tells whether the picture could be widened by rewriting
-// first_mb_in_slice (only with one slice per macroblock row). mbSecond = first_mb of slice 2.
-static u32 g_sliceTick;
-static void cl_count_slices(const u8* p,u32 n,u32 idr){
-  if(!idr && (++g_sliceTick&15u)) return;
-  u32 cnt=0, mb2=0;
-  for(u32 i=0;i+4<n;i++){
-    if(p[i]==0 && p[i+1]==0 && p[i+2]==1){
-      u32 t=p[i+3]&0x1f;
-      if(t==1 || t==5){
-        if(++cnt==2){ BitR r={p+i+4,(n-i-4)<8u?(n-i-4):8u,0}; mb2=br_ue(&r); }
-      }
-      i+=3;
-    }
-  }
-  g_cl.sliceFrames++;
-  if(cnt>g_cl.slicesMax) g_cl.slicesMax=cnt;
-  if(idr && cnt>g_cl.slicesIdrMax) g_cl.slicesIdrMax=cnt;
-  if(mb2>g_cl.mbSecondMax) g_cl.mbSecondMax=mb2;
-}
 
 static void cl_publish(const u8* au,u32 n){
   struct kbcv* v=g_kv; if(!v || !au || !n) return;
   u32 hasSps=0, idr=cl_nal_flags(au,n<4096?n:4096,&hasSps);
-  cl_count_slices(au,n,idr);
   u32 pre = (idr && !hasSps) ? g_spsPpsLen : 0;
   if(pre+n>KBCV_AU_MAX){ v->dropped_big++; v->want_idr=1; return; }
   u32 seq=v->write_seq+1; if(!seq) seq=1;
@@ -740,41 +721,7 @@ static int cl_word(const char*& p,const char* w){
   if(*w || (*q && *q!=' ')) return 0;
   p=q; return 1;
 }
-// Content insets at run time, for tuning on the car (telnet):
-//   echo "110 174 210 0" > /dev/shmem/aa_cluster_insets      top bottom left right (pixels)
-//   optional 5th number: 0 = UpdateUiConfigRequest {1 UiConfig} (default), 1 = UiConfig bare
-// Sent as 0x8009 on the cluster video channel each time the file content changes (and once more
-// after every Start). UNVERIFIED: the message layout (open-android-auto names 0x8009
-// UPDATE_UI_CONFIG_REQUEST); the phone's answer, if any, shows as last_other_id in the probe.
-#define CLUSTER_INSETS_FILE "/dev/shmem/aa_cluster_insets"
-static u32 g_insChecked, g_insHash, g_insWant[5], g_insHave;
-static void cl_send_insets(){
-  u8 in[24], ui[40], m[48]; u8* r=in;
-  for(u32 k=0;k<4;k++) if(g_insWant[k]) r=cl_field_u(r,k+1,g_insWant[k]);
-  u8* t=ui; t=cl_field_bytes(t,2,in,(u32)(r-in)); t=cl_field_u(t,4,CLUSTER_UI_THEME);
-  u32 n=(u32)(t-ui);
-  if(g_insWant[4]==1){ cl_send(0x8009,ui,n); }
-  else { u8* o=cl_field_bytes(m,1,ui,n); cl_send(0x8009,m,(u32)(o-m)); }
-  g_cl.insetsSent++;
-  g_cl.insets[0]=g_insWant[0]; g_cl.insets[1]=g_insWant[1]; g_cl.insets[2]=g_insWant[2]; g_cl.insets[3]=g_insWant[3];
-}
-static void cl_poll_insets(u32 now){
-  if(g_insChecked && now-g_insChecked<500u) return;
-  g_insChecked=now|1u;
-  if(!p_fopen || !p_fread) return;
-  void* f=p_fopen(CLUSTER_INSETS_FILE,"r"); if(!f) return;
-  char buf[96]; usize n=p_fread(buf,1,sizeof buf-1,f); p_fclose(f); buf[n]=0;
-  u32 h=2166136261u; for(usize i=0;i<n;i++) h=(h^(u8)buf[i])*16777619u;
-  if(h==g_insHash && g_insHave) return;
-  const char* c=buf; i32 v[5]; u32 k=0; my_memset(v,0,sizeof v);
-  while(k<5 && cl_parse_int(c,&v[k])) k++;
-  if(k<4) return;
-  g_insHash=h; g_insHave=1;
-  for(u32 j=0;j<5;j++) g_insWant[j]=v[j]<0?0u:(u32)v[j];
-  if(g_clStarted) cl_send_insets();
-}
 static void cl_poll_commands(u32 now){
-  cl_poll_insets(now);
   if(g_repCode && now-g_repStart>=(u32)CLUSTER_REP_MAX_MS) g_repCode=0;
   if(g_repCode && g_repMs && now-g_repT>=g_repMs){ g_repT=now; cl_key(g_repCode); }
   if(g_cmdChecked && now-g_cmdChecked<100u) return;
@@ -784,7 +731,7 @@ static void cl_poll_commands(u32 now){
   if(!f){ g_cmdPrimed=1; return; }
   u32 prime = !g_cmdPrimed; g_cmdPrimed=1;
   char buf[512]; usize n=p_fread(buf,1,sizeof buf-1,f); p_fclose(f);
-  buf[n]=0;
+  buf[n]=0; g_cl.cmdReads++; g_cl.cmdBytes=(u32)n;
   const char* p=buf;
   while(*p){
     const char* line=p; while(*p && *p!='\n') p++;
@@ -792,7 +739,7 @@ static void cl_poll_commands(u32 now){
     char l[96]; u32 k=0; while(line<e && k<sizeof l-1) l[k++]=*line++; l[k]=0;
     const char* c=l; i32 seq,a=0,b=0;
     if(!cl_parse_int(c,&seq) || (u32)seq<=g_cmdLast) continue;
-    g_cmdLast=(u32)seq; g_cl.cmdSeq=(u32)seq;
+    g_cmdLast=(u32)seq; g_cl.cmdSeq=(u32)seq; g_cl.cmdLines++;
     if(prime) continue;
     if(cl_word(c,"key") && cl_parse_int(c,&a)) cl_key((u32)a);
     else if(cl_word(c,"rot") && cl_parse_int(c,&a) && cl_parse_int(c,&b)) cl_send_input((u32)a,1,b);
@@ -804,6 +751,19 @@ static void cl_poll_commands(u32 now){
 }
 
 // Heartbeat + key-frame requests, independent of incoming frames (a still map sends none).
+#ifndef CLUSTER_SECOND_IDR_GAP_MS
+#define CLUSTER_SECOND_IDR_GAP_MS 15000
+#endif
+#define CLUSTER_SECOND_IDR_FILE "/tsd/var/aatokombi/second-idr"
+static u32 g_secondIdrChk, g_secondIdrFile;
+static u32 cl_second_idr_on(){                      // the switch file, checked at most every 2 s
+  u32 now=cl_now_ms();
+  if(!g_secondIdrChk || now-g_secondIdrChk>=2000u){
+    g_secondIdrChk=now|1u; g_secondIdrFile=0;
+    if(p_fopen && p_fclose){ void* f=p_fopen(CLUSTER_SECOND_IDR_FILE,"r"); if(f){ p_fclose(f); g_secondIdrFile=1; } }
+  }
+  return g_secondIdrFile;
+}
 static void* cl_ticker(void*){
   for(;;){
     if(p_usleep) p_usleep(10000); else return 0;
@@ -818,15 +778,20 @@ static void* cl_ticker(void*){
     else if(v->alive_ms) v->alive_ms=0;
     // The first picture after the AID switches to the phone stays broken until the phone's NEXT key
     // frame (car 2026-11-03: garbage for ~30 s, the phone's IDR interval, or until a mode switch).
-    // So once per AA session, CLUSTER_SECOND_IDR_MS after DisplayManager first shows the phone,
-    // one restart for a fresh IDR (the stock map shows for the ~3 s of it).
+    // Car 2026-11-04: broken even when the switch happened on the phone's IDR, so the AID's decoder
+    // seems to need a second key frame after the stock stream. Default now: libkb_dm.so hands that
+    // first IDR to the encoder twice. Fallback, only while /tsd/var/aatokombi/second-idr exists:
+    // CLUSTER_SECOND_IDR_MS after EVERY switch to the phone one restart for a fresh IDR (the stock
+    // map shows for the ~3 s of it); at most one per CLUSTER_SECOND_IDR_GAP_MS, so the switch back
+    // after its own restart does not start another.
     {
       u32 dmNow = (v->rd_alive_ms && now - v->rd_alive_ms < 2000u) ? 1u : 0u;
-      if(CLUSTER_SECOND_IDR_MS && dmNow && !g_dmPrev && !g_secondIdrDone && !g_secondIdrAt)
+      if(CLUSTER_SECOND_IDR_MS && dmNow && !g_dmPrev && !g_secondIdrAt &&
+         (!g_secondIdrDone || now-g_secondIdrDone>=(u32)CLUSTER_SECOND_IDR_GAP_MS) && cl_second_idr_on())
         g_secondIdrAt = (now + (u32)CLUSTER_SECOND_IDR_MS) | 1u;
       g_dmPrev = dmNow;
       if(g_secondIdrAt && (i32)(now - g_secondIdrAt) >= 0 && g_clStarted && g_focusOn && !g_idrState){
-        g_secondIdrAt=0; g_secondIdrDone=1; g_cl.secondIdr++;
+        g_secondIdrAt=0; g_secondIdrDone=now|1u; g_cl.secondIdr++;
         g_idrState=1; g_idrT=now; cl_send_focus_mode(2,1);
       }
     }
@@ -925,7 +890,6 @@ int cluster_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
     while(g_ackPending){ __sync_fetch_and_sub(&g_ackPending,1u); cl_ack(); }
     g_budget=(int)(CLUSTER_BURST_MS*(u32)(CLUSTER_KBPS/8)); g_budgetMs=cl_now_ms();
     g_clStarted=1;
-    if(g_insHave) cl_send_insets();                       // tuned insets survive a Stop/Start
   } else if(id==0x8002){
     g_cl.stops++;
     g_clStarted=0;
