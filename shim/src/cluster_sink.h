@@ -657,11 +657,13 @@ static void cl_refill(u32 now){
 #endif
 #define CLUSTER_ACK_FILE "/tsd/var/aatokombi/ack-on-arrival"
 #define CL_PEND 64u
+// Lock-free single-producer / single-consumer queue of unacknowledged frames: the receiving thread
+// (cl_ack_paced) only appends at g_pendTail, the ticker (cl_release_acks) only acknowledges and
+// advances g_pendHead. (A spin lock here, 2026-11-05, most likely hung the SAL at the phone's
+// disconnect and the head unit rebooted.) g_ackPending mirrors tail - head for the probe.
 static u32 g_pendSeq[CL_PEND], g_pendT[CL_PEND];
-static volatile u32 g_pendHead, g_pendLock;       // g_ackPending = entries; oldest at g_pendHead
+static volatile u32 g_pendHead, g_pendTail, g_drainReq;
 static u32 g_ackFileChk, g_ackFile;
-static void cl_pend_lock(){ while(__sync_lock_test_and_set(&g_pendLock,1u)){} }
-static void cl_pend_unlock(){ __sync_lock_release(&g_pendLock); }
 static u32 cl_ack_by_consumption(u32 now){
   struct kbcv* v=g_kv;
   if(!v || !v->rd_caps || v->rd_state!=1 || !v->rd_alive_ms || now-v->rd_alive_ms>=1000u) return 0;
@@ -671,42 +673,43 @@ static u32 cl_ack_by_consumption(u32 now){
   }
   return g_ackFile ? 0u : 1u;
 }
-// Release what may be acknowledged now (called on arrival and from the ticker).
+// Ticker only: acknowledge what may be acknowledged now.
 static void cl_release_acks(u32 now){
   cl_refill(now);
+  u32 drain=g_drainReq; if(drain) g_drainReq=0;
   u32 cons=cl_ack_by_consumption(now);
   struct kbcv* v=g_kv;
-  cl_pend_lock();
-  while(g_ackPending){
-    u32 h=g_pendHead%CL_PEND, sq=g_pendSeq[h];
+  for(;;){
+    u32 h=g_pendHead; __sync_synchronize();
+    if(h==g_pendTail) break;
+    u32 k=h%CL_PEND, sq=g_pendSeq[k];
     u32 ok;
-    if(now-g_pendT[h] >= (u32)CLUSTER_ACK_MAX_WAIT_MS){ ok=1; g_cl.ackTimeouts++; }
+    if(drain) ok=1;
+    else if(now-g_pendT[k] >= (u32)CLUSTER_ACK_MAX_WAIT_MS){ ok=1; g_cl.ackTimeouts++; }
     else if(cons) ok = (!sq || (v && (i32)(v->rd_seq - sq) >= 0)) ? 1u : 0u;
     else ok = g_budget>=0 ? 1u : 0u;
     if(!ok) break;
-    g_pendHead++; g_ackPending--;
-    if(cons) g_cl.ackConsumed++;
+    __sync_synchronize();
+    g_pendHead=h+1u;
+    if(cons && !drain) g_cl.ackConsumed++;
     cl_ack();
   }
-  cl_pend_unlock();
+  g_ackPending=g_pendTail-g_pendHead;
 }
-// A data frame of n bytes arrived (published as ring slot seq, 0 = not published).
+// Receiving thread: a data frame of n bytes arrived (published as ring slot seq, 0 = not published).
 static void cl_ack_paced(u32 n,u32 seq){
   u32 now=cl_now_ms();
-  cl_refill(now);
-  g_budget-= (int)n;
-  cl_pend_lock();
-  if(g_ackPending>=CL_PEND){ g_pendHead++; g_ackPending--; cl_ack(); }   // never lose a credit
-  u32 t=(g_pendHead+g_ackPending)%CL_PEND; g_pendSeq[t]=seq; g_pendT[t]=now; g_ackPending++;
-  cl_pend_unlock();
-  cl_release_acks(now);
+  __sync_fetch_and_sub(&g_budget,(int)n);
+  u32 t=g_pendTail;
+  if(t-g_pendHead >= CL_PEND-1u){ cl_ack(); return; }     // queue full: never lose a credit
+  g_pendSeq[t%CL_PEND]=seq; g_pendT[t%CL_PEND]=now;
+  __sync_synchronize();
+  g_pendTail=t+1u;
+  g_ackPending=g_pendTail-g_pendHead;
 }
-// Start / Stop: return every credit the phone still counts.
-static void cl_ack_all(){
-  cl_pend_lock();
-  while(g_ackPending){ g_pendHead++; g_ackPending--; cl_ack(); }
-  cl_pend_unlock();
-}
+// Start / Stop: the ticker returns every credit the phone still counts (within ~10 ms).
+static void cl_ack_all(){ g_drainReq=1; }
+
 // /dev/shmem/aa_cluster_video for the HMI: "<alive> <dm> <tick>". alive = the phone's cluster
 // stream is started; dm = DisplayManager is actually handing those frames to the cluster
 // (libkb_dm.so heartbeat). The jar hides the stock cluster map only when dm is 1, so without the
@@ -886,7 +889,7 @@ static void* cl_ticker(void*){
     if(p_usleep) p_usleep(10000); else return 0;
     u32 now=cl_now_ms();
     u32 alive = (g_clStarted || g_idrState) ? 1u : 0u;
-    if(g_ackPending) cl_release_acks(now);
+    cl_release_acks(now);
     cl_state_file(now,alive);
     cl_poll_commands(now);
     if(g_cl.setups && g_clusterEp[4] && !g_idrState) cl_apply_focus(cl_want_video(now));

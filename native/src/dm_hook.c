@@ -444,6 +444,9 @@ EXPORT void *mmfbq_get_and_wait(void *q, const struct timespec *deadline)
             /* lost the picture (stream restart, frames skipped): back to the stock map until the
              * phone's next key frame rather than leaving the AID without frames */
             if (need_idr && idr_wait_ms && now_ms() - idr_wait_ms >= IDR_FALLBACK_MS) break;
+            /* still the cluster's reader, also while a still map sends no frames (car
+             * 2026-11-06: without this the libgal took focus away after 5 s, 26 times) */
+            kv->rd_ready_ms = now_ms() | 1u;
             wait_frame(head);
         }
         if (past(deadline) && phone_alive() && !(need_idr && idr_wait_ms && now_ms() - idr_wait_ms >= IDR_FALLBACK_MS))
