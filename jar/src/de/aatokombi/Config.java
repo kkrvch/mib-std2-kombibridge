@@ -108,9 +108,10 @@ public final class Config {
     /**
      * true: zoom as the AA rotary controller (keycode 65536, +-1 per step). Car 2026-11-03: the
      * phone ignored KEYCODE_ZOOM_IN/OUT (168/169) on the cluster input (196 sent, no zoom).
-     * Unverified whether the cluster map zooms on the rotary either.
+     * Car 2026-11-06: the rotary did not zoom either (32 sent); mib-cluster-map and mib2q-carplay
+     * report the same - Android Auto's cluster map is not interactive. Back to the zoom keys.
      */
-    public static final boolean CLUSTER_ZOOM_ROTARY = true;
+    public static final boolean CLUSTER_ZOOM_ROTARY = false;
     /** Repeat interval of a zoom key while the wheel is held (continuous zoom), ms. */
     public static final int CLUSTER_ZOOM_REPEAT_MS = 400;
 
