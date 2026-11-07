@@ -23,6 +23,9 @@ public final class WheelKeys {
      * as key 40; here no key 40 arrived (40 is only the left roller's turn, encoder 40).
      */
     public static final int KEY_OK = 44;
+    /** KEY_MFW_CANCEL: the MQB wheel's BACK / widget-switch key (car 2026-11-07: states 1/0,
+     *  held 3/4/5 like the roller). */
+    public static final int KEY_BACK = 41;
     public static final int KEY_VIEW = 35;
 
     private static boolean okFired;
@@ -42,7 +45,9 @@ public final class WheelKeys {
         if (logged(keyboard)) {
             ClusterVideo.log("wheel key kbd " + keyboard + " code " + code + " state " + state + " (" + p4 + "," + p5 + ")");
         }
-        if ((keyboard != KEYBOARD_MFW && keyboard != KEYBOARD_MFW_3GP) || code != KEY_OK) return;
+        int modeKey = Config.CLUSTER_MODE_KEY == Config.MODE_KEY_BACK ? KEY_BACK
+                : Config.CLUSTER_MODE_KEY == Config.MODE_KEY_ROLLER ? KEY_OK : -1;
+        if ((keyboard != KEYBOARD_MFW && keyboard != KEYBOARD_MFW_3GP) || modeKey < 0 || code != modeKey) return;
         if (state == 1 || state == 0) {
             okFired = false;
         } else if (state >= Config.CLUSTER_OK_HOLD_STATE && !okFired) {

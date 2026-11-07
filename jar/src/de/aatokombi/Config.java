@@ -85,6 +85,13 @@ public final class Config {
      * stock map directly, if the head unit receives that key (MQB MHI2 does; unverified here). false: stock ActiveRgType behaviour (button = arrows / AA map).
      */
     public static final boolean CLUSTER_OK_CYCLE = true;
+    /** Which steering-wheel key, held, steps the cluster mode (with CLUSTER_OK_CYCLE). */
+    public static final int MODE_KEY_NONE = 0;
+    /** The left roller pressed and held (key code 44, KEY_MFW_ROLLER_RIGHT in the firmware). */
+    public static final int MODE_KEY_ROLLER = 1;
+    /** BACK (the widget-switch key, code 41 KEY_MFW_CANCEL) held; a short press keeps its stock job. */
+    public static final int MODE_KEY_BACK = 2;
+    public static final int CLUSTER_MODE_KEY = MODE_KEY_ROLLER;
     /**
      * Steering-wheel OK (roller press, key 40) held to this key-panel state switches to the next
      * mode, AA map -> arrows -> stock map -> AA map: 3 = first hold level (~0.8 s), 4 (~2 s),
