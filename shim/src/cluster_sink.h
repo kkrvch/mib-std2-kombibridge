@@ -741,21 +741,23 @@ static u32 cl_guidance_only(u32 now){
 // first key frame come when they can be shown, and it does not encode for nothing while the AID
 // shows something else. Ready after CLUSTER_READY_ON_MS of reader activity, not ready after
 // CLUSTER_READY_OFF_MS without. Off (old behaviour) with an older libkb_dm.so (rd_caps 0) or
-// while /tsd/var/aatokombi/focus-always exists.
+// unless /tsd/var/aatokombi/focus-gate exists (see below).
 #ifndef CLUSTER_READY_ON_MS
 #define CLUSTER_READY_ON_MS 300
 #endif
 #ifndef CLUSTER_READY_OFF_MS
 #define CLUSTER_READY_OFF_MS 5000
 #endif
-#define CLUSTER_FOCUS_ALWAYS_FILE "/tsd/var/aatokombi/focus-always"
+// Car 2026-11-07: still 11 focus drops by this check (the map restarted each time), cause not
+// found: OFF by default now, on only while /tsd/var/aatokombi/focus-gate exists.
+#define CLUSTER_FOCUS_GATE_FILE "/tsd/var/aatokombi/focus-gate"
 static u32 g_readySince, g_readyChk, g_focusAlways;
 static u32 cl_receiver_ready(u32 now){
   struct kbcv* v=g_kv;
   if(!v || !v->rd_caps) return 1u;
   if(!g_readyChk || now-g_readyChk>=2000u){
-    g_readyChk=now|1u; g_focusAlways=0;
-    if(p_fopen && p_fclose){ void* f=p_fopen(CLUSTER_FOCUS_ALWAYS_FILE,"r"); if(f){ p_fclose(f); g_focusAlways=1; } }
+    g_readyChk=now|1u; g_focusAlways=1;
+    if(p_fopen && p_fclose){ void* f=p_fopen(CLUSTER_FOCUS_GATE_FILE,"r"); if(f){ p_fclose(f); g_focusAlways=0; } }
   }
   if(g_focusAlways) return 1u;
   u32 r=v->rd_ready_ms;
