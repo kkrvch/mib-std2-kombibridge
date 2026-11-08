@@ -168,6 +168,16 @@ static unsigned dec_newest_idr(void)
     return 0;
 }
 
+/* no libgcc here (freestanding link): unsigned division by shift and subtract */
+static unsigned dec_udiv(unsigned n, unsigned d)
+{
+    unsigned q = 0, bit = 1;
+    if (!d) return 0;
+    while (d < n && !(d & 0x80000000u)) { d <<= 1; bit <<= 1; }
+    while (bit) { if (n >= d) { n -= d; q |= bit; } d >>= 1; bit >>= 1; }
+    return q;
+}
+
 static void dec_run(void)
 {
     char cfg[64], url[360], *o;
@@ -177,6 +187,12 @@ static void dec_run(void)
     ssize_t n;
     void *conn, *ctx;
     r[0] = 0; r[1] = 0; r[2] = kv->width ? kv->width : 1010; r[3] = kv->height ? kv->height : 376;
+    if (r[2] > 1010 || r[3] > 376) {             /* uncropped (full-frame check): fit, keep the aspect */
+        unsigned w = r[2], h = r[3];
+        if (w * 376 > h * 1010) { r[3] = dec_udiv(h * 1010, w); r[2] = 1010; }
+        else { r[2] = dec_udiv(w * 376, h); r[3] = 376; }
+        r[2] &= ~1u; r[3] &= ~1u; r[0] = (1010 - r[2]) >> 1;
+    }
     fd = open(DEC_WIN_FILE, O_RDONLY);
     if (fd >= 0) {
         n = read(fd, cfg, sizeof(cfg) - 1);

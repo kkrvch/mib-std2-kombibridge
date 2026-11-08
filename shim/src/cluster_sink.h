@@ -233,7 +233,7 @@ struct ClusterProbe {
   u32 sdrSeen, sdrPatched, sdrLen, sdrMainVideo, sdrMainInput, sdrError, inMsgs, inLastId, setups, starts, stops, focusReq, cfgMsgs, frames, idr, other;
   u32 sessionId, setupCodec, lastOtherId, bytes, maxAu, lastTsHi, lastTsLo, sent, sendFail;
   u32 cfgLen, prefixCount, spsCropped, focusChanges, bindReplies, bindReqLen, inputsSent, cmdSeq;
-  u32 insetsFile, insets[4], cmdReads, cmdBytes, cmdLines, decodeMode;
+  u32 insetsFile, insets[4], cmdReads, cmdBytes, cmdLines, decodeMode, fullFrame;
   u32 idrSoft, idrCycle, secondIdr, ackConsumed, ackTimeouts, focusGated, dhu;
   u32 startIdrMs[4], startIdrN;   // ms from each Start to its first IDR (newest in [startIdrN-1&3])
   u8  bindReq[32];
@@ -316,6 +316,7 @@ static u8* cl_rewrite_service(u8* o,u8* end,const u8* sv,u32 sn){
 // (A run-time 0x8009 UpdateUiConfigRequest, car 2026-11-05, made the phone drop the connection.)
 #define CLUSTER_INSETS_FILE "/tsd/var/aatokombi/insets"
 #define CLUSTER_INSETS_DEC_FILE "/tsd/var/aatokombi/insets-1280"
+#define CLUSTER_FULL_FRAME_FILE "/tsd/var/aatokombi/full-frame"
 // Pass-through or decode mode, at each connection (the phone's resolution goes into the SDR).
 static void cl_choose_geometry(){
   u32 pass=0;
@@ -331,6 +332,12 @@ static void cl_choose_geometry(){
     // the visible window plus the AID's status bar (56) and trip bar (70), as in pass-through
     g_geo.ins[0]=CLUSTER_DEC_CROP_TOP+56u; g_geo.ins[1]=CLUSTER_DEC_CROP_BOTTOM+70u;
     g_geo.ins[2]=CLUSTER_DEC_CROP_LEFT;    g_geo.ins[3]=CLUSTER_DEC_CROP_RIGHT;
+    // Layout check (diagnostics): /tsd/var/aatokombi/full-frame - no crop, libkb_dm shows the whole
+    // 1280x720 frame scaled into the window, so where each navigation app draws its cards for the
+    // insets in use can be seen (and photographed) on the AID.
+    { void* f = p_fopen ? p_fopen(CLUSTER_FULL_FRAME_FILE,"r") : 0;
+      if(f){ p_fclose(f); g_geo.crop[0]=0; g_geo.crop[1]=0; g_geo.crop[2]=0; g_geo.crop[3]=0; g_cl.fullFrame=1; }
+      else g_cl.fullFrame=0; }
   }
   g_cl.decodeMode=g_geo.decode;
 }
@@ -472,7 +479,7 @@ static void cluster_flush(){
   cl_put(o,"field_display_id="); o=u2dec(o,CLUSTER_FIELD_DISPLAY_ID);
   cl_put(o," field_display_type="); o=u2dec(o,CLUSTER_FIELD_DISPLAY_TYPE);
   cl_put(o," display_type="); o=u2dec(o,CLUSTER_DISPLAY_TYPE);
-  cl_put(o," resolution="); o=u2dec(o,g_geo.res); cl_put(o," decode_mode="); o=u2dec(o,g_geo.decode); *o++='\n';
+  cl_put(o," resolution="); o=u2dec(o,g_geo.res); cl_put(o," decode_mode="); o=u2dec(o,g_geo.decode); cl_put(o," full_frame="); o=u2dec(o,g_cl.fullFrame); *o++='\n';
   write_file(CL_PATH,b,(usize)(o-b));
   write_file(CL_CFG_PATH,(const char*)g_cl.cfg,g_cl.cfgLen);
   write_file(CL_PREFIX_PATH,(const char*)g_cl.prefix,g_cl.prefixCount*64u);
