@@ -4,3 +4,4 @@
 STUB(open) STUB(close) STUB(lseek) STUB(read) STUB(write) STUB(unlink)
 STUB(dlopen) STUB(dlsym) STUB(memcpy) STUB(strlen) STUB(usleep) STUB(clock_gettime)
 STUB(shm_open) STUB(mmap) STUB(sem_timedwait_monotonic)
+STUB(pthread_create) STUB(name_open) STUB(name_close) STUB(MsgSendv)

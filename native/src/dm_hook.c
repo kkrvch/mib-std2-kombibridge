@@ -253,10 +253,11 @@ static int kv_open(void)
     return 1;
 }
 
+/* pass-through only: in decode mode (kv->mode 1, dec_player.c) the stock encoder path stays */
 static int phone_alive(void)
 {
     unsigned a;
-    if (switched_off() || !kv_open()) return 0;
+    if (switched_off() || !kv_open() || kv->mode == 1) return 0;
     a = kv->alive_ms;
     return a && kv->write_seq && now_ms() - a < KBCV_ALIVE_MS;
 }
@@ -402,9 +403,13 @@ static int past(const struct timespec *d)
     return n.tv_sec > d->tv_sec || (n.tv_sec == d->tv_sec && n.tv_nsec >= d->tv_nsec);
 }
 
+#include "dec_player.c"
+
+static int dec_started;
 EXPORT void *mmfbq_get_and_wait(void *q, const struct timespec *deadline)
 {
     resolve();
+    if (!dec_started) { dec_started = 1; dec_start(); }    /* the decode-mode thread */
     if (!reader_return || (uintptr_t)__builtin_return_address(0) != reader_return)
         return real_get_and_wait(q, deadline);
 

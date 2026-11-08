@@ -23,7 +23,7 @@
 
 #define KBCV_SHM_NAME   "/aatokombi-cluster-video"
 #define KBCV_MAGIC      0x5643424bu   /* "KBCV" little-endian */
-#define KBCV_VERSION    1u
+#define KBCV_VERSION    2u
 #define KBCV_SLOTS      24u
 #define KBCV_SLOT_BYTES 256000u
 #define KBCV_AU_MAX     250000u       /* the cluster decoder's frame limit */
@@ -69,6 +69,11 @@ struct kbcv {
   volatile unsigned rd_seq;
   /* reader: 1 = sets rd_ready_ms / rd_seq (an older libkb_dm.so leaves 0) */
   volatile unsigned rd_caps;
+  /* writer, at every Start: 1 = decode mode (libkb_dm.so plays the stream with mm-renderer into
+   * the cluster display's map window; DisplayManager's encoder sends it to the AID), 0 = the
+   * phone's H.264 is passed through to the AID. Coded size and the crop's top-left corner. */
+  volatile unsigned mode;
+  unsigned coded_w, coded_h, crop_x, crop_y;
   struct kbcv_slot slot[KBCV_SLOTS];
 };
 

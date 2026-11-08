@@ -103,6 +103,30 @@
 #ifndef CLUSTER_INSET_RIGHT
 #define CLUSTER_INSET_RIGHT CLUSTER_CROP_RIGHT
 #endif
+// Decode mode (default since 2026-11-08). The head unit decodes the phone's cluster stream itself
+// (libkb_dm.so: mm-renderer into the cluster display's map window, DisplayManager's stock encoder
+// sends that display to the AID; car 2026-11-07: full-screen AA map). The AID never sees the
+// phone's H.264, so the phone may send 1280x720: the SPS crop keeps the 1010x376 middle, shown 1:1.
+// The CLUSTER_* geometry above is the pass-through mode (phone H.264 straight to the AID, 800x480),
+// used while /tsd/var/aatokombi/passthrough exists (read at each connection). Insets of each mode:
+// /tsd/var/aatokombi/insets (pass-through) and /tsd/var/aatokombi/insets-1280 (decode).
+#define CLUSTER_PASSTHROUGH_FILE "/tsd/var/aatokombi/passthrough"
+#ifndef CLUSTER_DEC_CROP_LEFT
+#define CLUSTER_DEC_CROP_LEFT 134
+#endif
+#ifndef CLUSTER_DEC_CROP_RIGHT
+#define CLUSTER_DEC_CROP_RIGHT 136
+#endif
+#ifndef CLUSTER_DEC_CROP_TOP
+#define CLUSTER_DEC_CROP_TOP 172
+#endif
+#ifndef CLUSTER_DEC_CROP_BOTTOM
+#define CLUSTER_DEC_CROP_BOTTOM 172
+#endif
+struct ClGeom { u32 decode, res, w, h, crop[4] /* left right top bottom */, ins[4] /* top bottom left right */; };
+static ClGeom g_geo = { 0u, CLUSTER_RESOLUTION, 800u, 480u,
+                        { CLUSTER_CROP_LEFT, CLUSTER_CROP_RIGHT, CLUSTER_CROP_TOP, CLUSTER_CROP_BOTTOM },
+                        { CLUSTER_INSET_TOP, CLUSTER_INSET_BOTTOM, CLUSTER_INSET_LEFT, CLUSTER_INSET_RIGHT } };
 #ifndef CLUSTER_VIEWING_DISTANCE
 #define CLUSTER_VIEWING_DISTANCE 700    // mm, as mib-cluster-map sends for its cluster screen
 #endif
@@ -209,7 +233,7 @@ struct ClusterProbe {
   u32 sdrSeen, sdrPatched, sdrLen, sdrMainVideo, sdrMainInput, sdrError, inMsgs, inLastId, setups, starts, stops, focusReq, cfgMsgs, frames, idr, other;
   u32 sessionId, setupCodec, lastOtherId, bytes, maxAu, lastTsHi, lastTsLo, sent, sendFail;
   u32 cfgLen, prefixCount, spsCropped, focusChanges, bindReplies, bindReqLen, inputsSent, cmdSeq;
-  u32 insetsFile, insets[4], cmdReads, cmdBytes, cmdLines;
+  u32 insetsFile, insets[4], cmdReads, cmdBytes, cmdLines, decodeMode;
   u32 idrSoft, idrCycle, secondIdr, ackConsumed, ackTimeouts, focusGated, dhu;
   u32 startIdrMs[4], startIdrN;   // ms from each Start to its first IDR (newest in [startIdrN-1&3])
   u8  bindReq[32];
@@ -291,11 +315,30 @@ static u8* cl_rewrite_service(u8* o,u8* end,const u8* sv,u32 sn){
 // effect on the next connection. No file (or a bad one): the CLUSTER_INSET_* values.
 // (A run-time 0x8009 UpdateUiConfigRequest, car 2026-11-05, made the phone drop the connection.)
 #define CLUSTER_INSETS_FILE "/tsd/var/aatokombi/insets"
+#define CLUSTER_INSETS_DEC_FILE "/tsd/var/aatokombi/insets-1280"
+// Pass-through or decode mode, at each connection (the phone's resolution goes into the SDR).
+static void cl_choose_geometry(){
+  u32 pass=0;
+  if(p_fopen && p_fclose){ void* f=p_fopen(CLUSTER_PASSTHROUGH_FILE,"r"); if(f){ p_fclose(f); pass=1; } }
+  if(pass){
+    g_geo.decode=0; g_geo.res=CLUSTER_RESOLUTION; g_geo.w=800u; g_geo.h=480u;
+    g_geo.crop[0]=CLUSTER_CROP_LEFT; g_geo.crop[1]=CLUSTER_CROP_RIGHT; g_geo.crop[2]=CLUSTER_CROP_TOP; g_geo.crop[3]=CLUSTER_CROP_BOTTOM;
+    g_geo.ins[0]=CLUSTER_INSET_TOP; g_geo.ins[1]=CLUSTER_INSET_BOTTOM; g_geo.ins[2]=CLUSTER_INSET_LEFT; g_geo.ins[3]=CLUSTER_INSET_RIGHT;
+  } else {
+    g_geo.decode=1; g_geo.res=2; g_geo.w=1280u; g_geo.h=720u;           // VideoCodecResolutionType 2
+    g_geo.crop[0]=CLUSTER_DEC_CROP_LEFT; g_geo.crop[1]=CLUSTER_DEC_CROP_RIGHT;
+    g_geo.crop[2]=CLUSTER_DEC_CROP_TOP;  g_geo.crop[3]=CLUSTER_DEC_CROP_BOTTOM;
+    // the visible window plus the AID's status bar (56) and trip bar (70), as in pass-through
+    g_geo.ins[0]=CLUSTER_DEC_CROP_TOP+56u; g_geo.ins[1]=CLUSTER_DEC_CROP_BOTTOM+70u;
+    g_geo.ins[2]=CLUSTER_DEC_CROP_LEFT;    g_geo.ins[3]=CLUSTER_DEC_CROP_RIGHT;
+  }
+  g_cl.decodeMode=g_geo.decode;
+}
 static void cl_load_insets(u32* in4){
-  in4[0]=CLUSTER_INSET_TOP; in4[1]=CLUSTER_INSET_BOTTOM; in4[2]=CLUSTER_INSET_LEFT; in4[3]=CLUSTER_INSET_RIGHT;
+  for(u32 j=0;j<4;j++) in4[j]=g_geo.ins[j];
   g_cl.insetsFile=0;
   if(p_fopen && p_fread && p_fclose){
-    void* f=p_fopen(CLUSTER_INSETS_FILE,"r");
+    void* f=p_fopen(g_geo.decode ? CLUSTER_INSETS_DEC_FILE : CLUSTER_INSETS_FILE,"r");
     if(f){
       char b[64]; usize n=p_fread(b,1,sizeof b-1,f); p_fclose(f); b[n]=0;
       u32 v[4], k=0; const char* c=b;
@@ -305,7 +348,7 @@ static void cl_load_insets(u32* in4){
         u32 x=0; while(*c>='0'&&*c<='9'&&x<10000u){ x=x*10u+(u32)(*c-'0'); c++; }
         v[k++]=x;
       }
-      if(k==4 && v[0]+v[1]<480u && v[2]+v[3]<800u){ for(u32 j=0;j<4;j++) in4[j]=v[j]; g_cl.insetsFile=1; }
+      if(k==4 && v[0]+v[1]<g_geo.h && v[2]+v[3]<g_geo.w){ for(u32 j=0;j<4;j++) in4[j]=v[j]; g_cl.insetsFile=1; }
       else g_cl.insetsFile=2;                                    // present but unusable
     }
   }
@@ -339,6 +382,7 @@ static u8* cl_put_dhu(u8* o,u8* end){
 static u32 cl_rewrite_sdr(const u8* in,u32 n,u8* out,u32 cap){
   u8* o=out; u8* end=out+cap;
   if(n<2) return 0;
+  cl_choose_geometry();
   *o++=in[0]; *o++=in[1];
   const u8* p=in+2; u32 pn_all=n-2, i=0, f, wt, fs, pn; const u8* pl;
   u32 dhu=cl_dhu_on(); g_cl.dhu=dhu;
@@ -351,7 +395,7 @@ static u32 cl_rewrite_sdr(const u8* in,u32 n,u8* out,u32 cap){
   if(dhu){ o=cl_put_dhu(o,end); if(!o) return 0; }
   // cluster video
   u8 vc[64], ms[112], sv[128]; u8* q;
-  q=vc; q=cl_field_u(q,1,CLUSTER_RESOLUTION); q=cl_field_u(q,2,CLUSTER_FRAME_RATE);
+  q=vc; q=cl_field_u(q,1,g_geo.res); q=cl_field_u(q,2,CLUSTER_FRAME_RATE);
   q=cl_field_u(q,3,CLUSTER_WIDTH_MARGIN); q=cl_field_u(q,4,CLUSTER_HEIGHT_MARGIN); q=cl_field_u(q,5,CLUSTER_DENSITY);
   q=cl_field_u(q,6,CLUSTER_DECODER_DEPTH);
   q=cl_field_u(q,7,CLUSTER_VIEWING_DISTANCE);
@@ -428,7 +472,7 @@ static void cluster_flush(){
   cl_put(o,"field_display_id="); o=u2dec(o,CLUSTER_FIELD_DISPLAY_ID);
   cl_put(o," field_display_type="); o=u2dec(o,CLUSTER_FIELD_DISPLAY_TYPE);
   cl_put(o," display_type="); o=u2dec(o,CLUSTER_DISPLAY_TYPE);
-  cl_put(o," resolution="); o=u2dec(o,CLUSTER_RESOLUTION); *o++='\n';
+  cl_put(o," resolution="); o=u2dec(o,g_geo.res); cl_put(o," decode_mode="); o=u2dec(o,g_geo.decode); *o++='\n';
   write_file(CL_PATH,b,(usize)(o-b));
   write_file(CL_CFG_PATH,(const char*)g_cl.cfg,g_cl.cfgLen);
   write_file(CL_PREFIX_PATH,(const char*)g_cl.prefix,g_cl.prefixCount*64u);
@@ -504,8 +548,6 @@ static int kv_map(){
     v->sem_ok = (p_sem_init && p_sem_init(&v->frame_ready,1,0)==0) ? 1u : 0u;
   }
   v->alive_ms=0;
-  v->width=800u-CLUSTER_CROP_LEFT-CLUSTER_CROP_RIGHT;
-  v->height=480u-CLUSTER_CROP_TOP-CLUSTER_CROP_BOTTOM;
   v->version=KBCV_VERSION;
   __sync_synchronize();
   v->magic=KBCV_MAGIC;
@@ -558,8 +600,8 @@ static u32 sps_crop(const u8* nal,u32 n,u8* out,u32 cap){
   u32 cl=0,cr=0,ct=0,cb=0;
   if(br_bit(&r)){ cl=br_ue(&r); cr=br_ue(&r); ct=br_ue(&r); cb=br_ue(&r); }
   bw_bit(&w,1);
-  bw_ue(&w,cl+CLUSTER_CROP_LEFT/2); bw_ue(&w,cr+CLUSTER_CROP_RIGHT/2);
-  bw_ue(&w,ct+CLUSTER_CROP_TOP/2);  bw_ue(&w,cb+CLUSTER_CROP_BOTTOM/2);
+  bw_ue(&w,cl+g_geo.crop[0]/2); bw_ue(&w,cr+g_geo.crop[1]/2);
+  bw_ue(&w,ct+g_geo.crop[2]/2); bw_ue(&w,cb+g_geo.crop[3]/2);
   if(r.pos>stop) return 0;
   while(r.pos<stop) bw_bit(&w,br_bit(&r));           // VUI and anything else, verbatim
   bw_bit(&w,1); while(w.pos&7) bw_bit(&w,0);         // rbsp trailing bits
@@ -951,6 +993,13 @@ static void* cl_ticker(void*){
 
 static void cl_video_session_start(){
   if(!kv_map()) return;
+  {
+    struct kbcv* v=g_kv;
+    v->width=g_geo.w-g_geo.crop[0]-g_geo.crop[1]; v->height=g_geo.h-g_geo.crop[2]-g_geo.crop[3];
+    v->coded_w=g_geo.w; v->coded_h=g_geo.h; v->crop_x=g_geo.crop[0]; v->crop_y=g_geo.crop[2];
+    __sync_synchronize();
+    v->mode=g_geo.decode;
+  }
   if(!g_tickerUp && p_pthread_create){
     u32 th=0; if(p_pthread_create(&th,0,cl_ticker,0)==0) g_tickerUp=1;
   }
