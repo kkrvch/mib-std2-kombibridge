@@ -60,6 +60,7 @@ NavigationServiceListener {
 
     public void setGetProperty(BAPEntity bAPEntity, PropertyListener propertyListener) {
         de.aatokombi.BapTrace.log("MapViewAndOrientation", "setGetProperty", bAPEntity);
+        de.aatokombi.ClusterView.visibility(bAPEntity);
         boolean bl;
         MapViewAndOrientation_SetGet mapViewAndOrientation_SetGet = (MapViewAndOrientation_SetGet)bAPEntity;
         NavigationService navigationService = this.getNavigationService();

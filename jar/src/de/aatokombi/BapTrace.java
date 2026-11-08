@@ -10,6 +10,24 @@ package de.aatokombi;
 public final class BapTrace {
     private BapTrace() {}
 
+    /** Primitives and strings as they are; other objects (nested BAP structs) as {field=value ...}. */
+    private static void value(StringBuffer sb, Object v, int depth) {
+        if (v == null || depth > 2 || v instanceof String || v instanceof Number || v instanceof Boolean
+                || v instanceof Character || v.getClass().isArray()) {
+            sb.append(v);
+            return;
+        }
+        java.lang.reflect.Field[] f = v.getClass().getFields();
+        sb.append('{');
+        for (int i = 0; i < f.length; i++) {
+            if (java.lang.reflect.Modifier.isStatic(f[i].getModifiers())) continue;
+            sb.append(f[i].getName()).append('=');
+            try { value(sb, f[i].get(v), depth + 1); } catch (Throwable t) { sb.append('?'); }
+            sb.append(' ');
+        }
+        sb.append('}');
+    }
+
     public static void log(String function, String request, Object entity) {
         if (Config.LOG_LEVEL > de.adi961.miblogger.MIBLogger.DEBUG) {
             return;
@@ -22,7 +40,7 @@ public final class BapTrace {
                 for (int i = 0; i < f.length; i++) {
                     if (java.lang.reflect.Modifier.isStatic(f[i].getModifiers())) continue;
                     sb.append(' ').append(f[i].getName()).append('=');
-                    try { sb.append(f[i].get(entity)); } catch (Throwable t) { sb.append('?'); }
+                    try { value(sb, f[i].get(entity), 0); } catch (Throwable t) { sb.append('?'); }
                 }
             }
             sb.append(" aaSession=").append(ClusterVideo.session());

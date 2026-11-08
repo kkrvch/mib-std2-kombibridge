@@ -56,6 +56,7 @@ ASLNavSDConstants {
 
     public void setGetProperty(BAPEntity bAPEntity, PropertyListener propertyListener) {
         de.aatokombi.BapTrace.log("MapPresentation", "setGetProperty", bAPEntity);
+        de.aatokombi.ClusterView.presentation(bAPEntity);
     }
 
     public void ackProperty(BAPEntity bAPEntity, PropertyListener propertyListener) {
