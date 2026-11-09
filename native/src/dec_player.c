@@ -23,6 +23,8 @@
  * unit. Ours uses its own mdev name, so the SAL's player is not touched.
  */
 #define DEC_WIN_FILE    VAR_DIR "/decode-window"
+#define DEC_SRC_FILE    VAR_DIR "/decode-src"      /* "x y w h" source crop, re-read every second */
+#define DEC_NO_SRC_FILE VAR_DIR "/no-src-crop"     /* exists: no output source crop (old behaviour) */
 #define DEC_RUN_FILE    "/dev/shmem/aatokombi-decode.running"   /* RAM: a crash skips until reboot */
 #define DEC_MDEV        "/dev/name/local/kbaa_cluster"
 #define DEC_MMR_SERVICE "/pps/services/multimedia/renderer/control"
@@ -34,13 +36,14 @@ typedef int (*mmr_ctx_fn_t)(void *);
 typedef void (*mmr_disc_t)(void *);
 typedef const unsigned *(*mmr_err_t)(void *);
 typedef int (*mmr_parm_t)(void *, void *);
+typedef int (*mmr_oparm_t)(void *, unsigned, void *);
 typedef void *(*dict_new_t)(void);
 typedef void *(*dict_set_t)(void *, const char *, const char *);
 
 static struct {
     mmr_connect_t connect; mmr_create_t create; mmr_attach_t out, in;
     mmr_ctx_fn_t play, stop, destroy; mmr_disc_t disconnect; mmr_err_t err;
-    mmr_parm_t ctxparm, inparm; dict_new_t dnew; dict_set_t dset;
+    mmr_parm_t ctxparm, inparm; mmr_oparm_t outparm; dict_new_t dnew; dict_set_t dset;
 } M;
 static int dec_coid = -1;
 static uint8_t dec_au[KBCV_SLOT_BYTES];
@@ -62,6 +65,7 @@ static int dec_resolve(void)
     M.err = (mmr_err_t)dlsym(h, "mmr_error_info");
     M.ctxparm = (mmr_parm_t)dlsym(h, "mmr_context_parameters");
     M.inparm = (mmr_parm_t)dlsym(h, "mmr_input_parameters");
+    M.outparm = (mmr_oparm_t)dlsym(h, "mmr_output_parameters");
     if (hs) { M.dnew = (dict_new_t)dlsym(hs, "strm_dict_new"); M.dset = (dict_set_t)dlsym(hs, "strm_dict_set"); }
     if (!M.create || !M.out || !M.in || !M.play || !M.stop || !M.destroy || !M.disconnect) {
         LOG("dec: mm-renderer client functions missing");
@@ -178,14 +182,60 @@ static unsigned dec_udiv(unsigned n, unsigned d)
     return q;
 }
 
+/*
+ * The i.MX6 decoder ignores the SPS frame cropping and outputs the whole coded picture (car,
+ * 2026-11-08: 1280x720 squashed into 1010x376). mm-renderer's video output takes a source
+ * rectangle instead: output parameters video_src_x/y/w/h (mmr-mmf-routing -> screen_writer
+ * VideoWriterSrcX/Y/W/H -> SCREEN_PROPERTY_SOURCE_POSITION/SIZE). Whether it also applies while
+ * playing is what the decode-src file tests.
+ */
+static int dec_set_src(void *ctx, int out, const unsigned *v)
+{
+    static const char *const key[4] = { "video_src_x", "video_src_y", "video_src_w", "video_src_h" };
+    char num[4][12];
+    void *d;
+    unsigned k;
+    if (!M.outparm || !M.dnew || !M.dset) { LOG("dec: mmr_output_parameters not found"); return -1; }
+    d = M.dnew();
+    for (k = 0; d && k < 4; k++) { *put_u(num[k], v[k]) = 0; d = M.dset(d, key[k], num[k]); }
+    if (!d) { LOG("dec: source crop dictionary failed"); return -1; }
+    if (M.outparm(ctx, (unsigned)out, d) < 0) { dec_log_err("dec: source crop rejected, error", ctx); return -1; }
+    LOGV("dec: source crop x", v[0]); LOGV("dec: source crop y", v[1]);
+    LOGV("dec: source crop w", v[2]); LOGV("dec: source crop h", v[3]);
+    return 0;
+}
+
+/* decode-src file: 1 = new valid rectangle in v, 0 = unchanged / absent / invalid */
+static int dec_read_src(unsigned *v, char *last, unsigned lastsz)
+{
+    char b[64];
+    unsigned k;
+    ssize_t n;
+    int fd = open(DEC_SRC_FILE, O_RDONLY);
+    if (fd < 0) { last[0] = 0; return 0; }
+    n = read(fd, b, sizeof(b) - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    b[n] = 0;
+    for (k = 0; k < lastsz && b[k] == last[k] && b[k]; k++) ;
+    if (k < lastsz && b[k] == last[k]) return 0;          /* same text as last time */
+    for (k = 0; k + 1 < lastsz && b[k]; k++) last[k] = b[k];
+    last[k] = 0;
+    return dec_parse(b, v, 4) == 4 && v[2] && v[3];
+}
+
 static void dec_run(void)
 {
     char cfg[64], url[360], *o;
+
     unsigned r[4], next, sent = 0, report = now_ms(), cfg_sent = 0, i, start = now_ms(), asked = 0;
     unsigned cw = kv->coded_w ? kv->coded_w : 800, ch = kv->coded_h ? kv->coded_h : 480;
     int fd, avc1 = 0, junction = 0, out, in, tries;
+    unsigned src[4], srcpoll = now_ms();
+    char srctxt[64];
     ssize_t n;
     void *conn, *ctx;
+    srctxt[0] = 0;
     r[0] = 0; r[1] = 0; r[2] = kv->width ? kv->width : 1010; r[3] = kv->height ? kv->height : 376;
     if (r[2] > 1010 || r[3] > 376) {             /* uncropped (full-frame check): fit, keep the aspect */
         unsigned w = r[2], h = r[3];
@@ -221,6 +271,14 @@ static void dec_run(void)
     o = put(url, "mdevpush:" DEC_MDEV "?fourcc="); o = put(o, avc1 ? "AVC1" : "H264");
     o = put(o, "&video.frame_rate=30&video.depth=16&video.width="); o = put_u(o, cw);
     o = put(o, "&video.height="); o = put_u(o, ch); o = put(o, "&video.duration=0"); *o = 0;
+    {
+        unsigned w = kv->width, h = kv->height;
+        if (w && h && (w < cw || h < ch) && kv->crop_x + w <= cw && kv->crop_y + h <= ch && !exists(DEC_NO_SRC_FILE)) {
+            src[0] = kv->crop_x; src[1] = kv->crop_y; src[2] = w; src[3] = h;
+            dec_set_src(ctx, out, src);
+        }
+        if (dec_read_src(src, srctxt, sizeof(srctxt))) dec_set_src(ctx, out, src);
+    }
     in = M.in(ctx, url, "track");
     if (in < 0) { dec_log_err("dec: input attach failed, error", ctx); goto done; }
     if (M.inparm) { void *d = dec_dict1("VideoDecoderLowLatencyMode", "1"); if (d && M.inparm(ctx, d) < 0) dec_log_err("dec: input parameters failed, error", ctx); }
@@ -262,6 +320,7 @@ static void dec_run(void)
             if (mdev_send(3, &ts, 8, dec_au, size) >= 0) sent++;
         }
         i = now_ms();
+        if (i - srcpoll >= 1000u) { srcpoll = i; if (dec_read_src(src, srctxt, sizeof(srctxt))) dec_set_src(ctx, out, src); }
         if (!cfg_sent && !asked && i - start >= 2000u) { asked = 1; kv->want_idr = 1; LOG("dec: no key frame for 2 s, asking for one"); }
         if (i - report >= 60000u) { report = i; LOGV("dec: frames sent", sent); if (dec_timeouts) LOGV("dec: send errors/timeouts", dec_timeouts); }
     }
