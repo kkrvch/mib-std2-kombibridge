@@ -93,6 +93,14 @@ public final class Config {
     public static final int MODE_KEY_BACK = 2;
     public static final int CLUSTER_MODE_KEY = MODE_KEY_ROLLER;
     /**
+     * DSI key code (keyboard 4) of the steering-wheel View key with the patched J5 key panel
+     * (native/keypanel: the stock key table drops MQB 0x23; the patch maps it to this code, default
+     * 59). The key is then logged as "wheel View", counted in /dev/shmem/aa_view_key and kept from
+     * the stock key handling (its stock meaning would be MQB 0x22, absent on the MQB wheel).
+     * -1: no patched key panel, code not treated specially. Must match keypanel_patch.py --view-dsi.
+     */
+    public static final int KEYPANEL_VIEW_CODE = 59;
+    /**
      * Steering-wheel OK (roller press, key 40) held to this key-panel state switches to the next
      * mode, AA map -> arrows -> stock map -> AA map: 3 = first hold level (~0.8 s), 4 (~2 s),
      * 5 (~3 s). Careful: in some AID views a held OK has its own meaning (e.g. resetting trip data),

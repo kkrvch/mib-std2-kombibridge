@@ -79,14 +79,14 @@ ASLSystemKeyPanelHandling {
     }
 
     public void updateKey(int n, int n2, int n3, int n4) {
-        try { de.aatokombi.WheelKeys.key(n, n2, n3, n4, -1); } catch (Throwable t) {}
+        try { if (de.aatokombi.WheelKeys.key(n, n2, n3, n4, -1)) return; } catch (Throwable t) {}
         if (n4 == 1) {
             this.processKeyEvent(n, n2, n3);
         }
     }
 
     public void updateKey2(int n, int n2, int n3, int n4, int n5) {
-        try { de.aatokombi.WheelKeys.key(n, n2, n3, n4, n5); } catch (Throwable t) {}
+        try { if (de.aatokombi.WheelKeys.key(n, n2, n3, n4, n5)) return; } catch (Throwable t) {}
         n3 = this.overrideKeyState(n3);
         this.processKeyEvent(n, n2, n3);
     }

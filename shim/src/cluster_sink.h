@@ -234,6 +234,7 @@ struct ClusterProbe {
   u32 sessionId, setupCodec, lastOtherId, bytes, maxAu, lastTsHi, lastTsLo, sent, sendFail;
   u32 cfgLen, prefixCount, spsCropped, focusChanges, bindReplies, bindReqLen, inputsSent, cmdSeq;
   u32 insetsFile, insets[4], cmdReads, cmdBytes, cmdLines, decodeMode, fullFrame;
+  u32 turnData;
   u32 idrSoft, idrCycle, secondIdr, ackConsumed, ackTimeouts, focusGated, dhu;
   u32 startIdrMs[4], startIdrN;   // ms from each Start to its first IDR (newest in [startIdrN-1&3])
   u8  bindReq[32];
@@ -317,6 +318,11 @@ static u8* cl_rewrite_service(u8* o,u8* end,const u8* sv,u32 sn){
 #define CLUSTER_INSETS_FILE "/tsd/var/aatokombi/insets"
 #define CLUSTER_INSETS_DEC_FILE "/tsd/var/aatokombi/insets-1280"
 #define CLUSTER_FULL_FRAME_FILE "/tsd/var/aatokombi/full-frame"
+// Experiment (AA 18.1 analysis, docs/GEARHEAD_18_UI_CONFIG.md): UiConfig field 5 is a repeated
+// UiElement the car itself shows; 5 = NAVIGATION_TURN_DATA_AVAILABLE ("the car shows turn data",
+// CarDisplayUiFeatures bit 16). While this file exists the cluster's UiConfig announces it at
+// connect: does the nav app then hide its own turn card on the cluster?
+#define CLUSTER_TURN_DATA_FILE "/tsd/var/aatokombi/turn-data"
 // Pass-through or decode mode, at each connection (the phone's resolution goes into the SDR).
 static void cl_choose_geometry(){
   u32 pass=0;
@@ -418,6 +424,8 @@ static u32 cl_rewrite_sdr(const u8* in,u32 n,u8* out,u32 cap){
       t=cl_field_bytes(t,2,in,(u32)(r-in));
     }
     t=cl_field_u(t,4,CLUSTER_UI_THEME);
+    { void* f = p_fopen ? p_fopen(CLUSTER_TURN_DATA_FILE,"r") : 0;
+      if(f){ p_fclose(f); t=cl_field_u(t,5,5); g_cl.turnData=1; } else g_cl.turnData=0; }
     q=cl_field_bytes(q,11,ui,(u32)(t-ui));
   }
   u32 nvc=(u32)(q-vc);
@@ -479,7 +487,7 @@ static void cluster_flush(){
   cl_put(o,"field_display_id="); o=u2dec(o,CLUSTER_FIELD_DISPLAY_ID);
   cl_put(o," field_display_type="); o=u2dec(o,CLUSTER_FIELD_DISPLAY_TYPE);
   cl_put(o," display_type="); o=u2dec(o,CLUSTER_DISPLAY_TYPE);
-  cl_put(o," resolution="); o=u2dec(o,g_geo.res); cl_put(o," decode_mode="); o=u2dec(o,g_geo.decode); cl_put(o," full_frame="); o=u2dec(o,g_cl.fullFrame); *o++='\n';
+  cl_put(o," resolution="); o=u2dec(o,g_geo.res); cl_put(o," decode_mode="); o=u2dec(o,g_geo.decode); cl_put(o," full_frame="); o=u2dec(o,g_cl.fullFrame); cl_put(o," turn_data="); o=u2dec(o,g_cl.turnData); *o++='\n';
   write_file(CL_PATH,b,(usize)(o-b));
   write_file(CL_CFG_PATH,(const char*)g_cl.cfg,g_cl.cfgLen);
   write_file(CL_PREFIX_PATH,(const char*)g_cl.prefix,g_cl.prefixCount*64u);

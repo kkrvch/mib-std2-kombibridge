@@ -7,7 +7,8 @@ package de.aatokombi;
  * Key codes on the MQB multifunction wheel (keyboard 4 = MFW), from zakklmv/MHI2-Carplay-Maps
  * (src/vcdiag VcLayout.java, measured on a MQB MU1440 + AID 10.5; GPL-3.0, only the facts used):
  *   key 40  roller press = "OK"; states 1 pressed, 0 released, 3 / 4 / 5 held (~0.8 / ~2 / ~3 s)
- *   key 35  View (a short press steps the AID view, a long one opens its view menu)
+ *   key 35  View on MHI2 (a short press steps the AID view, a long one opens its view menu);
+ *           on MIB2 STD2 only with the patched J5 key panel, as Config.KEYPANEL_VIEW_CODE
  * Not yet seen on this MIB2 STD2 unit: every keyboard-4 event is logged at DEBUG.
  *
  * OK held (Config.CLUSTER_OK_HOLD_STATE reached once per press) asks for the next cluster mode;
@@ -38,7 +39,43 @@ public final class WheelKeys {
         return keyboard != 9 && (keyboard < 13 || keyboard > 16);
     }
 
-    public static void key(int keyboard, int code, int state, int p4, int p5) {
+    private static int viewPresses;
+    private static boolean viewHeld;
+
+    /**
+     * View from the patched J5 key panel (Config.KEYPANEL_VIEW_CODE). A short press steps the AID
+     * view; a long one opens the AID view menu and does not step it (zakklmv, MHI2). Counted on
+     * release when no hold state (3/4/5) came; the count goes to /dev/shmem/aa_view_key
+     * "presses state". Returns true: the stock key handling must not see this key.
+     */
+    private static boolean viewKey(int keyboard, int code, int state) {
+        if (Config.KEYPANEL_VIEW_CODE < 0 || code != Config.KEYPANEL_VIEW_CODE
+                || (keyboard != KEYBOARD_MFW && keyboard != KEYBOARD_MFW_3GP)) return false;
+        if (state == 1) {
+            viewHeld = false;
+        } else if (state >= 3) {
+            viewHeld = true;
+        } else if (state == 0) {
+            if (!viewHeld) viewPresses++;
+            ClusterVideo.log("wheel View " + (viewHeld ? "long press (view menu)" : "press #" + viewPresses));
+            writeView(viewPresses + " " + (viewHeld ? 1 : 0) + "\n");
+        }
+        return true;
+    }
+
+    private static void writeView(String s) {
+        java.io.FileOutputStream o = null;
+        try {
+            o = new java.io.FileOutputStream("/dev/shmem/aa_view_key");
+            o.write(s.getBytes());
+        } catch (Throwable t) {
+        } finally {
+            try { if (o != null) o.close(); } catch (Throwable t) {}
+        }
+    }
+
+    /** Returns true when the key is ours alone (the stock handling must skip it). */
+    public static boolean key(int keyboard, int code, int state, int p4, int p5) {
         // p5 = -1: the old updateKey (no second parameter). Every keyboard is logged: car
         // 2026-11-01 showed no keyboard-4 key at all, while the roller turns came as encoder 40 on
         // keyboard 4 (the "3GP" wheel would be keyboard 8).
@@ -47,7 +84,8 @@ public final class WheelKeys {
         }
         int modeKey = Config.CLUSTER_MODE_KEY == Config.MODE_KEY_BACK ? KEY_BACK
                 : Config.CLUSTER_MODE_KEY == Config.MODE_KEY_ROLLER ? KEY_OK : -1;
-        if ((keyboard != KEYBOARD_MFW && keyboard != KEYBOARD_MFW_3GP) || modeKey < 0 || code != modeKey) return;
+        if (viewKey(keyboard, code, state)) return true;
+        if ((keyboard != KEYBOARD_MFW && keyboard != KEYBOARD_MFW_3GP) || modeKey < 0 || code != modeKey) return false;
         if (state == 1 || state == 0) {
             okFired = false;
         } else if (state >= Config.CLUSTER_OK_HOLD_STATE && !okFired) {
@@ -57,6 +95,7 @@ public final class WheelKeys {
                 ClusterVideo.log("wheel OK held: next cluster mode requested");
             }
         }
+        return false;
     }
 
     public static void encoder(int keyboard, int encoder, int steps, int p4, int p5) {

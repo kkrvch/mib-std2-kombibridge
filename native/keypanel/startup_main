@@ -1,0 +1,23 @@
+#!/bin/sh
+# AAtoKombi: run by the J5 startup script (/tsd/bin/system/startup on J5) instead of its own
+# main.root start whenever /net/imx6/tsd/bin/system/startup_main is executable. It starts the same
+# main.root with the same arguments, only with a copy of J5's main.conf in which the key panel
+# service runs the patched keypanel (native/keypanel). If the copy or the binary is missing, the
+# stock main.conf is used. Remove this file (uninstall_keypanel_patch.sh) to return to stock.
+D=/net/imx6/tsd/lib/aatokombi/j5
+CONF=/tsd/etc/system/main.conf
+if [ -r $D/main.conf ] && [ -x $D/tsd.mibstd2.keypanel ] && [ ! -f /net/imx6/tsd/var/aatokombi/no-keypanel-patch ]; then
+   CONF=$D/main.conf
+fi
+echo "Starting tsd.mibstd2.main.root (AAtoKombi startup_main, $CONF)..."
+export TSD_COMMON_CONFIG=/tsd/etc/system/tsd.mibstd2.main.root.conf
+export TSD_LOGCHANNEL=J5e
+on -p 20 /tsd/bin/root/tsd.mibstd2.main.root -file=$CONF -swdlfile=/tsd/etc/system/swdl/main_swdl.conf -reset=/net/imx6/tsd/var/root/reset.count.main
+RET=$?
+if [ $RET -eq 0 ] ; then
+   echo "main.root terminated -> calling shutdown script"
+   . /tsd/bin/system/shutdown
+   echo "shutdown finished!"
+elif [ $RET -eq 42 ] ; then
+   echo "MP42 set to low! -> Boot Stopped."
+fi
