@@ -404,15 +404,17 @@ static int past(const struct timespec *d)
 }
 
 #include "dec_player.c"
+#include "keys_j5.c"
 
 static int dec_started;
 EXPORT void *mmfbq_get_and_wait(void *q, const struct timespec *deadline)
 {
     resolve();
-    if (!dec_started) { dec_started = 1; dec_start(); }    /* the decode-mode thread */
+    if (!dec_started) { dec_started = 1; dec_start(); keys_start(); }   /* decode-mode and J5 key threads */
     if (!reader_return || (uintptr_t)__builtin_return_address(0) != reader_return)
         return real_get_and_wait(q, deadline);
 
+    if (q && q == cluster_queue) cluster_rd_ms = now_ms() | 1u;
     if (q && q == cluster_queue && !switched_off() && kv_open()) {
         kv->rd_caps = 1;
         kv->rd_ready_ms = now_ms() | 1u;                   /* the cluster takes video: phone may stream */
@@ -452,6 +454,7 @@ EXPORT void *mmfbq_get_and_wait(void *q, const struct timespec *deadline)
             /* still the cluster's reader, also while a still map sends no frames (car
              * 2026-11-06: without this the libgal took focus away after 5 s, 26 times) */
             kv->rd_ready_ms = now_ms() | 1u;
+            cluster_rd_ms = kv->rd_ready_ms;
             wait_frame(head);
         }
         if (past(deadline) && phone_alive() && !(need_idr && idr_wait_ms && now_ms() - idr_wait_ms >= IDR_FALLBACK_MS))

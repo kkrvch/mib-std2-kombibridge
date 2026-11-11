@@ -111,6 +111,12 @@
 // used while /tsd/var/aatokombi/passthrough exists (read at each connection). Insets of each mode:
 // /tsd/var/aatokombi/insets (pass-through) and /tsd/var/aatokombi/insets-1280 (decode).
 #define CLUSTER_PASSTHROUGH_FILE "/tsd/var/aatokombi/passthrough"
+#ifndef CLUSTER_DEC_INSET_TOP
+#define CLUSTER_DEC_INSET_TOP 228
+#endif
+#ifndef CLUSTER_DEC_INSET_BOTTOM
+#define CLUSTER_DEC_INSET_BOTTOM 242
+#endif
 #ifndef CLUSTER_DEC_CROP_LEFT
 #define CLUSTER_DEC_CROP_LEFT 134
 #endif
@@ -118,10 +124,10 @@
 #define CLUSTER_DEC_CROP_RIGHT 136
 #endif
 #ifndef CLUSTER_DEC_CROP_TOP
-#define CLUSTER_DEC_CROP_TOP 172
+#define CLUSTER_DEC_CROP_TOP 100
 #endif
 #ifndef CLUSTER_DEC_CROP_BOTTOM
-#define CLUSTER_DEC_CROP_BOTTOM 172
+#define CLUSTER_DEC_CROP_BOTTOM 244
 #endif
 struct ClGeom { u32 decode, res, w, h, crop[4] /* left right top bottom */, ins[4] /* top bottom left right */; };
 static ClGeom g_geo = { 0u, CLUSTER_RESOLUTION, 800u, 480u,
@@ -234,7 +240,7 @@ struct ClusterProbe {
   u32 sessionId, setupCodec, lastOtherId, bytes, maxAu, lastTsHi, lastTsLo, sent, sendFail;
   u32 cfgLen, prefixCount, spsCropped, focusChanges, bindReplies, bindReqLen, inputsSent, cmdSeq;
   u32 insetsFile, insets[4], cmdReads, cmdBytes, cmdLines, decodeMode, fullFrame;
-  u32 turnData;
+  u32 turnData, liveSent, live[4], liveBad;
   u32 idrSoft, idrCycle, secondIdr, ackConsumed, ackTimeouts, focusGated, dhu;
   u32 startIdrMs[4], startIdrN;   // ms from each Start to its first IDR (newest in [startIdrN-1&3])
   u8  bindReq[32];
@@ -336,7 +342,9 @@ static void cl_choose_geometry(){
     g_geo.crop[0]=CLUSTER_DEC_CROP_LEFT; g_geo.crop[1]=CLUSTER_DEC_CROP_RIGHT;
     g_geo.crop[2]=CLUSTER_DEC_CROP_TOP;  g_geo.crop[3]=CLUSTER_DEC_CROP_BOTTOM;
     // the visible window plus the AID's status bar (56) and trip bar (70), as in pass-through
-    g_geo.ins[0]=CLUSTER_DEC_CROP_TOP+56u; g_geo.ins[1]=CLUSTER_DEC_CROP_BOTTOM+70u;
+    // Insets stay those of the first centred crop (172+56, 172+70): car 2026-11-10, with them and
+    // the window moved up to y=100 the cursor sits right in Google Maps and Yandex.
+    g_geo.ins[0]=CLUSTER_DEC_INSET_TOP; g_geo.ins[1]=CLUSTER_DEC_INSET_BOTTOM;
     g_geo.ins[2]=CLUSTER_DEC_CROP_LEFT;    g_geo.ins[3]=CLUSTER_DEC_CROP_RIGHT;
     // Layout check (diagnostics): /tsd/var/aatokombi/full-frame - no crop, libkb_dm shows the whole
     // 1280x720 frame scaled into the window, so where each navigation app draws its cards for the
@@ -487,7 +495,10 @@ static void cluster_flush(){
   cl_put(o,"field_display_id="); o=u2dec(o,CLUSTER_FIELD_DISPLAY_ID);
   cl_put(o," field_display_type="); o=u2dec(o,CLUSTER_FIELD_DISPLAY_TYPE);
   cl_put(o," display_type="); o=u2dec(o,CLUSTER_DISPLAY_TYPE);
-  cl_put(o," resolution="); o=u2dec(o,g_geo.res); cl_put(o," decode_mode="); o=u2dec(o,g_geo.decode); cl_put(o," full_frame="); o=u2dec(o,g_cl.fullFrame); cl_put(o," turn_data="); o=u2dec(o,g_cl.turnData); *o++='\n';
+  cl_put(o," resolution="); o=u2dec(o,g_geo.res); cl_put(o," decode_mode="); o=u2dec(o,g_geo.decode); cl_put(o," full_frame="); o=u2dec(o,g_cl.fullFrame); cl_put(o," turn_data="); o=u2dec(o,g_cl.turnData);
+  cl_put(o," live_sent="); o=u2dec(o,g_cl.liveSent); cl_put(o," live_bad="); o=u2dec(o,g_cl.liveBad);
+  cl_put(o," live_t="); o=u2dec(o,g_cl.live[0]); cl_put(o," live_b="); o=u2dec(o,g_cl.live[1]);
+  cl_put(o," live_l="); o=u2dec(o,g_cl.live[2]); cl_put(o," live_r="); o=u2dec(o,g_cl.live[3]); *o++='\n';
   write_file(CL_PATH,b,(usize)(o-b));
   write_file(CL_CFG_PATH,(const char*)g_cl.cfg,g_cl.cfgLen);
   write_file(CL_PREFIX_PATH,(const char*)g_cl.prefix,g_cl.prefixCount*64u);
@@ -900,6 +911,46 @@ static int cl_word(const char*& p,const char* w){
   if(*w || (*q && *q!=' ')) return 0;
   p=q; return 1;
 }
+// Content insets on the fly: 0x8009 UpdateUiConfigRequest {1: UiConfig{2: insets{1 top, 2 bottom,
+// 3 left, 4 right}}} on the cluster video channel. From the phone's code (AA 18.1,
+// docs/GEARHEAD_18_UI_CONFIG.md): below protocol 4.3 a request WITH the theme (field 4) is a
+// protocol error - that dropped the connection on 2026-11-05 - and the request is merged into the
+// current UiConfig field by field, so all four insets go out, zeros included.
+// Sources: /dev/shmem/aa_cluster_insets "top bottom left right" (RAM, gone after a reboot; sent
+// when its text changes and again after every video Start) and the command "insets t b l r".
+#define CLUSTER_LIVE_INSETS_FILE "/dev/shmem/aa_cluster_insets"
+static u32 g_liveChk, g_liveHave, g_liveStartSeen;
+static char g_liveTxt[48];
+static void cl_send_live_insets(const u32* v){
+  if(v[0]+v[1]>=g_geo.h || v[2]+v[3]>=g_geo.w){ g_cl.liveBad++; return; }
+  u8 in[24], ui[32], m[40]; u8* r=in;
+  for(u32 k=0;k<4;k++) r=cl_field_u(r,k+1,v[k]);
+  u8* t=cl_field_bytes(ui,2,in,(u32)(r-in));
+  u8* o=cl_field_bytes(m,1,ui,(u32)(t-ui));
+  cl_send(0x8009,m,(u32)(o-m));
+  g_cl.liveSent++; for(u32 k=0;k<4;k++) g_cl.live[k]=v[k];
+}
+static void cl_poll_live_insets(u32 now){
+  if(g_liveChk && now-g_liveChk<500u) return;
+  g_liveChk=now|1u;
+  if(!g_clStarted || !g_clusterEp[4] || !p_fopen || !p_fread || !p_fclose) return;
+  u32 fresh = g_liveStartSeen!=g_cl.starts;            // a new Start: the phone is back to the SDR insets
+  void* f=p_fopen(CLUSTER_LIVE_INSETS_FILE,"r");
+  if(!f){ g_liveTxt[0]=0; g_liveStartSeen=g_cl.starts; return; }
+  char b[48]; usize n=p_fread(b,1,sizeof b-1,f); p_fclose(f); b[n]=0;
+  u32 same=1; for(u32 k=0;k<sizeof b;k++){ if(b[k]!=g_liveTxt[k]){ same=0; break; } if(!b[k]) break; }
+  if(same && !fresh) return;
+  for(u32 k=0;k<sizeof b;k++){ g_liveTxt[k]=b[k]; if(!b[k]) break; }
+  g_liveStartSeen=g_cl.starts;
+  u32 v[4], k=0; const char* c=b;
+  while(k<4){
+    while(*c==' '||*c=='\t'||*c==',') c++;
+    if(*c<'0'||*c>'9') break;
+    u32 x=0; while(*c>='0'&&*c<='9'&&x<10000u){ x=x*10u+(u32)(*c-'0'); c++; }
+    v[k++]=x;
+  }
+  if(k==4) cl_send_live_insets(v); else g_cl.liveBad++;
+}
 static void cl_poll_commands(u32 now){
   if(g_repCode && now-g_repStart>=(u32)CLUSTER_REP_MAX_MS) g_repCode=0;
   if(g_repCode && g_repMs && now-g_repT>=g_repMs){ g_repT=now; cl_key(g_repCode); }
@@ -926,6 +977,10 @@ static void cl_poll_commands(u32 now){
       g_repCode=(u32)a; g_repMs=(u32)b; g_repT=now; g_repStart=now; if(a) cl_key((u32)a);
     }
     else if(cl_word(c,"video") && cl_parse_int(c,&a)) g_hmiVideo = a?1u:0u;
+    else if(cl_word(c,"insets")){
+      i32 t4[4]; u32 ok=1; for(u32 j=0;j<4;j++) if(!cl_parse_int(c,&t4[j]) || t4[j]<0) ok=0;
+      if(ok && g_clStarted && g_clusterEp[4]){ u32 v[4]; for(u32 j=0;j<4;j++) v[j]=(u32)t4[j]; cl_send_live_insets(v); }
+    }
   }
 }
 
@@ -951,6 +1006,7 @@ static void* cl_ticker(void*){
     cl_release_acks(now);
     cl_state_file(now,alive);
     cl_poll_commands(now);
+    cl_poll_live_insets(now);
     if(g_cl.setups && g_clusterEp[4] && !g_idrState) cl_apply_focus(cl_want_video(now));
     struct kbcv* v=g_kv; if(!v) continue;
     if(alive) v->alive_ms = now ? now : 1u;
