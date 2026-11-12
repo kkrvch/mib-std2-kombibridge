@@ -226,6 +226,19 @@ public final class Config {
      */
     public static final int MANEUVER_PREPARE_METERS = 1000;
     public static final int MANEUVER_PREPARE_SECONDS = 80;
+    /**
+     * Which stages come before the manoeuvre itself (the manoeuvre is always the last one):
+     *   FOLLOW_STREET stage = the plain "follow the street" arrow while the manoeuvre is far;
+     *   PREPARE stage       = the stock "prepare" glyph (see MANEUVER_PREPARE_*).
+     *
+     *   FOLLOW true,  PREPARE true  -> FOLLOW_STREET -> PREPARE -> manoeuvre   (as before)
+     *   FOLLOW true,  PREPARE false -> FOLLOW_STREET -> manoeuvre              (switch at MANEUVER_NEAR_*)
+     *   FOLLOW false, PREPARE true  -> PREPARE -> manoeuvre   (PREPARE from any distance until near;
+     *                                  manoeuvres with no prepare glyph show the manoeuvre at once)
+     *   FOLLOW false, PREPARE false -> the manoeuvre at once, whatever the distance
+     */
+    public static final boolean SHOW_FOLLOW_STREET_STAGE = true;
+    public static final boolean SHOW_PREPARE_STAGE = true;
 
     // ===== disconnect handling =============================================================
     /**

@@ -456,7 +456,9 @@ public final class AANavReader implements Runnable {
                               int[] next, String currentRoad, boolean rerouting) {
         de.aatokombi.MediaViewMode.guidance(false);
         // Only the glyph waits: street, countdown and destination keep running meanwhile.
-        boolean imminent = maneuverImminent(dist, time);
+        // With both pre-stages off there is nothing to wait for: the manoeuvre is drawn at any distance.
+        boolean imminent = maneuverImminent(dist, time)
+                || (!Config.SHOW_FOLLOW_STREET_STAGE && !Config.SHOW_PREPARE_STAGE);
         if (imminent != lastImminent) {
             // Whether the phone sends a countdown at all cannot be read off the cluster.
             lastImminent = imminent;
@@ -483,7 +485,7 @@ public final class AANavReader implements Runnable {
 		// Exit-road spoke on a roundabout, "" otherwise.
         String sideStreets = buildRingSideStreets(event, effAngle);
 		
-		if (imminent || Config.SHOW_NEXT_MANEUVER) {
+		if (imminent || Config.SHOW_NEXT_MANEUVER || !Config.SHOW_FOLLOW_STREET_STAGE) {
 			// Multi-spoke junction schematic (JunctionSchematic) -- STRICTLY gated on top of the
 			// compile-time switch: only on a cluster that is nav-capable (navsd is actually driving
 			// this cluster at all).
@@ -515,7 +517,12 @@ public final class AANavReader implements Runnable {
 
         // Second, smaller arrow (maneuver_2): the manoeuvre after this one, or this one as a preview.
         // In the prepare stage maneuver_1 already shows this manoeuvre, so maneuver_2 behaves as near.
-        boolean preparing = !imminent && maneuverPreparing(dist, time)
+        if (!imminent && !Config.SHOW_FOLLOW_STREET_STAGE && prepareElementFor(mainElement) < 0) {
+            imminent = true;        // no FOLLOW_STREET stage and no prepare glyph: the manoeuvre itself
+        }
+        // Without the FOLLOW_STREET stage the prepare glyph covers the whole far range.
+        boolean preparing = !imminent && Config.SHOW_PREPARE_STAGE
+                && (maneuverPreparing(dist, time) || !Config.SHOW_FOLLOW_STREET_STAGE)
                 && prepareElementFor(mainElement) >= 0;
         boolean shown = imminent || preparing;     // maneuver_1 names the manoeuvre itself
         NavState.nextManeuver   = Config.SHOW_NEXT_MANEUVER
