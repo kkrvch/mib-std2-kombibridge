@@ -30,12 +30,6 @@ public final class WheelKeys {
     public static final int KEY_VIEW = 35;
 
     /**
-     * The key that, held, steps the cluster mode (AA map -> arrows -> stock map, Config.ClusterMap.
-     * MODE_CYCLE): KEY_OK (the roller press) or KEY_BACK (the widget-switch key; a short press keeps
-     * its stock job). -1: none.
-     */
-    private static final int MODE_KEY = KEY_OK;
-    /**
      * Key-panel hold state that counts as "held": 3 = first level (~0.8 s), 4 (~2 s), 5 (~3 s).
      * Careful: in some AID views a held OK has its own meaning (e.g. resetting trip data).
      */
@@ -103,7 +97,8 @@ public final class WheelKeys {
         if (logged(keyboard)) {
             ClusterVideo.log("wheel key kbd " + keyboard + " code " + code + " state " + state + " (" + p4 + "," + p5 + ")");
         }
-        int modeKey = MODE_KEY;
+        int modeKey = Config.ClusterMap.MODE_KEY == Config.ClusterMap.MODE_KEY_BACK ? KEY_BACK
+                : Config.ClusterMap.MODE_KEY == Config.ClusterMap.MODE_KEY_ROLLER ? KEY_OK : -1;
         if (viewKey(keyboard, code, state)) return true;
         if ((keyboard != KEYBOARD_MFW && keyboard != KEYBOARD_MFW_3GP) || modeKey < 0 || code != modeKey) return false;
         if (state == 1 || state == 0) {

@@ -206,14 +206,21 @@ public final class Config {
          * CLUSTER_SINK libgal: the unit's map/arrows button (menu "Navigation") walks
          *   AA map -> arrows -> the unit's own map -> arrows -> AA map
          * (the button has two states; every switch to the map takes the map mode not used last
-         * time), and holding the mode key on the steering wheel (WheelKeys: the roller press, held
-         * for about 2 s) steps AA map -> arrows -> stock map directly, if the head unit receives that
+         * time), and holding the key chosen by MODE_KEY on the steering wheel (held for about 2 s) steps AA map -> arrows -> stock map directly, if the head unit receives that
          * key (MQB MHI2 does; unverified on STD2). Careful: in some AID views a held OK has its own
          * meaning (e.g. resetting trip data) and the mode switch happens there too.
          * false: stock ActiveRgType behaviour - the button toggles arrows / map, and the map is the
          * AA map whenever the phone's video is on.
          */
         public static final boolean MODE_CYCLE = true;
+
+        /** Which steering-wheel key, held, steps the cluster mode (with MODE_CYCLE). */
+        public static final int MODE_KEY_NONE = 0;
+        /** The roller press (Mute; key code 44 on the MQB MIB2 STD2 wheel, see WheelKeys.KEY_OK). */
+        public static final int MODE_KEY_ROLLER = 1;
+        /** BACK, the widget-switch key (WheelKeys.KEY_BACK); a short press keeps its stock job. */
+        public static final int MODE_KEY_BACK = 2;
+        public static final int MODE_KEY = MODE_KEY_ROLLER;
     }
 
     // ===== compatibility and logging ========================================================
