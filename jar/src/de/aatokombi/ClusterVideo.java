@@ -29,6 +29,8 @@ public final class ClusterVideo {
     public static final String CMD_PATH = "/dev/shmem/aa_cluster_cmd";
     /** Present = libgal gives the phone cluster video focus only during route guidance. */
     public static final String GUIDANCE_ONLY_FLAG = "/dev/shmem/aa_cluster_guidance_only";
+    /** Present = libgal never gives the phone cluster video focus (Config.Navigation.ENABLED false). */
+    public static final String VIDEO_OFF_FLAG = "/dev/shmem/aa_cluster_video_off";
     private static final long READ_MS = 900L;
     private static final long STALE_MS = 3000L;
 
@@ -49,13 +51,23 @@ public final class ClusterVideo {
 
     private ClusterVideo() {}
 
-    /** HMI start: create or remove GUIDANCE_ONLY_FLAG to match Config.ClusterMap.AA_MAP_ONLY_DURING_GUIDANCE. */
+    /**
+     * HMI start: make the flag files for the libgal match the settings - GUIDANCE_ONLY_FLAG
+     * (Config.ClusterMap.AA_MAP_ONLY_DURING_GUIDANCE) and VIDEO_OFF_FLAG (no AA map at all, when
+     * Config.Navigation.ENABLED is false: the map is managed by the navigation reader, which then
+     * does not run). The flags live in RAM, so they are gone after a reboot and never outlive the jar.
+     */
     public static void applyMode() {
+        syncFlag(GUIDANCE_ONLY_FLAG, Config.ClusterMap.AA_MAP_ONLY_DURING_GUIDANCE);
+        syncFlag(VIDEO_OFF_FLAG, !Config.Navigation.ENABLED);
+    }
+
+    private static void syncFlag(String path, boolean on) {
         try {
-            java.io.File f = new java.io.File(GUIDANCE_ONLY_FLAG);
-            if (Config.ClusterMap.AA_MAP_ONLY_DURING_GUIDANCE) {
+            java.io.File f = new java.io.File(path);
+            if (on) {
                 if (!f.exists()) {
-                    java.io.FileWriter w = new java.io.FileWriter(GUIDANCE_ONLY_FLAG);
+                    java.io.FileWriter w = new java.io.FileWriter(path);
                     try { w.write("1\n"); } finally { w.close(); }
                 }
             } else if (f.exists()) {

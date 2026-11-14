@@ -23,7 +23,8 @@ import de.adi961.miblogger.MIBLogger;
  * Dependencies between switches ("needs X" = has no effect, or does something unmanaged, without X):
  *   Navigation.*, ManeuverStages.*   need Navigation.ENABLED
  *   Media.SHOW_PROGRESS, SHOW_COVER_ART   need Media.ENABLED
- *   ClusterMap.*                     need Navigation.ENABLED, the CLUSTER_SINK libgal and libkb_dm.so
+ *   ClusterMap.*                     need Navigation.ENABLED (false = no AA map at all), the
+ *                                    CLUSTER_SINK libgal and libkb_dm.so
  *   Navigation.ENABLED and Media.ENABLED both false -> AAtoKombi feeds nothing to the cluster
  *   (stock label, stock navsd).
  */
@@ -40,9 +41,12 @@ public final class Config {
          * manoeuvre is never fed to the cluster (navsd stays stock, the media widget shows only the
          * track / stock label).
          *
-         * Also the master switch of the AA map on the AID (see ClusterMap): the code that manages it
-         * (hiding the unit's own cluster map, the cluster modes, commands to the libgal) runs on the
-         * timer of the navigation reader, which starts only when this is true.
+         * Also the master switch of the AA map on the AID (see ClusterMap): with false the phone's
+         * cluster map is not shown at all - ClusterVideo creates the flag file
+         * /dev/shmem/aa_cluster_video_off at HMI start and the CLUSTER_SINK libgal never gives the
+         * phone video focus on the cluster channel (needs a libgal built with this flag; an older
+         * one still streams the map unmanaged). The unit's own map is never hidden and the cluster
+         * modes stay stock.
          */
         public static final boolean ENABLED = true;
 

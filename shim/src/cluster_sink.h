@@ -156,6 +156,10 @@ static ClGeom g_geo = { 0u, CLUSTER_RESOLUTION, 800u, 480u,
 // cluster channel, so it sends nothing; when guidance starts it gets PROJECTED focus and starts
 // with codec config + IDR; CLUSTER_GUIDANCE_HOLD_MS after guidance ends focus goes back to NATIVE.
 #define CLUSTER_GUIDANCE_ONLY_FLAG "/dev/shmem/aa_cluster_guidance_only"
+// "No AA map at all" (the jar creates VIDEO_OFF_FLAG at HMI start when Config.Navigation.ENABLED is
+// false and removes it otherwise): the phone is never given video focus on the cluster channel.
+// Without the flag (no jar, or navigation on) the video is allowed, as before. Polled once a second.
+#define CLUSTER_VIDEO_OFF_FLAG "/dev/shmem/aa_cluster_video_off"
 #ifndef CLUSTER_GUIDANCE_HOLD_MS
 #define CLUSTER_GUIDANCE_HOLD_MS 10000
 #endif
@@ -224,7 +228,7 @@ static ClGeom g_geo = { 0u, CLUSTER_RESOLUTION, 800u, 480u,
 #include "cluster_video_shm.h"
 static struct kbcv* g_kv;              // cluster video shared memory, mapped on the first Start
 static volatile u32 g_focusOn;         // 1 = PROJECTED granted on the cluster channel
-static u32 g_guideOnly, g_guideChecked, g_guideMs;
+static u32 g_guideOnly, g_guideChecked, g_guideMs, g_videoOff, g_videoOffChecked;
 static volatile u32 g_hmiVideo = 1;   // jar: 0 = the driver chose arrows / the stock map
 static volatile int g_budget;          // bytes that may be acknowledged now (may go negative)
 static volatile u32 g_budgetMs;
@@ -470,7 +474,7 @@ static void cl_put(char*& o,const char* s){ while(*s) *o++=*s++; }
 static void cl_kv(char*& o,const char* k,u32 v){ cl_put(o,k); o=u2dec(o,v); *o++=' '; }
 
 static void cluster_flush(){
-  char b[1600]; char* o=b;
+  char b[1900]; char* o=b;
   cl_kv(o,"id=",g_clusterId==0xff?0:g_clusterId);
   cl_kv(o,"sdr_seen=",g_cl.sdrSeen); cl_kv(o,"sdr_patched=",g_cl.sdrPatched); cl_kv(o,"sdr_len=",g_cl.sdrLen);
   cl_kv(o,"sdr_main_video=",g_cl.sdrMainVideo); cl_kv(o,"sdr_main_input=",g_cl.sdrMainInput);
@@ -484,7 +488,7 @@ static void cluster_flush(){
   cl_kv(o,"start_idr_ms0=",g_cl.startIdrMs[0]); cl_kv(o,"start_idr_ms1=",g_cl.startIdrMs[1]);
   cl_kv(o,"start_idr_ms2=",g_cl.startIdrMs[2]); cl_kv(o,"start_idr_ms3=",g_cl.startIdrMs[3]); cl_kv(o,"bind_replies=",g_cl.bindReplies);
   cl_kv(o,"inputs_sent=",g_cl.inputsSent); cl_kv(o,"cmd_seq=",g_cl.cmdSeq); cl_kv(o,"hmi_video=",g_hmiVideo);
-  cl_put(o,"bind_req="); cl_hex(o,g_cl.bindReq,g_cl.bindReqLen); *o++=' '; cl_kv(o,"guidance_only=",g_guideOnly); cl_kv(o,"nav_status=",g_st.status); cl_kv(o,"codec_cfg=",g_cl.cfgMsgs); cl_kv(o,"cfg_len=",g_cl.cfgLen);
+  cl_put(o,"bind_req="); cl_hex(o,g_cl.bindReq,g_cl.bindReqLen); *o++=' '; cl_kv(o,"guidance_only=",g_guideOnly); cl_kv(o,"video_off=",g_videoOff); cl_kv(o,"nav_status=",g_st.status); cl_kv(o,"codec_cfg=",g_cl.cfgMsgs); cl_kv(o,"cfg_len=",g_cl.cfgLen);
   cl_kv(o,"sps_cropped=",g_cl.spsCropped);
   cl_kv(o,"insets_file=",g_cl.insetsFile); cl_kv(o,"insets_t=",g_cl.insets[0]); cl_kv(o,"insets_b=",g_cl.insets[1]);
   cl_kv(o,"insets_l=",g_cl.insets[2]); cl_kv(o,"insets_r=",g_cl.insets[3]);
@@ -842,9 +846,18 @@ static u32 cl_receiver_ready(u32 now){
   if(!g_readySince) return g_focusOn;                 // stale but not yet off: keep what we have
   return (now-g_readySince >= (u32)CLUSTER_READY_ON_MS || g_focusOn) ? 1u : 0u;
 }
+static u32 cl_video_off(u32 now){
+  if(!g_videoOffChecked || now-g_videoOffChecked>=1000u){
+    g_videoOffChecked=now|1u;
+    void* f = p_fopen ? p_fopen(CLUSTER_VIDEO_OFF_FLAG,"r") : 0;
+    g_videoOff = f ? 1u : 0u;
+    if(f && p_fclose) p_fclose(f);
+  }
+  return g_videoOff;
+}
 // Whether the phone should stream the cluster map now.
 static u32 cl_want_video(u32 now){
-  if(!g_hmiVideo) return 0u;
+  if(!g_hmiVideo || cl_video_off(now)) return 0u;
   if(!cl_receiver_ready(now)){ return 0u; }
   if(!cl_guidance_only(now)) return 1u;
   if(g_st.status==1u || g_st.status==3u){ g_guideMs=now|1u; return 1u; }   // ACTIVE / REROUTING
