@@ -112,10 +112,16 @@
 // /tsd/var/aatokombi/insets (pass-through) and /tsd/var/aatokombi/insets-1280 (decode).
 #define CLUSTER_PASSTHROUGH_FILE "/tsd/var/aatokombi/passthrough"
 #ifndef CLUSTER_DEC_INSET_TOP
-#define CLUSTER_DEC_INSET_TOP 228
+#define CLUSTER_DEC_INSET_TOP 180
 #endif
 #ifndef CLUSTER_DEC_INSET_BOTTOM
-#define CLUSTER_DEC_INSET_BOTTOM 242
+#define CLUSTER_DEC_INSET_BOTTOM 250
+#endif
+#ifndef CLUSTER_DEC_INSET_LEFT
+#define CLUSTER_DEC_INSET_LEFT 500
+#endif
+#ifndef CLUSTER_DEC_INSET_RIGHT
+#define CLUSTER_DEC_INSET_RIGHT 500
 #endif
 #ifndef CLUSTER_DEC_CROP_LEFT
 #define CLUSTER_DEC_CROP_LEFT 134
@@ -124,10 +130,10 @@
 #define CLUSTER_DEC_CROP_RIGHT 136
 #endif
 #ifndef CLUSTER_DEC_CROP_TOP
-#define CLUSTER_DEC_CROP_TOP 100
+#define CLUSTER_DEC_CROP_TOP 110
 #endif
 #ifndef CLUSTER_DEC_CROP_BOTTOM
-#define CLUSTER_DEC_CROP_BOTTOM 244
+#define CLUSTER_DEC_CROP_BOTTOM 234
 #endif
 struct ClGeom { u32 decode, res, w, h, crop[4] /* left right top bottom */, ins[4] /* top bottom left right */; };
 static ClGeom g_geo = { 0u, CLUSTER_RESOLUTION, 800u, 480u,
@@ -145,7 +151,7 @@ static ClGeom g_geo = { 0u, CLUSTER_RESOLUTION, 800u, 480u,
 #define CLUSTER_KEYCODES 19,20,21,22,23,168,169,65536
 #endif
 #define CLUSTER_CMD_FILE "/dev/shmem/aa_cluster_cmd"
-// "Map only during route guidance" (the jar's Config.CLUSTER_MAP_ONLY_DURING_GUIDANCE creates
+// "Map only during route guidance" (the jar's Config.ClusterMap.AA_MAP_ONLY_DURING_GUIDANCE creates
 // GUIDANCE_ONLY_FLAG at HMI start). Without guidance the phone is not given video focus on the
 // cluster channel, so it sends nothing; when guidance starts it gets PROJECTED focus and starts
 // with codec config + IDR; CLUSTER_GUIDANCE_HOLD_MS after guidance ends focus goes back to NATIVE.
@@ -341,11 +347,12 @@ static void cl_choose_geometry(){
     g_geo.decode=1; g_geo.res=2; g_geo.w=1280u; g_geo.h=720u;           // VideoCodecResolutionType 2
     g_geo.crop[0]=CLUSTER_DEC_CROP_LEFT; g_geo.crop[1]=CLUSTER_DEC_CROP_RIGHT;
     g_geo.crop[2]=CLUSTER_DEC_CROP_TOP;  g_geo.crop[3]=CLUSTER_DEC_CROP_BOTTOM;
-    // the visible window plus the AID's status bar (56) and trip bar (70), as in pass-through
-    // Insets stay those of the first centred crop (172+56, 172+70): car 2026-11-10, with them and
-    // the window moved up to y=100 the cursor sits right in Google Maps and Yandex.
-    g_geo.ins[0]=CLUSTER_DEC_INSET_TOP; g_geo.ins[1]=CLUSTER_DEC_INSET_BOTTOM;
-    g_geo.ins[2]=CLUSTER_DEC_CROP_LEFT;    g_geo.ins[3]=CLUSTER_DEC_CROP_RIGHT;
+    // Owner's choice 2026-11-13: window 134 110 1010 376 and insets 180 250 500 500 (top bottom
+    // left right) - acceptable in every AID view; the fallback until there are per-view layouts
+    // (run-time insets: /dev/shmem/aa_cluster_insets). Before: 228 242 134 136 with the window at
+    // y=100 (car 2026-11-10).
+    g_geo.ins[0]=CLUSTER_DEC_INSET_TOP;  g_geo.ins[1]=CLUSTER_DEC_INSET_BOTTOM;
+    g_geo.ins[2]=CLUSTER_DEC_INSET_LEFT; g_geo.ins[3]=CLUSTER_DEC_INSET_RIGHT;
     // Layout check (diagnostics): /tsd/var/aatokombi/full-frame - no crop, libkb_dm shows the whole
     // 1280x720 frame scaled into the window, so where each navigation app draws its cards for the
     // insets in use can be seen (and photographed) on the AID.
