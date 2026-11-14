@@ -334,7 +334,7 @@ static u8* cl_rewrite_service(u8* o,u8* end,const u8* sv,u32 sn){
 #define CLUSTER_INSETS_FILE "/tsd/var/aatokombi/insets"
 #define CLUSTER_INSETS_DEC_FILE "/tsd/var/aatokombi/insets-1280"
 #define CLUSTER_FULL_FRAME_FILE "/tsd/var/aatokombi/full-frame"
-// Experiment (AA 18.1 analysis, docs/GEARHEAD_18_UI_CONFIG.md): UiConfig field 5 is a repeated
+// Experiment (from the Android Auto 18.1 UI-config analysis): UiConfig field 5 is a repeated
 // UiElement the car itself shows; 5 = NAVIGATION_TURN_DATA_AVAILABLE ("the car shows turn data",
 // CarDisplayUiFeatures bit 16). While this file exists the cluster's UiConfig announces it at
 // connect: does the nav app then hide its own turn card on the cluster?
@@ -933,7 +933,7 @@ static int cl_word(const char*& p,const char* w){
 }
 // Content insets on the fly: 0x8009 UpdateUiConfigRequest {1: UiConfig{2: insets{1 top, 2 bottom,
 // 3 left, 4 right}}} on the cluster video channel. From the phone's code (AA 18.1,
-// docs/GEARHEAD_18_UI_CONFIG.md): below protocol 4.3 a request WITH the theme (field 4) is a
+// the UI-config class): below protocol 4.3 a request WITH the theme (field 4) is a
 // protocol error - that dropped the connection on 2026-11-05 - and the request is merged into the
 // current UiConfig field by field, so all four insets go out, zeros included.
 // Sources: /dev/shmem/aa_cluster_insets "top bottom left right" (RAM, gone after a reboot; sent

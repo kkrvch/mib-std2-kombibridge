@@ -39,3 +39,6 @@ misc/
 **__pycache__
 libext.google.gal.receiver.so
 MIBHMI.jxe
+
+# working notes: plans and research (kept locally, not published)
+notes/
