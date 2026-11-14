@@ -1,6 +1,6 @@
 /*
  * Decompiled with CFR 0.152 from the stock class (MIBHMI-fixed.jar), then changed:
- * navsd-shadow delta (Config.CLUSTER_ZOOM_TO_AA): while Android Auto's map is on the AID, the
+ * navsd-shadow delta (ZOOM_TO_AA): while Android Auto's map is on the AID, the
  * cluster's zoom requests go to the phone as zoom keys (de.aatokombi.ClusterVideo.sendCommand)
  * instead of to the unit's own map. Every request is logged. Otherwise stock.
  */
@@ -38,6 +38,26 @@ NavigationServiceListener {
     private static final int ZOOM_TYPE_STEP = 1;
     private static final int ZOOM_TYPE_CONTINUOUS = 2;
     private static final int ZOOM_TYPE_CONTINUOUS_STOP = 5;
+
+    /**
+     * EXPERIMENTAL, and not working on the car so far (2026-11): while the phone's map is on the AID,
+     * the wheel zoom (BAP MapScale: steps +-1, or continuous 127 / -128 until 0) goes to Android
+     * Auto as keys on the cluster input channel instead of to the unit's own map. Every MapScale
+     * request is logged. Car 2026-11-03: the phone ignored KEYCODE_ZOOM_IN/OUT on the cluster input
+     * (196 sent, no zoom); 2026-11-06 the rotary controller did not zoom either (32 sent); mib-
+     * cluster-map and mib2q-carplay report that Android Auto's cluster map is not interactive.
+     * Set false to leave the zoom to the unit's own map.
+     */
+    private static final boolean ZOOM_TO_AA = true;
+    /** Android KEYCODE_ZOOM_IN / KEYCODE_ZOOM_OUT, advertised by the libgal on the cluster input. */
+    private static final int KEY_ZOOM_IN = 168;
+    private static final int KEY_ZOOM_OUT = 169;
+    /** true: BAP "+1" means zoom OUT (swap if the car zooms the wrong way). */
+    private static final boolean ZOOM_INVERT = false;
+    /** true: zoom as the AA rotary controller (keycode 65536, +-1 per step) instead of the zoom keys. */
+    private static final boolean ZOOM_ROTARY = false;
+    /** Repeat interval of a zoom key while the wheel is held (continuous zoom), ms. */
+    private static final int ZOOM_REPEAT_MS = 400;
     private static final int ZOOM_TYPE_AUTOZOOM = 3;
     private int currentZoomType = 1;
     private PropertyListener listener;
@@ -87,7 +107,7 @@ NavigationServiceListener {
                 int n = mapScale_SetGet.steps;
                 int n2 = mapScale_SetGet.autoZoom;
                 int n3 = this.getTypeFromValues(n, n2);
-                boolean toAA = Config.CLUSTER_ZOOM_TO_AA && ClusterVideo.alive();
+                boolean toAA = ZOOM_TO_AA && ClusterVideo.alive();
                 ClusterVideo.log("MapScale SetGet steps=" + n + " autoZoom=" + n2 + " type=" + n3
                         + " aaVideo=" + ClusterVideo.alive() + (toAA ? " -> AA" : " -> stock"));
                 if (toAA) {
@@ -125,9 +145,9 @@ NavigationServiceListener {
     /** Zoom request -> phone keys: step = one key, continuous = repeated key until stop. */
     private static void zoomAA(int type, int steps) {
         boolean in = steps > 0;
-        if (Config.CLUSTER_ZOOM_INVERT) in = !in;
-        int key = in ? Config.CLUSTER_KEY_ZOOM_IN : Config.CLUSTER_KEY_ZOOM_OUT;
-        if (Config.CLUSTER_ZOOM_ROTARY) {
+        if (ZOOM_INVERT) in = !in;
+        int key = in ? KEY_ZOOM_IN : KEY_ZOOM_OUT;
+        if (ZOOM_ROTARY) {
             // the AA rotary controller (keycode 65536, relative), the only zoom-like input the
             // DHU's cluster declares; one detent per BAP step, continuous zoom as one detent
             if (type == 1 || type == 2) {
@@ -141,7 +161,7 @@ NavigationServiceListener {
                 break;
             }
             case 2: {
-                ClusterVideo.sendCommand("rep " + key + " " + Config.CLUSTER_ZOOM_REPEAT_MS);
+                ClusterVideo.sendCommand("rep " + key + " " + ZOOM_REPEAT_MS);
                 break;
             }
             default: {

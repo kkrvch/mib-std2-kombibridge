@@ -213,7 +213,7 @@ NavigationServiceListener {
                 maneuverDescriptor_Status.maneuver_1.mainElement = m.mainElement;
                 maneuverDescriptor_Status.maneuver_1.sidestreets.setContent(m.sidestreets);
                 maneuverDescriptor_Status.maneuver_1.zLevelGuidance = m.zLevelGuidance;
-                // maneuver_2 = the small second arrow (Config.SHOW_NEXT_MANEUVER; AANavReader decides
+                // maneuver_2 = the small second arrow (Config.Navigation.SHOW_NEXT_MANEUVER; AANavReader decides
                 // what it shows). Written on EVERY send, empty when there is none: the status object
                 // is a pooled entity, so an untouched field would carry the previous value over.
                 NavState.NextManeuver next = NavState.nextManeuver;

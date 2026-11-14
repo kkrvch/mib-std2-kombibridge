@@ -15,7 +15,7 @@ import java.io.FileInputStream;
  *
  * Commands to the libgal go through /dev/shmem/aa_cluster_cmd (see sendCommand).
  *
- * Driver modes on the AID while Android Auto is connected (Config.CLUSTER_OK_CYCLE, switched by
+ * Driver modes on the AID while Android Auto is connected (Config.ClusterMap.MODE_CYCLE, switched by
  * the head unit's map/arrows button through ActiveRgType, see switchTo):
  *   MODE_AA_MAP    the phone's map (video on, rgtype 3)
  *   MODE_ARROWS    this mod's turn arrows (video off, rgtype 0)
@@ -49,11 +49,11 @@ public final class ClusterVideo {
 
     private ClusterVideo() {}
 
-    /** HMI start: create or remove GUIDANCE_ONLY_FLAG to match Config.CLUSTER_MAP_ONLY_DURING_GUIDANCE. */
+    /** HMI start: create or remove GUIDANCE_ONLY_FLAG to match Config.ClusterMap.AA_MAP_ONLY_DURING_GUIDANCE. */
     public static void applyMode() {
         try {
             java.io.File f = new java.io.File(GUIDANCE_ONLY_FLAG);
-            if (Config.CLUSTER_MAP_ONLY_DURING_GUIDANCE) {
+            if (Config.ClusterMap.AA_MAP_ONLY_DURING_GUIDANCE) {
                 if (!f.exists()) {
                     java.io.FileWriter w = new java.io.FileWriter(GUIDANCE_ONLY_FLAG);
                     try { w.write("1\n"); } finally { w.close(); }
@@ -242,7 +242,7 @@ public final class ClusterVideo {
             log("cluster session " + (s ? "open" : "closed") + ", mode " + modeName(mode));
             if (s) {
                 // a (re)started libgal begins with video allowed: tell it the driver's choice
-                if (Config.CLUSTER_OK_CYCLE) {
+                if (Config.ClusterMap.MODE_CYCLE) {
                     // follow the unit's switch as it is now (arrows -> arrows mode)
                     if (huType == 0 && mode != MODE_ARROWS) {
                         lastMapMode = mode;

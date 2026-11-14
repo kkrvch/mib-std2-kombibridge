@@ -35,8 +35,8 @@ curl -sS -u root:root --disable-epsv \
 ```
 
 **Before building, review `jar/src/de/aatokombi/Config.java`** and enable the features you want /
-disable the ones you don't (`SHOW_NAV`, `SHOW_MEDIA`, `SHOW_MEDIA_PROGRESS`, `SHOW_COVER_ART`,
-`SUPPRESS_NAV_ACTIVE_PLACEHOLDER`, `LOG_LEVEL`, …). The flags are compile-time constants, so a
+disable the ones you don't (`Navigation.ENABLED`, `Media.ENABLED`, `Media.SHOW_PROGRESS`, `Media.SHOW_COVER_ART`,
+`Advanced.SUPPRESS_NAV_ACTIVE_PLACEHOLDER`, `Advanced.LOG_LEVEL`, …). The flags are compile-time constants, so a
 disabled feature leaves no bytecode behind — you must rebuild the jar after changing them.
 
 ```sh

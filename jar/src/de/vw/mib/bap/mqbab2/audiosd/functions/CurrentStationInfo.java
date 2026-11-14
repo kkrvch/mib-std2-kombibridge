@@ -94,11 +94,11 @@ ExboxServiceListener {
     public static volatile String mediaTitle = null;
     public static volatile String mediaArtist = null;
     public static volatile String mediaAlbum = null;
-    // AAtoKombi now-playing progress (Config.SHOW_MEDIA_PROGRESS). ShmemMediaReader sets these from
+    // AAtoKombi now-playing progress (Config.Media.SHOW_PROGRESS). ShmemMediaReader sets these from
     // the GAL MediaPlaybackStatus (position) / MediaPlaybackMetadata (duration).
     public static volatile int mediaPosSec = 0;
     public static volatile int mediaDurSec = 0;
-    // AAtoKombi feature switches (SHOW_NAV / SHOW_MEDIA / ...) live in de.aatokombi.Config.
+    // AAtoKombi feature switches (Config.Navigation / Config.Media / ...) live in de.aatokombi.Config.
     private static CurrentStationInfo INSTANCE = null;
 
     public static void pokeNav() {
@@ -421,7 +421,7 @@ ExboxServiceListener {
         // status serialization — we fall back to the stock label instead of blanking the widget
         // (a black media menu was seen once on a cold first launch). All our text is length-clamped.
         try {
-            if (Config.SHOW_NAV
+            if (Config.Navigation.ENABLED
                     && connType == 3
                     && !de.vw.mib.bap.mqbab2.navsd.functions.ClusterCaps.isNavCapable()
                     && de.aatokombi.MediaViewMode.showNavigation()
@@ -447,10 +447,10 @@ ExboxServiceListener {
                 String navQ4 = clampLine(navQuaternary);          // null-safe -> ""
                 currentStationInfo_Status.quaternaryInformation.setContent(navQ4);
                 currentStationInfo_Status.qi_Type = 0;
-                if (Config.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "' q4='" + navQ4 + "'");
+                if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "' q4='" + navQ4 + "'");
             }
             // No active route, or music selected by the wheel: show the real now-playing track.
-            else if (Config.SHOW_MEDIA && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
+            else if (Config.Media.ENABLED && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
                 string = clampLine(mediaTitle);                       // line 1: track title
                 n = 72;
                 currentStationInfo_Status.secondaryInformation.setContent(clampLine(mediaArtist));
@@ -458,13 +458,13 @@ ExboxServiceListener {
                 currentStationInfo_Status.tertiaryInformation.setContent(clampLine(mediaAlbum));
                 currentStationInfo_Status.ti_Type = mediaAlbum != null && mediaAlbum.length() != 0 ? 74 : 0;
                 // Optional Q4 progress bar; n=0 selects the 4-line layout (pi_Type note above).
-                String bar = Config.SHOW_MEDIA_PROGRESS ? progressBar(mediaPosSec, mediaDurSec) : "";
+                String bar = Config.Media.SHOW_PROGRESS ? progressBar(mediaPosSec, mediaDurSec) : "";
                 if (bar.length() > 0) {
                     n = 0;
                     currentStationInfo_Status.quaternaryInformation.setContent(clampLine(bar));
                     currentStationInfo_Status.qi_Type = 0;
                 }
-                if (Config.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: track-in-media t='" + mediaTitle + "' a='" + mediaArtist + "' al='" + mediaAlbum + "' bar='" + bar + "'");
+                if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: track-in-media t='" + mediaTitle + "' a='" + mediaArtist + "' al='" + mediaAlbum + "' bar='" + bar + "'");
             }
         } catch (Throwable t) {
             // Never let our injection blank the cluster — revert to the plain "Android Auto" label.

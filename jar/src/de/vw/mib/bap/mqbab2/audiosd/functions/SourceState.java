@@ -66,7 +66,7 @@ RadioServiceListener {
     }
 
     private void applyAndroidAutoPlaybackMode(SourceState_Status sourceState_Status) {
-        if (!Config.SHOW_MEDIA) {
+        if (!Config.Media.ENABLED) {
             return;
         }
         try {

@@ -12,7 +12,7 @@ slog. View on the MQB wheel is MQB 0x23 (35) and is missing (slog 2026-11-10).
 The table has no free entry; the count (29) is compiled in. Entry 28 maps MQB 0xF1 to DSI 60,
 the same DSI code as entry 27 (0xF0). This tool rewrites entry 28 to {0x23, 0, 0, 0, DSI}.
 Default DSI 59 (stock: MQB 0x22, not present on the MQB wheel); the jar must use the same code
-(Config.KEYPANEL_VIEW_CODE).
+(WheelKeys.KEYPANEL_VIEW_CODE).
 
 Only the unit owner's own file is patched; the result is a firmware-derived binary and must not
 be published (dist-*/ is gitignored).

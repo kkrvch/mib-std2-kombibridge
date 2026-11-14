@@ -45,7 +45,7 @@ ConfigurationServiceListener {
 	/**
      * Called once by AANavReader, at the moment AA route guidance STARTS (NavState.ACTIVE
      * false->true), to pick the starting BAP rgtype for this guidance session: arrows (0) or the
-     * stock map (3, MOST_MAP) per Config.FORCE_MAP_ON_KOMBI.
+     * stock map (3, MOST_MAP) per Config.ClusterMap.START_ON_MAP.
      */
     public static void primeForAAStart(boolean wantMap) {
         ActiveRgType i = INSTANCE;
@@ -124,13 +124,13 @@ ConfigurationServiceListener {
     }
 
     /**
-     * Config.CLUSTER_OK_CYCLE: the driver's three cluster modes (de.aatokombi.ClusterVideo) replace
+     * Config.ClusterMap.MODE_CYCLE: the driver's three cluster modes (de.aatokombi.ClusterVideo) replace
      * the stock rgtype while an AA session has its cluster channel open on a nav-capable cluster.
      */
     private static int lastMapSwitchState = -1;
 
     private static boolean aaCycle() {
-        return Config.CLUSTER_OK_CYCLE && ClusterCaps.isNavCapable() && ClusterVideo.session();
+        return Config.ClusterMap.MODE_CYCLE && ClusterCaps.isNavCapable() && ClusterVideo.session();
     }
 
     public void setGetProperty(BAPEntity bAPEntity, PropertyListener propertyListener) {

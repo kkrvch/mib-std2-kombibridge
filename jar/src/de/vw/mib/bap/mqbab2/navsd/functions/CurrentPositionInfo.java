@@ -91,7 +91,7 @@ NavigationServiceListener {
     // Debug-only, change-triggered: what the stock path saw and sent (diagnosing the AID caption).
     private static String lastStockLog = null;
     private static void logStock(String raw, int navStatus, String out) {
-        if (Config.LOG_LEVEL > MIBLogger.DEBUG) {
+        if (Config.Advanced.LOG_LEVEL > MIBLogger.DEBUG) {
             return;
         }
         String line = "CurrentPositionInfo stock: raw='" + raw + "' navStatus=" + navStatus

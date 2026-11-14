@@ -129,19 +129,19 @@ public class AndroidAutoTarget
         // AAtoKombi: feed AA nav from the patched GAL lib via /dev/shmem/aa_nav (replaces the stubbed
         // DSIAndroidAuto2 nav path). A single AANavReader parses the file once and routes the maneuver
         // by runtime cluster type (ClusterCaps): the navsd Navigation menu on a nav-capable cluster,
-        // the media now-playing widget on a non-nav one. Gated by Config.SHOW_NAV so it drives NO
+        // the media now-playing widget on a non-nav one. Gated by Config.Navigation.ENABLED so it drives NO
         // cluster surface when nav is off (not started -> NavState.ACTIVE stays false -> navsd renders
         // stock; the media branch is off too). Defensive: must never break target construction.
         // AAtoKombi: at DEBUG, ask the patched GAL library for its per-trip dump (see TripDump).
         try { de.aatokombi.TripDump.apply(); } catch (Throwable t) {}
         try { de.aatokombi.ClusterVideo.applyMode(); } catch (Throwable t) {}
         try {
-            if (Config.SHOW_NAV) de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
+            if (Config.Navigation.ENABLED) de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
         } catch (Throwable t) {}
         // AAtoKombi: feed the real AA now-playing track via /dev/shmem/aa_media (patched GAL media
         // endpoint), shown in the cluster media widget when no route guidance is active.
-        // Gated by Config.SHOW_MEDIA so now-playing can be turned off independently.
-        try { if (Config.SHOW_MEDIA) new ShmemMediaReader(this).start(); } catch (Throwable t) {}
+        // Gated by Config.Media.ENABLED so now-playing can be turned off independently.
+        try { if (Config.Media.ENABLED) new ShmemMediaReader(this).start(); } catch (Throwable t) {}
         this.requestHandler.initNavigationListener(this.navigationListener);
         this.aslHandler.initNavigationListener(this.navigationListener);
         this.audioHandler.initTimerHandler(this.timerHandler);
@@ -362,11 +362,11 @@ public class AndroidAutoTarget
 
     // The DSI cover-art-URL callback is empty on this platform: AA cover art does not arrive via the
     // DSIAndroidAuto2 attribute here. The real cover bytes come from the patched GAL media endpoint
-    // (/dev/shmem/aa_cover -> ShmemMediaReader -> applyCoverArt below), gated by Config.SHOW_COVER_ART.
+    // (/dev/shmem/aa_cover -> ShmemMediaReader -> applyCoverArt below), gated by Config.Media.SHOW_COVER_ART.
     public void dsiAndroidAuto2UpdateCoverArtUrl(ResourceLocator resourceLocator, int n) {
     }
 
-    // ===== AID album cover (Config.SHOW_COVER_ART) =====================================
+    // ===== AID album cover (Config.Media.SHOW_COVER_ART) =====================================
     // The shim writes the raw AlbumArt bytes to /dev/shmem/aa_cover; here we stage them into the HMI
     // image cache and point TrackInfo list-58's __cover at them with __is_cover_available=true. The
     // stock MediaCoverArtAdapter reads list 58 and the stock CoverArt usecase forwards it to the

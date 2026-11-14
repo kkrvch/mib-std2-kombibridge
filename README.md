@@ -33,7 +33,7 @@ protocol.
   <img src="docs/img/cluster-media.jpg" alt="Android Auto now-playing track with an ASCII progress bar (media mode) on a MIB2 STD2 instrument cluster" width="640">
   <br>
   <em><strong>Media mode:</strong> the real now-playing track (artist / album / title) with an ASCII progress
-  bar (<code>SHOW_MEDIA_PROGRESS</code>, off by default), shown when no route guidance is active.</em>
+  bar (<code>Media.SHOW_PROGRESS</code>, off by default), shown when no route guidance is active.</em>
 </p>
 
 ### SEAT Virtual Cluster (Digital Cockpit)
@@ -50,9 +50,9 @@ protocol.
 <p align="center">
   <img src="docs/img/cluster-cover-seat.jpg" alt="Android Auto album cover art on a SEAT Digital Cockpit / colour Virtual Cluster, with the now-playing track and ASCII progress bar" width="640">
   <br>
-  <em><strong>Cover art</strong> (<code>SHOW_COVER_ART</code>, AID / colour Virtual Cockpit only): the Android Auto
+  <em><strong>Cover art</strong> (<code>Media.SHOW_COVER_ART</code>, AID / colour Virtual Cockpit only): the Android Auto
   album cover pushed to the cluster alongside the now-playing track and the
-  <code>SHOW_MEDIA_PROGRESS</code> bar. Both switches are off by default.</em>
+  <code>Media.SHOW_PROGRESS</code> bar.</em>
 </p>
 
 ### Older PQ cluster (mono centre display)
@@ -241,16 +241,25 @@ goes through `/dev/shmem`, a RAM filesystem).
 
 ### Options
 The defaults just work. All build-time switches live in one file —
-`jar/src/de/aatokombi/Config.java`; flip a constant and rebuild the jar:
-- `SHOW_NAV` — draw AA turn-by-turn on the cluster (the navsd **Navigation** menu on a nav-capable
-  cluster, the media widget on a non-nav one). Default on.
-- `SHOW_MEDIA` — show the real now-playing track when not navigating or when selected with the wheel. Default on.
-- `SHOW_MEDIA_PROGRESS` — add an ASCII playback progress bar to the now-playing track. Default off.
-- `SHOW_COVER_ART` — push the AA album cover to the cluster (AID / colour Virtual Cockpit only; inert
-  on a monochrome cluster). Requires `SHOW_MEDIA`. Default off.
-- `SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is active"*
-  cluster placeholder. Default on.
-- `LOG_LEVEL` — log verbosity (`TRACE` … `SILENT`).
+`jar/src/de/aatokombi/Config.java`, grouped by topic; flip a constant and rebuild the jar
+(`build.sh` prints the values that went into the build, as `Group.NAME value`):
+- `Navigation.ENABLED` — draw AA turn-by-turn on the cluster (the navsd **Navigation** menu on a
+  nav-capable cluster, the media widget on a non-nav one); also the master switch of the AA map on
+  the AID. Default on. Next to it: `SHOW_NEXT_MANEUVER`, `SHOW_DOUBLE_TURN`,
+  `SHOW_JUNCTION_SCHEMATIC` (all default on).
+- `ManeuverStages.*` — how the arrow develops as the turn approaches: the *follow the street* and
+  *prepare* stages (`FOLLOW_STREET`, `PREPARE`) and their distance / time gates (`NEAR_*`,
+  `PREPARE_*`).
+- `Media.ENABLED` — show the real now-playing track when not navigating or when selected
+  with the wheel.
+  Default on. `Media.SHOW_PROGRESS` adds an ASCII playback progress bar (default off);
+  `Media.SHOW_COVER_ART` pushes the AA album cover to the cluster (AID / colour Virtual Cockpit
+  only; inert on a monochrome cluster; default on). Both need `Media.ENABLED`.
+- `ClusterMap.*` — Android Auto's own map on the AID (needs the CLUSTER_SINK libgal and
+  `libkb_dm.so`): `START_ON_MAP`, `AA_MAP_ONLY_DURING_GUIDANCE`, `MODE_CYCLE`.
+- `Advanced.SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is
+  active"* cluster placeholder. Default on. `Advanced.LOG_LEVEL` — log verbosity (`TRACE` …
+  `SILENT`).
 
 Deeper build notes: [`docs/`](docs/) and [`shim/README.md`](shim/README.md).
 

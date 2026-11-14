@@ -446,7 +446,7 @@ implements TimerNotifier {
             int mediaPosSec = de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo.mediaPosSec;
             int mediaDurSec = de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo.mediaDurSec;
 
-            if (Config.SHOW_NAV
+            if (Config.Navigation.ENABLED
                     && connType == 3
                     && NavigationHandler.aaRouteGuidanceActive
                     && navPrimary != null && navPrimary.length() > 0) {
@@ -468,8 +468,8 @@ implements TimerNotifier {
             // the stock media field assignment so it reads like a native track: infotext_1=artist,
             // infotext_2=title, infotext_3=album (or a progress bar in place of album when
             // SHOW_MEDIA_PROGRESS is on \u2014 PQ has no 4th line for it).
-            if (Config.SHOW_MEDIA && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
-                String bar = Config.SHOW_MEDIA_PROGRESS ? progressBar(mediaPosSec, mediaDurSec) : "";
+            if (Config.Media.ENABLED && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
+                String bar = Config.Media.SHOW_PROGRESS ? progressBar(mediaPosSec, mediaDurSec) : "";
                 String line3 = (bar.length() > 0) ? bar : (mediaAlbum != null ? mediaAlbum : "");
                 currentStationInfo_Status.infotext_1.setContent(clampLine(mediaArtist));
                 currentStationInfo_Status.infotext_2.setContent(clampLine(mediaTitle));

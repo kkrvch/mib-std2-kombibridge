@@ -95,14 +95,19 @@ echo "                                    destination distance / travel time, re
 # Every compile-time constant that went into the jar, read back out of the source that produced it.
 # The values are baked in and unreadable afterwards, so printing them here is the only record of what
 # a given pair of artifacts actually does — and the cheapest way to catch a flag left flipped from
-# the previous build. Names are ALL_CAPS by convention; the value is taken verbatim, so a symbolic
+# the previous build. Names are ALL_CAPS by convention, prefixed with their group (nested class); the value is taken verbatim, so a symbolic
 # one (LOG_LEVEL = MIBLogger.INFO) prints as written rather than as a number nobody remembers.
-CONSTANTS="$(sed -n 's/^[[:space:]]*public static final [A-Za-z][A-Za-z0-9_]*[[:space:]]\{1,\}\([A-Z][A-Z0-9_]*\)[[:space:]]*=[[:space:]]*\([^;]*\);.*/\1 \2/p' \
-                 jar/src/de/aatokombi/Config.java 2>/dev/null)"
+CONSTANTS="$(awk '
+  /^[[:space:]]*public static final class [A-Za-z0-9_]+/ { for (i = 1; i <= NF; i++) if ($i == "class") { grp = $(i + 1); sub(/[^A-Za-z0-9_].*$/, "", grp) } next }
+  /^[[:space:]]*public static final [A-Za-z][A-Za-z0-9_]*[[:space:]]+[A-Z][A-Z0-9_]*[[:space:]]*=/ {
+    line = $0; sub(/^[[:space:]]*public static final [A-Za-z][A-Za-z0-9_]*[[:space:]]+/, "", line)
+    name = line; sub(/[[:space:]]*=.*$/, "", name)
+    val = line; sub(/^[^=]*=[[:space:]]*/, "", val); sub(/;.*$/, "", val)
+    print (grp != "" ? grp "." : "") name " " val }' jar/src/de/aatokombi/Config.java 2>/dev/null)"
 if [ -n "$CONSTANTS" ]; then
   echo "  Config.java:"
   printf '%s\n' "$CONSTANTS" \
-    | while read -r name value; do printf "    %-32s %s\n" "$name" "$value"; done
+    | while read -r name value; do printf "    %-44s %s\n" "$name" "$value"; done
 else
   # Silence here would read as "no switches", which is never true — say it is the reader that broke.
   echo "  Config.java: could not read the constants (declaration style changed? see build.sh)"

@@ -5,7 +5,7 @@ package de.aatokombi;
  * MapViewAndOrientation, MapPresentation, MapColorAndType, RepeatLastNavAnnouncement), with the
  * request's public fields. Written to find out whether holding OK on the steering wheel sends the
  * head unit anything (car, 2026-10-30: no ActiveRgType / MapScale request on OK). Only at
- * Config.LOG_LEVEL DEBUG or TRACE. Java 1.3 source; never throws.
+ * Config.Advanced.LOG_LEVEL DEBUG or TRACE. Java 1.3 source; never throws.
  */
 public final class BapTrace {
     private BapTrace() {}
@@ -29,7 +29,7 @@ public final class BapTrace {
     }
 
     public static void log(String function, String request, Object entity) {
-        if (Config.LOG_LEVEL > de.adi961.miblogger.MIBLogger.DEBUG) {
+        if (Config.Advanced.LOG_LEVEL > de.adi961.miblogger.MIBLogger.DEBUG) {
             return;
         }
         try {

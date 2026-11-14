@@ -38,10 +38,10 @@ import java.util.StringTokenizer;
  *
  * On a nav-capable cluster, publishNavsd() additionally builds a multi-spoke junction schematic
  * (JunctionSchematic.buildRoundabout / buildOrdinary) instead of the single-glyph roundabout spoke
- * -- see the `schematic` gate at the top of that method: Config.SHOW_JUNCTION_SCHEMATIC &&
- * ClusterCaps.isNavCapable() (see Config.SHOW_JUNCTION_SCHEMATIC's own doc).
+ * -- see the `schematic` gate at the top of that method: Config.Navigation.SHOW_JUNCTION_SCHEMATIC &&
+ * ClusterCaps.isNavCapable() (see Config.Navigation.SHOW_JUNCTION_SCHEMATIC's own doc).
  * Every time the schematic path actually fires it hex-dumps the resulting mainElement/sidestreets
- * bytes via logSchematic(), at DEBUG (Config.LOG_LEVEL) -- the fastest way to check what a unit was
+ * bytes via logSchematic(), at DEBUG (Config.Advanced.LOG_LEVEL) -- the fastest way to check what a unit was
  * actually sent, against what it renders, without a BAP sniffer.
  *
  * Java 1.4 (cf48): no generics, no autoboxing, no enhanced-for. Must never throw into the HMI.
@@ -235,9 +235,9 @@ public final class AANavReader implements Runnable {
         lastSeq = seq;
         lastSeqChangeMs = System.currentTimeMillis();
 
-        // Verbosity is driven solely by Config.LOG_LEVEL (no private DEBUG flag). Compile-time constant
+        // Verbosity is driven solely by Config.Advanced.LOG_LEVEL (no private DEBUG flag). Compile-time constant
         // -> the per-poll string is not even built unless the jar is compiled at DEBUG/TRACE.
-        if (Config.LOG_LEVEL <= MIBLogger.DEBUG) {
+        if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) {
             MIBLogger.getInstance().debug("aa_nav seq=" + seq + " st=" + status + " conn=" + connected
                     + " sess=" + session + " event=" + event + " side=" + side + " angle=" + angle
                     + " number=" + number + " dist=" + dist + " time=" + time + " unit=" + unit
@@ -281,7 +281,7 @@ public final class AANavReader implements Runnable {
                 // Must run BEFORE publishNavsd() below, so the very first ActiveRgType.poke() of
                 // this guidance session already reports the right rgtype instead of whatever was
                 // left over from a previous session.
-                ActiveRgType.primeForAAStart(Config.FORCE_MAP_ON_KOMBI);
+                ActiveRgType.primeForAAStart(Config.ClusterMap.START_ON_MAP);
             }
             // No rerouting TEXT here: the cluster gets the stock RECALC_ROUTE glyph instead and
             // renders its own, locale-dependent caption for it (see publishNavsd).
@@ -347,14 +347,14 @@ public final class AANavReader implements Runnable {
     static final int MAIN_ELEMENT_PREPARE_UTURN = 31;
 
     /**
-     * Middle stage (Config.MANEUVER_PREPARE_*): not near yet, but inside either prepare gate.
+     * Middle stage (Config.ManeuverStages.PREPARE_*): not near yet, but inside either prepare gate.
      * Only meaningful when maneuverImminent() is false; 0 on a field = "the phone has not said".
      */
     static boolean maneuverPreparing(int dist, int time) {
-        if (time > 0 && time <= Config.MANEUVER_PREPARE_SECONDS) {
+        if (time > 0 && time <= Config.ManeuverStages.PREPARE_SECONDS) {
             return true;
         }
-        return dist > 0 && dist <= Config.MANEUVER_PREPARE_METERS;
+        return dist > 0 && dist <= Config.ManeuverStages.PREPARE_METERS;
     }
 
     /**
@@ -442,10 +442,10 @@ public final class AANavReader implements Runnable {
      * 0 on either field means "the phone has not said"; neither known -> show it, as before.
      */
     static boolean maneuverImminent(int dist, int time) {
-        if (time > 0 && time <= Config.MANEUVER_NEAR_SECONDS) {
+        if (time > 0 && time <= Config.ManeuverStages.NEAR_SECONDS) {
             return true;
         }
-        if (dist > 0 && dist <= Config.MANEUVER_NEAR_METERS) {
+        if (dist > 0 && dist <= Config.ManeuverStages.NEAR_METERS) {
             return true;
         }
         return dist <= 0 && time <= 0;
@@ -458,7 +458,7 @@ public final class AANavReader implements Runnable {
         // Only the glyph waits: street, countdown and destination keep running meanwhile.
         // With both pre-stages off there is nothing to wait for: the manoeuvre is drawn at any distance.
         boolean imminent = maneuverImminent(dist, time)
-                || (!Config.SHOW_FOLLOW_STREET_STAGE && !Config.SHOW_PREPARE_STAGE);
+                || (!Config.ManeuverStages.FOLLOW_STREET && !Config.ManeuverStages.PREPARE);
         if (imminent != lastImminent) {
             // Whether the phone sends a countdown at all cannot be read off the cluster.
             lastImminent = imminent;
@@ -474,7 +474,7 @@ public final class AANavReader implements Runnable {
         int effAngle = effectiveAngle(event, angle, number);    // real bearing (Maps) or synth from exit number (Yandex)
         // The manoeuvre's own glyph. It is what maneuver_1 shows once the manoeuvre is near; while it
         // is still far, maneuver_1 shows FOLLOW_STREET and this glyph can only appear as the preview
-        // in maneuver_2 (Config.SHOW_NEXT_MANEUVER) -- so it is only worth building in those cases.
+        // in maneuver_2 (Config.Navigation.SHOW_NEXT_MANEUVER) -- so it is only worth building in those cases.
         int mainElement = mapMainElement(event, side);
         int direction = mapDirection(event, side, effAngle);
         if (exitOnlyStep) {
@@ -485,11 +485,11 @@ public final class AANavReader implements Runnable {
 		// Exit-road spoke on a roundabout, "" otherwise.
         String sideStreets = buildRingSideStreets(event, effAngle);
 		
-		if (imminent || Config.SHOW_NEXT_MANEUVER || !Config.SHOW_FOLLOW_STREET_STAGE) {
+		if (imminent || Config.Navigation.SHOW_NEXT_MANEUVER || !Config.ManeuverStages.FOLLOW_STREET) {
 			// Multi-spoke junction schematic (JunctionSchematic) -- STRICTLY gated on top of the
 			// compile-time switch: only on a cluster that is nav-capable (navsd is actually driving
 			// this cluster at all).
-			boolean schematic = Config.SHOW_JUNCTION_SCHEMATIC
+			boolean schematic = Config.Navigation.SHOW_JUNCTION_SCHEMATIC
 					&& ClusterCaps.isNavCapable();
 
 			if (schematic && !exitOnlyStep && (event == 11 || event == 12 || event == 13)) {
@@ -517,17 +517,17 @@ public final class AANavReader implements Runnable {
 
         // Second, smaller arrow (maneuver_2): the manoeuvre after this one, or this one as a preview.
         // In the prepare stage maneuver_1 already shows this manoeuvre, so maneuver_2 behaves as near.
-        if (!imminent && !Config.SHOW_FOLLOW_STREET_STAGE && prepareElementFor(mainElement) < 0) {
+        if (!imminent && !Config.ManeuverStages.FOLLOW_STREET && prepareElementFor(mainElement) < 0) {
             imminent = true;        // no FOLLOW_STREET stage and no prepare glyph: the manoeuvre itself
         }
         // Without the FOLLOW_STREET stage the prepare glyph covers the whole far range.
-        boolean preparing = !imminent && Config.SHOW_PREPARE_STAGE
-                && (maneuverPreparing(dist, time) || !Config.SHOW_FOLLOW_STREET_STAGE)
+        boolean preparing = !imminent && Config.ManeuverStages.PREPARE
+                && (maneuverPreparing(dist, time) || !Config.ManeuverStages.FOLLOW_STREET)
                 && prepareElementFor(mainElement) >= 0;
         boolean shown = imminent || preparing;     // maneuver_1 names the manoeuvre itself
-        NavState.nextManeuver   = Config.SHOW_NEXT_MANEUVER
+        NavState.nextManeuver   = Config.Navigation.SHOW_NEXT_MANEUVER
                 ? nextManeuverFor(shown, mainElement, direction, sideStreets, next) : null;
-        int doubleDir = (Config.SHOW_DOUBLE_TURN && imminent && !rerouting)
+        int doubleDir = (Config.Navigation.SHOW_DOUBLE_TURN && imminent && !rerouting)
                 ? doubleTurnDirection(mainElement, side, next) : -1;
         if (doubleDir >= 0) {
             mainElement = MAIN_ELEMENT_DOUBLE_TURN;
@@ -578,7 +578,7 @@ public final class AANavReader implements Runnable {
         NavState.distanceMeters = dist;                          // raw metres (stock formatter in the shadow)
         NavState.zLevelGuidance = 0;
         NavState.ACTIVE         = true;
-        if (Config.LOG_LEVEL <= MIBLogger.DEBUG) {
+        if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) {
             // What actually goes out on BAP this frame -- the other half of the shim's trip dump.
             NavState.NextManeuver nm = NavState.nextManeuver;
             MIBLogger.getInstance().debug("navsd out: imminent=" + imminent + " prep=" + preparing
@@ -656,10 +656,10 @@ public final class AANavReader implements Runnable {
     // actually fires (i.e. the `schematic` gate in publishNavsd() was true AND there was enough data
     // to build one), so a first run on a new/untested unit shows exactly what was sent in
     // aatokombi.log -- without needing a BAP sniffer -- to check against what actually renders on the
-    // cluster. Gated on Config.LOG_LEVEL like every other debug line in this class: the hex-dump is
+    // cluster. Gated on Config.Advanced.LOG_LEVEL like every other debug line in this class: the hex-dump is
     // not built at all unless it will be printed, so this costs nothing on a normal (INFO) build.
     private static void logSchematic(String kind, int mainElement, int direction, String sideStreets) {
-        if (Config.LOG_LEVEL > MIBLogger.DEBUG) {
+        if (Config.Advanced.LOG_LEVEL > MIBLogger.DEBUG) {
             return;
         }
         StringBuffer hex = new StringBuffer(3 * sideStreets.length());
@@ -759,7 +759,7 @@ public final class AANavReader implements Runnable {
     }
 
     // Roundabout exit-road geometry for the maneuver glyph (col3 sidestreets), used when the
-    // JunctionSchematic path is off (Config.SHOW_JUNCTION_SCHEMATIC=false, or the `schematic` gate
+    // JunctionSchematic path is off (Config.Navigation.SHOW_JUNCTION_SCHEMATIC=false, or the `schematic` gate
     // at the top of publishNavsd() is false) -- see JunctionSchematic.buildRoundabout() for the
     // richer multi-spoke string this class normally builds instead. One SIDE_STREET_*
     // glyph at the taken-exit bearing; the cluster draws the entry leg itself, giving an entry+exit
@@ -1048,7 +1048,7 @@ public final class AANavReader implements Runnable {
         if (cleared) {
             return;
         }
-        if (System.currentTimeMillis() - lastSeqChangeMs > Config.AA_STALE_BACKSTOP_MS) {
+        if (System.currentTimeMillis() - lastSeqChangeMs > de.vw.mib.asl.internal.androidauto.target.ShmemMediaReader.AA_STALE_BACKSTOP_MS) {
             clearActive();
         }
     }

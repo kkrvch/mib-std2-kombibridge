@@ -95,8 +95,8 @@ right-turn arrow for the five kilometres before the turn (`AANavReader.maneuverI
 
 | `dist` / `time` to the maneuver | `mainElement` | bargraph |
 |---|---|---|
-| `<= MANEUVER_NEAR_METERS` **or** `<= MANEUVER_NEAR_SECONDS` | the real maneuver | on |
-| `<= MANEUVER_PREPARE_METERS` **or** `<= MANEUVER_PREPARE_SECONDS` | `PREPARE_TURN` / `PREPARE_ROUNDABOUT` / `PREPARE_SQUARE` / `PREPARE_UTURN`, turned the manoeuvre's way | off |
+| `<= ManeuverStages.NEAR_METERS` **or** `<= ManeuverStages.NEAR_SECONDS` | the real maneuver | on |
+| `<= ManeuverStages.PREPARE_METERS` **or** `<= ManeuverStages.PREPARE_SECONDS` | `PREPARE_TURN` / `PREPARE_ROUNDABOUT` / `PREPARE_SQUARE` / `PREPARE_UTURN`, turned the manoeuvre's way | off |
 | further than all gates | `FOLLOW_STREET`, `direction = 0` | off |
 
 The prepare stage (`AANavReader.maneuverPreparing` / `prepareElementFor`, defaults 1000 m / 80 s)
@@ -117,7 +117,7 @@ thresholds are in the native nav engine (Java only forwards the DSI array in
 
 ## Double turn
 
-With `Config.SHOW_DOUBLE_TURN` (default on), a near left/right `TURN` whose next AA step
+With `Config.Navigation.SHOW_DOUBLE_TURN` (default on), a near left/right `TURN` whose next AA step
 (`steps[1]`, IPC line 5) is a turn to the other side is drawn as the stock `DOUBLE_TURN` glyph (35).
 Verified on the AID with a synthetic second step: direction 64 draws "left, then right", 192
 "right, then left"; a same-side pair has no glyph and stays a plain turn. AA gives no distance
@@ -135,7 +135,7 @@ extra hold time — it lasts as long as the phone says so.
 ## The second ("then") arrow — `maneuver_2`
 
 `ManeuverDescriptor` carries up to three manoeuvres; the stock navigation fills `maneuver_2` with
-the one that follows the current manoeuvre. With `Config.SHOW_NEXT_MANEUVER` (default on) the shim
+the one that follows the current manoeuvre. With `Config.Navigation.SHOW_NEXT_MANEUVER` (default on) the shim
 keeps AA's `steps[1]` (IPC line `5 <event> <side> <angle> <number>`) and `AANavReader.nextManeuverFor`
 picks what the second arrow shows:
 

@@ -31,7 +31,7 @@ public final class NavState {
     // On the approach segment, i.e. the real manoeuvre is drawn, not FOLLOW_STREET -> bargraph on.
     public static volatile boolean approaching    = false;
 
-    // The small "then" arrow next to the main one (ManeuverDescriptor.maneuver_2, Config.SHOW_NEXT_MANEUVER).
+    // The small "then" arrow next to the main one (ManeuverDescriptor.maneuver_2, Config.Navigation.SHOW_NEXT_MANEUVER).
     // While the current manoeuvre is near, it is the one AFTER it (AA steps[1]); while it is still far
     // and maneuver_1 shows FOLLOW_STREET, it is the current manoeuvre itself, as a preview. One
     // immutable carrier published in a single volatile write; null = no second arrow.

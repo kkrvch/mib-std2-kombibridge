@@ -530,7 +530,7 @@ extern "C" __attribute__((used)) u32 video_data_continue(){ return ref(R_VIDEO_D
 extern "C" __attribute__((used)) u32 video_config_continue(){ return ref(R_VIDEO_CONFIG)+16; }
 
 // ===== trip dump: everything the phone sent, for offline diagnosis (DEBUG builds only) ===========
-// Off unless the HMI jar runs at Config.LOG_LEVEL <= DEBUG: the jar then creates DUMP_FLAG at HMI
+// Off unless the HMI jar runs at Config.Advanced.LOG_LEVEL <= DEBUG: the jar then creates DUMP_FLAG at HMI
 // start, and the shim checks it once per AA session, on the session's first message. Two append-only
 // text files, one per channel, in /dev/shmem only (RAM: never on the SD card; lost on reboot, so copy
 // them off before the unit restarts):
@@ -888,7 +888,7 @@ static void m_metadata(void* /*self*/, void* arr, u32 a2, u32 a3){
     // data[-3] (_M_length) and capacity = data[-2]. We copy _M_length bytes VERBATIM (binary blob —
     // NOT strlen, which would stop at the first 0x00 inside the JPEG) to COVER_PATH and bump coverseq
     // so the jar re-stages on each track switch. Fully sanity-gated: an implausible field => skip
-    // (coverlen=0), never a bad deref. The AA-active state gate lives in the HMI jar (SHOW_COVER_ART).
+    // (coverlen=0), never a bad deref. The AA-active state gate lives in the HMI jar (Config.Media.SHOW_COVER_ART).
     const u8* adata = (const u8*)a[3];
     g_ms.coverseq++;                       // new metadata => track switch => jar re-evaluates cover
     u32 alen = 0, acap = 0;

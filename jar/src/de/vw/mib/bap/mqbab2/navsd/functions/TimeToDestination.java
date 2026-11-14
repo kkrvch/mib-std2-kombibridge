@@ -188,7 +188,7 @@ SystemServiceListener {
     // Debug-only, change-triggered: which form went out and why.
     private static String lastFormLog = null;
     private static void logForm(int preference, int[] clock) {
-        if (de.aatokombi.Config.LOG_LEVEL > de.adi961.miblogger.MIBLogger.DEBUG) {
+        if (de.aatokombi.Config.Advanced.LOG_LEVEL > de.adi961.miblogger.MIBLogger.DEBUG) {
             return;
         }
         String line = "TimeToDestination: pref=" + preference + " eta='" + NavState.destinationEta + "' -> "

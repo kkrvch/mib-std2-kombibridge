@@ -112,7 +112,7 @@ NavigationServiceListener {
     public void getArray(BAPEntity bAPEntity, ArrayListener arrayListener) {
         // The cluster pulls this array itself; that it does so at all is hardware-confirmed, so what
         // is left to see here is the content. Behind DEBUG: this runs on every FSG request.
-        if (Config.LOG_LEVEL <= MIBLogger.DEBUG) {
+        if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) {
             try {
                 MIBLogger.getInstance().debug("LaneGuidance.getArray: cluster requested "
                         + this.fullLaneGuidanceChangedArray.getArrayData().size() + " lane(s), onOff="

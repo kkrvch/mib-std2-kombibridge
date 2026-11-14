@@ -13,13 +13,13 @@ import java.io.FileReader;
 /**
  * Reads the Android Auto now-playing track from /dev/shmem/aa_media (written by the patched GAL
  * receiver / navshim MediaPlaybackStatusEndpoint, see work/shim/) and shows it on the cluster's
- * media widget via {@link CurrentStationInfo}. Gated by {@link Config#SHOW_MEDIA}.
+ * media widget via {@link CurrentStationInfo}. Gated by {@link Config#Media.ENABLED}.
  *
  * IPC line (the shim rewrites the whole line, O_TRUNC):
  *   seq &lt;Song&gt;\t&lt;Artist&gt;\t&lt;Album&gt;\t&lt;posSec&gt;\t&lt;durSec&gt;\t&lt;coverSeq&gt;\t&lt;coverLen&gt;
  *       \t&lt;connected&gt;\t&lt;session&gt;\t&lt;state&gt;\t&lt;shuffle&gt;\t&lt;repeat&gt;\t&lt;repeatOne&gt;
  * The seq is separated by the first space; the text/number fields are tab-separated. posSec/durSec
- * feed the optional progress bar ({@link Config#SHOW_MEDIA_PROGRESS}); they are appended after the
+ * feed the optional progress bar ({@link Config#Media.SHOW_PROGRESS}); they are appended after the
  * three track strings so an older 3-field line still parses (pos/dur then default to 0 = no bar).
  *
  * Disconnect handling is event-driven, not timed: the shim writes an explicit {@code connected} flag
@@ -27,9 +27,25 @@ import java.io.FileReader;
  * a {@code session} epoch (field 8) that bumps on every reconnect (GalReceiver::init). We clear the
  * now-playing text immediately on connected=0 and on a new session, and KEEP the last track while
  * connected=1 (so a paused track no longer blanks after a few seconds). A long
- * {@link Config#AA_STALE_BACKSTOP_MS} backstop only covers a hard yank that produced no teardown call.
+ * {@link #AA_STALE_BACKSTOP_MS} backstop only covers a hard yank that produced no teardown call.
  */
 public class ShmemMediaReader implements Runnable {
+
+    /**
+     * Backstop timeout (ms) for the ONE disconnect case the GAL library gives no signal for: the
+     * phone is physically yanked and the SAL never tears the receiver down, so the
+     * GalReceiver::shutdown hook never fires and the connected flag stays stuck at 1.
+     *
+     * The normal disconnect edge is event-driven and instant, NOT timed: the patched shim flips an
+     * explicit {@code connected} flag to 0 the moment the AA session tears down (its
+     * GalReceiver::shutdown hook), and bumps a {@code session} epoch on every reconnect
+     * (GalReceiver::init). The readers clear immediately on connected=0 and on a new session, and
+     * KEEP the last frame indefinitely while connected=1 (so Waze frozen at a light no longer
+     * blanks). This backstop only bites when connected has been stuck at 1 with no new data for this
+     * long - a hard yank with no teardown callback. Generous so a long stop never trips it. Also
+     * used by AANavReader.
+     */
+    public static final long AA_STALE_BACKSTOP_MS = 300000L;   // 5 min
 
     private static final String PATH = "/dev/shmem/aa_media";
     private static final long POLL_MS = 500L;
@@ -50,7 +66,7 @@ public class ShmemMediaReader implements Runnable {
 
     /** Create and start the repeating poll timer on the framework timer thread. */
     public void start() {
-        if (!Config.SHOW_MEDIA) {
+        if (!Config.Media.ENABLED) {
             return; // now-playing feature disabled
         }
         try {
@@ -131,9 +147,9 @@ public class ShmemMediaReader implements Runnable {
         int posSec = parseIntSafe(f.length > 3 ? f[3] : null);
         int durSec = parseIntSafe(f.length > 4 ? f[4] : null);
 
-        // Verbosity driven solely by Config.LOG_LEVEL; compile-time gate so this per-poll string is
+        // Verbosity driven solely by Config.Advanced.LOG_LEVEL; compile-time gate so this per-poll string is
         // not built unless compiled at DEBUG/TRACE.
-        if (Config.LOG_LEVEL <= MIBLogger.DEBUG) {
+        if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) {
             MIBLogger.getInstance().debug("aa_media seq=" + seq + " conn=" + connected + " sess=" + session
                     + " song=" + song + " artist=" + artist + " album=" + album
                     + " pos=" + posSec + " dur=" + durSec
@@ -159,7 +175,7 @@ public class ShmemMediaReader implements Runnable {
         // coverSeq advances on every metadata event (track switch); re-evaluate the cover only then,
         // not on the ~1s heartbeat. coverLen 0 => phone sent no art => clear it. Fully gated by
         // SHOW_COVER_ART so a non-AID build never touches the kombipictureserver path.
-        if (Config.SHOW_COVER_ART && target != null) {
+        if (Config.Media.SHOW_COVER_ART && target != null) {
             long coverSeq = parseLongSafe(f.length > 5 ? f[5] : null, -1L);
             int coverLen = parseIntSafe(f.length > 6 ? f[6] : null);
             if (coverSeq != lastCoverSeq) {
@@ -218,7 +234,7 @@ public class ShmemMediaReader implements Runnable {
         if (CurrentStationInfo.mediaTitle == null) {
             return; // nothing shown
         }
-        if (System.currentTimeMillis() - lastSeqChangeMs > Config.AA_STALE_BACKSTOP_MS) {
+        if (System.currentTimeMillis() - lastSeqChangeMs > AA_STALE_BACKSTOP_MS) {
             clearNowPlaying();
         }
     }
@@ -237,7 +253,7 @@ public class ShmemMediaReader implements Runnable {
         CurrentStationInfo.mediaPosSec = 0;
         CurrentStationInfo.mediaDurSec = 0;
         CurrentStationInfo.pokeNav();
-        if (Config.SHOW_COVER_ART && target != null) {
+        if (Config.Media.SHOW_COVER_ART && target != null) {
             try { target.applyCoverArt(0); } catch (Throwable t) {}
             lastCoverSeq = -2L;
         }

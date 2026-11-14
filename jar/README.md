@@ -6,9 +6,9 @@ classes shadow the stock ones with the same fully-qualified names.
 ## Sources (`src/`)
 
 Our own code:
-- `de/aatokombi/Config.java` — the single file of compile-time switches (`SHOW_NAV`, `SHOW_MEDIA`,
-  `SHOW_MEDIA_PROGRESS`, `SHOW_COVER_ART`, `SUPPRESS_NAV_ACTIVE_PLACEHOLDER`,
-  `AA_STALE_BACKSTOP_MS`, `LOG_LEVEL`). Every gate is a compile-time constant, so a disabled
+- `de/aatokombi/Config.java` — the single file of compile-time switches , grouped as nested classes
+  (`Navigation`, `ManeuverStages`, `Media`, `ClusterMap`, `Advanced`). Technical constants (key
+  codes, timeouts) live in the class that uses them. Every gate is a compile-time constant, so a disabled
   feature is dead-code-eliminated and leaves no bytecode behind. Parts of the turn-by-turn feed that
   the runtime already gates — the lane row and the destination distance / travel time (present only
   when the phone sends them), the rerouting notice (protocol 1.7 only) — deliberately have no switch
@@ -49,9 +49,9 @@ MQB (`mqbab2`):
   + distance (big) / distance + time to the destination. Row layout, the glyph set and why the lanes
   live in the street row are documented in [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 - `…/audiosd/functions/CurrentStationHandle.java` — synthesises a valid station handle for the AA
-  source so the centred cover-art view binds (gated on `SHOW_COVER_ART`; a no-op otherwise).
+  source so the centred cover-art view binds (gated on `Media.SHOW_COVER_ART`; a no-op otherwise).
 - `…/common/api/androidauto/AndroidAutoASLDataAdapter.java` — forces
-  `isAndroidAutoRouteGuidanceActive()` false under `SUPPRESS_NAV_ACTIVE_PLACEHOLDER` to hide the
+  `isAndroidAutoRouteGuidanceActive()` false under `Advanced.SUPPRESS_NAV_ACTIVE_PLACEHOLDER` to hide the
   stock *"Navigation on the mobile device is active"* placeholder (folds in the former
   `NavActiveIgnore.jar`).
 

@@ -8,10 +8,10 @@ package de.aatokombi;
  * (src/vcdiag VcLayout.java, measured on a MQB MU1440 + AID 10.5; GPL-3.0, only the facts used):
  *   key 40  roller press = "OK"; states 1 pressed, 0 released, 3 / 4 / 5 held (~0.8 / ~2 / ~3 s)
  *   key 35  View on MHI2 (a short press steps the AID view, a long one opens its view menu);
- *           on MIB2 STD2 only with the patched J5 key panel, as Config.KEYPANEL_VIEW_CODE
+ *           on MIB2 STD2 only with the patched J5 key panel, as KEYPANEL_VIEW_CODE
  * Not yet seen on this MIB2 STD2 unit: every keyboard-4 event is logged at DEBUG.
  *
- * OK held (Config.CLUSTER_OK_HOLD_STATE reached once per press) asks for the next cluster mode;
+ * OK held (MODE_HOLD_STATE reached once per press) asks for the next cluster mode;
  * the switch itself runs on the AANavReader timer (ClusterVideo.poll), not on the DSI thread.
  * Java 1.3 source; never throws.
  */
@@ -29,6 +29,27 @@ public final class WheelKeys {
     public static final int KEY_BACK = 41;
     public static final int KEY_VIEW = 35;
 
+    /**
+     * The key that, held, steps the cluster mode (AA map -> arrows -> stock map, Config.ClusterMap.
+     * MODE_CYCLE): KEY_OK (the roller press) or KEY_BACK (the widget-switch key; a short press keeps
+     * its stock job). -1: none.
+     */
+    private static final int MODE_KEY = KEY_OK;
+    /**
+     * Key-panel hold state that counts as "held": 3 = first level (~0.8 s), 4 (~2 s), 5 (~3 s).
+     * Careful: in some AID views a held OK has its own meaning (e.g. resetting trip data).
+     */
+    private static final int MODE_HOLD_STATE = 4;
+    /**
+     * DSI key code (keyboard 4) of the steering-wheel View key with the patched J5 key panel
+     * (native/keypanel: the stock key table drops MQB 0x23; the patch maps it to this code, default
+     * 59). The key is then logged as "wheel View", counted in /dev/shmem/aa_view_key and kept from
+     * the stock key handling (its stock meaning would be MQB 0x22, absent on the MQB wheel).
+     * -1: no patched key panel, code not treated specially. The patch is on hold (docs/
+     * CLUSTER_VIEW_AND_KEYS.md); must match keypanel_patch.py --view-dsi.
+     */
+    private static final int KEYPANEL_VIEW_CODE = 59;
+
     private static boolean okFired;
     private static volatile boolean cycleRequested;
 
@@ -43,13 +64,13 @@ public final class WheelKeys {
     private static boolean viewHeld;
 
     /**
-     * View from the patched J5 key panel (Config.KEYPANEL_VIEW_CODE). A short press steps the AID
+     * View from the patched J5 key panel (KEYPANEL_VIEW_CODE). A short press steps the AID
      * view; a long one opens the AID view menu and does not step it (zakklmv, MHI2). Counted on
      * release when no hold state (3/4/5) came; the count goes to /dev/shmem/aa_view_key
      * "presses state". Returns true: the stock key handling must not see this key.
      */
     private static boolean viewKey(int keyboard, int code, int state) {
-        if (Config.KEYPANEL_VIEW_CODE < 0 || code != Config.KEYPANEL_VIEW_CODE
+        if (KEYPANEL_VIEW_CODE < 0 || code != KEYPANEL_VIEW_CODE
                 || (keyboard != KEYBOARD_MFW && keyboard != KEYBOARD_MFW_3GP)) return false;
         if (state == 1) {
             viewHeld = false;
@@ -82,15 +103,14 @@ public final class WheelKeys {
         if (logged(keyboard)) {
             ClusterVideo.log("wheel key kbd " + keyboard + " code " + code + " state " + state + " (" + p4 + "," + p5 + ")");
         }
-        int modeKey = Config.CLUSTER_MODE_KEY == Config.MODE_KEY_BACK ? KEY_BACK
-                : Config.CLUSTER_MODE_KEY == Config.MODE_KEY_ROLLER ? KEY_OK : -1;
+        int modeKey = MODE_KEY;
         if (viewKey(keyboard, code, state)) return true;
         if ((keyboard != KEYBOARD_MFW && keyboard != KEYBOARD_MFW_3GP) || modeKey < 0 || code != modeKey) return false;
         if (state == 1 || state == 0) {
             okFired = false;
-        } else if (state >= Config.CLUSTER_OK_HOLD_STATE && !okFired) {
+        } else if (state >= MODE_HOLD_STATE && !okFired) {
             okFired = true;
-            if (Config.CLUSTER_OK_CYCLE) {
+            if (Config.ClusterMap.MODE_CYCLE) {
                 cycleRequested = true;
                 ClusterVideo.log("wheel OK held: next cluster mode requested");
             }

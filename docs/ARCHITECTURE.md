@@ -103,7 +103,7 @@ measured on the cluster, top to bottom:
 | 1 | `secondaryInformation` | street, the rerouting notice, or the **lane row** while there is one | artist |
 | 2 | `tertiaryInformation` | the navigator's instruction text when it says more than the street (IPC line 9), else the maneuver word; + roundabout exit | album |
 | 3 | `primaryInformation` (**big font**) | arrow glyph + distance to the turn | track title |
-| 4 | `quaternaryInformation` | distance + time to the destination | progress bar (`SHOW_MEDIA_PROGRESS`) |
+| 4 | `quaternaryInformation` | distance + time to the destination | progress bar (`Media.SHOW_PROGRESS`) |
 
 ```
 | x | x | ► |         <- lanes, only in the last few hundred metres

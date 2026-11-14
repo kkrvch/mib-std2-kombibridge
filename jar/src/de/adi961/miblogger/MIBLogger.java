@@ -17,7 +17,7 @@ public class MIBLogger {
     public static final int ERROR = 4;
     public static final int SILENT = 5;
 
-    private int logLevel = Config.LOG_LEVEL;
+    private int logLevel = Config.Advanced.LOG_LEVEL;
 
     static MIBLogger instance;
 

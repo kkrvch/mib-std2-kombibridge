@@ -43,9 +43,6 @@ public final class KombiMap {
 
     /** About once a second: is Android Auto's cluster video alive. */
     public static void phoneVideo(boolean video) {
-        if (!Config.HIDE_STOCK_KOMBI_MAP_DURING_AA_VIDEO) {
-            return;
-        }
         long now = System.currentTimeMillis();
         if (video) videoMs = now;
         if (video && (!hidden || now - sentMs >= RESEND_MS)) {
