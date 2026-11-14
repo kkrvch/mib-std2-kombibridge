@@ -147,7 +147,7 @@ ConfigurationServiceListener {
         } catch (Throwable t) {}
         if (cycle) {
             // car log 2026-10-30: the cluster sends this as part of the head unit's "Map" button
-            // (SetGet rgtype=3, then mapSwitchState 5 -> 2); holding OK sends nothing
+            // (SetGet rgtype=3, then mapSwitchState 5 -> 2); holding the mode key sends nothing
             int rq = activeRgType_SetGet.rgtype;
             if (rq == 0 || rq == 3) {
                 ClusterVideo.switchTo(rq);

@@ -93,12 +93,12 @@ public final class ClusterVideo {
      * "arrows" the unit's cluster map (and with it DisplayManager's cluster encoder, which carries
      * the AA video too) is presumably off. The same type again (the cluster's echo) changes nothing.
      */
-    /** Next mode for the steering-wheel OK hold: AA map -> arrows -> stock map -> AA map. */
+    /** Next mode for the steering-wheel mode key hold: AA map -> arrows -> stock map -> AA map. */
     public static synchronized void nextMode() {
         if (mode != MODE_ARROWS) lastMapMode = mode;
         mode = (mode + 1) % 3;
         sendCommand("video " + (mode == MODE_AA_MAP ? 1 : 0));
-        log("cluster mode -> " + modeName(mode) + " (OK held)");
+        log("cluster mode -> " + modeName(mode) + " (mode key held)");
     }
 
     /** The head unit's switch as last seen (0 arrows, 3 map, -1 unknown), recorded always. */
@@ -197,7 +197,7 @@ public final class ClusterVideo {
                 nextMode();
                 try { de.vw.mib.bap.mqbab2.navsd.functions.ActiveRgType.poke(); } catch (Throwable t) {}
             } else {
-                log("OK held without an AA cluster session: ignored");
+                log("mode key held without an AA cluster session: ignored");
             }
         }
         long now = System.currentTimeMillis();

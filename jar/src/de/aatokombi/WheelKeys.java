@@ -11,7 +11,7 @@ package de.aatokombi;
  *           on MIB2 STD2 only with the patched J5 key panel, as KEYPANEL_VIEW_CODE
  * Not yet seen on this MIB2 STD2 unit: every keyboard-4 event is logged at DEBUG.
  *
- * OK held (MODE_HOLD_STATE reached once per press) asks for the next cluster mode;
+ * The mode key held (MODE_HOLD_STATE reached once per press) asks for the next cluster mode;
  * the switch itself runs on the AANavReader timer (ClusterVideo.poll), not on the DSI thread.
  * Java 1.3 source; never throws.
  */
@@ -19,11 +19,12 @@ public final class WheelKeys {
     public static final int KEYBOARD_MFW = 4;
     public static final int KEYBOARD_MFW_3GP = 8;
     /**
-     * OK on THIS car (the development car, MIB2 STD2): the press of the RIGHT roller arrives as key 44
-     * (car 2026-11-02, the driver's confirmation). The MQB MHI2 of zakklmv sends its roller press
-     * as key 40; here no key 40 arrived (40 is only the left roller's turn, encoder 40).
+     * The press of the volume roller (Mute in the stock HMI) on THIS car (the development car, MIB2 STD2)
+     * arrives as key 44 (car 2026-11-02, the driver's confirmation). It is not an "OK" key: the
+     * MQB MHI2 of zakklmv sends its OK (roller press) as key 40; here no key 40 arrived (40 is
+     * only the other roller's turn, encoder 40).
      */
-    public static final int KEY_OK = 44;
+    public static final int KEY_VOLUME_ROLLER = 44;
     /** KEY_MFW_CANCEL: the MQB wheel's BACK / widget-switch key (car 2026-11-07: states 1/0,
      *  held 3/4/5 like the roller). */
     public static final int KEY_BACK = 41;
@@ -31,7 +32,7 @@ public final class WheelKeys {
 
     /**
      * Key-panel hold state that counts as "held": 3 = first level (~0.8 s), 4 (~2 s), 5 (~3 s).
-     * Careful: in some AID views a held OK has its own meaning (e.g. resetting trip data).
+     * Careful: some AID views give a held wheel key a meaning of their own.
      */
     private static final int MODE_HOLD_STATE = 4;
     /**
@@ -44,7 +45,7 @@ public final class WheelKeys {
      */
     private static final int KEYPANEL_VIEW_CODE = 59;
 
-    private static boolean okFired;
+    private static boolean modeKeyFired;
     private static volatile boolean cycleRequested;
 
     private WheelKeys() {}
@@ -97,17 +98,17 @@ public final class WheelKeys {
         if (logged(keyboard)) {
             ClusterVideo.log("wheel key kbd " + keyboard + " code " + code + " state " + state + " (" + p4 + "," + p5 + ")");
         }
-        int modeKey = Config.ClusterMap.MODE_KEY == Config.ClusterMap.MODE_KEY_BACK ? KEY_BACK
-                : Config.ClusterMap.MODE_KEY == Config.ClusterMap.MODE_KEY_ROLLER ? KEY_OK : -1;
+        int modeKey = Config.ClusterMap.MODE_KEY == Config.ClusterMap.ModeKey.BACK ? KEY_BACK
+                : Config.ClusterMap.MODE_KEY == Config.ClusterMap.ModeKey.VOLUME_ROLLER ? KEY_VOLUME_ROLLER : -1;
         if (viewKey(keyboard, code, state)) return true;
         if ((keyboard != KEYBOARD_MFW && keyboard != KEYBOARD_MFW_3GP) || modeKey < 0 || code != modeKey) return false;
         if (state == 1 || state == 0) {
-            okFired = false;
-        } else if (state >= MODE_HOLD_STATE && !okFired) {
-            okFired = true;
+            modeKeyFired = false;
+        } else if (state >= MODE_HOLD_STATE && !modeKeyFired) {
+            modeKeyFired = true;
             if (Config.ClusterMap.MODE_CYCLE) {
                 cycleRequested = true;
-                ClusterVideo.log("wheel OK held: next cluster mode requested");
+                ClusterVideo.log("wheel mode key held: next cluster mode requested");
             }
         }
         return false;
