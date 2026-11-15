@@ -1110,8 +1110,13 @@ static void* cl_ticker(void*){
     if(p_usleep) p_usleep(10000); else return 0;
     u32 now=cl_now_ms();
     g_tickBusy=1; __sync_synchronize();          // store busy, then load session (see cluster_video_off)
-    if(g_clSession) cl_tick(now); else cl_tick_idle(now);
+    u32 session=g_clSession;
+    if(session) cl_tick(now); else cl_tick_idle(now);
     __sync_synchronize(); g_tickBusy=0;
+    // No AA session: nothing to pace and nothing to poll - ten passes a second instead of a
+    // hundred (the thread lives as long as the SAL). The first pass of a new session comes at
+    // most 100 ms after cluster_register, long before the phone's Setup.
+    if(!session) p_usleep(90000);
   }
   return 0;
 }

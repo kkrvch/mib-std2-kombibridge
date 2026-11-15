@@ -57,17 +57,13 @@ per-session totals). Legacy `8004`/`8005` ids showing up there mean the session 
 VIDEO_PROBE=1 ./build.sh /your/unit/libext.google.gal.receiver.so
 # Optional, heavyweight forensic mode (not for normal runtime use):
 VIDEO_PROBE=1 VIDEO_PROBE_DEEP=1 ./build.sh /your/unit/libext.google.gal.receiver.so
-# Optional, bounded H.264 ingress stage (no decoder/display yet):
-VIDEO_PIPELINE=1 ./build.sh /your/unit/libext.google.gal.receiver.so
 ```
 Requirements: `clang`, `ld.lld` (`brew install lld`), `python3` + `pyelftools`.
 
-`VIDEO_PIPELINE=1` installs the same callback trampolines but adds a bounded RAM-only queue. It
-retains SPS/PPS, drops non-IDR access units until recovery, copies accepted Annex-B units before
-the stock callback continues to its normal ACK path, and resets the queue on the AA disconnect
-edge. This is the ingestion stage of the patch; it does not yet claim to render decoded frames on
-MOST/AID. Keep it separate from `VIDEO_PROBE_DEEP=1`: deep forensic scans were observed to reboot
-the HU and are not part of the runtime pipeline.
+`VIDEO_PROBE_DEEP=1` deep forensic scans were observed to reboot the HU; they are for one
+controlled diagnostic run only. (The earlier `VIDEO_PIPELINE=1` ingress queue is gone: it copied
+the MAIN display's video into a queue nothing ever read. The AA map on the cluster takes another
+way - its own cluster-type sink, `CLUSTER_SINK=1`, see `src/cluster_sink.h`.)
 
 ## Per-firmware addresses — auto-resolved
 The addresses differ between libgal builds (even between two copies of the same build — e.g. the

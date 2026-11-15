@@ -67,7 +67,7 @@ stage "$GAL" shim/lib/libext.google.gal.receiver.so
 echo "==> [3/4] running build in container"
 docker run --rm -v "$PWD":/work -w /work --user "$(id -u):$(id -g)" \
   -e HOME=/tmp -e VIDEO_PROBE="${VIDEO_PROBE:-0}" -e VIDEO_PROBE_DEEP="${VIDEO_PROBE_DEEP:-0}" \
-  -e VIDEO_PIPELINE="${VIDEO_PIPELINE:-0}" -e CLUSTER_SINK="${CLUSTER_SINK:-0}" \
+  -e CLUSTER_SINK="${CLUSTER_SINK:-0}" \
   -e CLUSTER_DEFINES="${CLUSTER_DEFINES:-}" \
   -e ALLOW_SHADOW_MISMATCH="${ALLOW_SHADOW_MISMATCH:-0}" \
   "$IMAGE" /work/docker/entrypoint.sh

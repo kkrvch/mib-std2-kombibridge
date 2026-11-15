@@ -248,7 +248,12 @@ in the plan.
 
 ## Runtime design
 
-1. **Ingress stage implemented behind `VIDEO_PIPELINE=1`:** on codec config, retain bounded SPS/PPS;
+   > Superseded (2026-11): the map on the AID is built on a second, cluster-type video sink
+   > (`src/cluster_sink.h`, `native/`), not on the main display's stream described here. The
+   > `VIDEO_PIPELINE=1` ingress stage of item 1 was removed from the sources; the text is kept
+   > as the record of that design.
+
+1. **Ingress stage (was behind `VIDEO_PIPELINE=1`, removed):** on codec config, retain bounded SPS/PPS;
    on data callback, apply the recovered `IoBuffer` arithmetic, parse only NAL headers, and copy
    accepted access units into a three-slot, 64 KiB-per-slot RAM queue. Non-IDR units are dropped
    while waiting for recovery; queue overflow drops the oldest unit instead of stalling GAL.

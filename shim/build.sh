@@ -24,7 +24,6 @@
 # Usage:   ./build.sh /path/to/libext.google.gal.receiver.so
 #          VIDEO_PROBE=1 ./build.sh /path/to/libext.google.gal.receiver.so  # capture-only VideoSink probe
 #          CLUSTER_SINK=1 ./build.sh /path/to/libext.google.gal.receiver.so  # cluster video sink experiment
-#          VIDEO_PIPELINE=1 ./build.sh /path/to/libext.google.gal.receiver.so  # bounded H.264 ingress
 #          LIBGAL=/path/to/libgal.so ./build.sh
 #
 set -e
@@ -42,13 +41,6 @@ AA_PROTOCOL_MINOR=7
 VIDEO_PROBE_ARGS=""
 if [ "${VIDEO_PROBE:-0}" = "1" ]; then
   VIDEO_PROBE_ARGS="--video-probe"
-fi
-VIDEO_PIPELINE_FLAGS=""
-if [ "${VIDEO_PIPELINE:-0}" = "1" ]; then
-  # The pipeline necessarily hooks the same two callbacks, but its bounded queue is compiled
-  # separately from the forensic/probe diagnostics.
-  VIDEO_PROBE_ARGS="--video-probe"
-  VIDEO_PIPELINE_FLAGS="-DVIDEO_PIPELINE=1"
 fi
 DEEP_PROBE_FLAGS=""
 CLUSTER_ARGS=""
@@ -74,7 +66,7 @@ fi
 
 mkdir -p build
 echo "[1/3] compile  src/navshim_fs.cpp -> build/navshim.o"
-$CLANG $FLAGS $DEEP_PROBE_FLAGS $VIDEO_PIPELINE_FLAGS $CLUSTER_FLAGS -c src/navshim_fs.cpp -o build/navshim.o
+$CLANG $FLAGS $DEEP_PROBE_FLAGS $CLUSTER_FLAGS -c src/navshim_fs.cpp -o build/navshim.o
 
 echo "[2/3] link     -> build/navshim.so (self-contained ET_DYN, R_ARM_RELATIVE only)"
 # max-page-size=0x1000 keeps the blob compact (without it lld puts each segment on a 64 KB page).

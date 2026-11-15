@@ -182,10 +182,6 @@ The resulting `dist-probe/libext.google.gal.receiver.so` records callback counte
 The heavy one-shot forensic collector is opt-in with `VIDEO_PROBE_DEEP=1`; it is intended for a
 single controlled diagnostic run and is not the normal probe mode.
 
-The first runtime stage of the actual video patch is opt-in with `VIDEO_PIPELINE=1`. It adds a
-bounded RAM-only H.264 ingress queue and IDR recovery, while leaving decoder/display disabled until
-their recovered firmware ABI is wired in. This stage is separate from the forensic collector.
-
 Android Auto map on the Active Info Display (experimental) is opt-in with `CLUSTER_SINK=1`. The
 patched libgal advertises a second, cluster-type H.264 display to the phone and passes its stream
 to DisplayManager through shared memory; `native/libkb_dm.so`, preloaded into DisplayManager, sends
