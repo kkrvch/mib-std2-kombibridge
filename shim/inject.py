@@ -5,7 +5,7 @@
 #  - DT_REL/DT_RELSZ/DT_RELCOUNT are patched in place
 #  - the `BL onChannelOpened` in the tail of GalReceiver::init  -> `BL init_trampoline`     (session up)
 #  - the 1st `BL MessageRouter::shutdown` in GalReceiver::shutdown -> `BL shutdown_trampoline` (session down)
-import sys, struct, io, argparse
+import sys, struct, io, argparse, hashlib
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 
@@ -16,6 +16,14 @@ TRAMPOLINE_SYM2='shutdown_trampoline'
 TRAMPOLINE_VIDEO_DATA='video_data_trampoline'
 TRAMPOLINE_VIDEO_CONFIG='video_config_trampoline'
 
+# libgal builds this shim has actually run on (sha256 of the STOCK file -> where it comes from).
+# Function addresses are resolved from any build, but the object layouts the shim relies on
+# (MessageRouter inside GalReceiver, its service table, the endpoint fields, the listener
+# callbacks' arguments, IoBuffer) are known only from these: another build gets a warning.
+KNOWN_LIBGAL={
+    '7af20a37e9fc111058e54f6a94d432f0e4be8c8731bafdbd1d653e17ee180499': 'development unit (MST2_EU_SK_ZR_P0480T)',
+}
+
 # --- per-firmware addresses are AUTO-RESOLVED from the target libgal (no hardcoding) ---
 # The blob's .galrefs slots (see navshim_fs.cpp g_ref[]) are filled here, in this exact order.
 #   0 R_REGISTER     GalReceiver::registerService          (.dynsym)
@@ -25,10 +33,13 @@ TRAMPOLINE_VIDEO_CONFIG='video_config_trampoline'
 #   4 R_MEDIA_VTABLE _ZTV27MediaPlaybackStatusEndpoint     (.dynsym; navshim adds +8 at runtime)
 #   5 R_MR_SHUTDOWN  MessageRouter::shutdown               (.dynsym; call displaced from the 1st BL
 #                                                           of GalReceiver::shutdown)
-#   6 R_ROUTE_GOT    MessageRouter::routeMessage GOT slot  (R_ARM_JUMP_SLOT; navshim repoints it)
-#   7 R_ROUTE_FN     MessageRouter::routeMessage           (.dynsym; the wrapper calls it directly)
-#   8 R_QOUT_GOT     MessageRouter::queueOutgoing GOT slot (R_ARM_JUMP_SLOT; navshim repoints it)
-#   9 R_QOUT_FN      MessageRouter::queueOutgoing          (.dynsym; the wrapper calls it directly)
+#   6 R_VIDEO_DATA   VideoSink::handleDataAvailable        (.dynsym; 0 if absent, video probe only)
+#   7 R_VIDEO_CONFIG VideoSink::handleCodecConfig          (.dynsym; 0 if absent, video probe only)
+#   8 R_QUEUE_OUT    MessageRouter::queueOutgoing          (.dynsym; 0 if absent, cluster sink sends)
+#   9 R_ROUTE_GOT    MessageRouter::routeMessage GOT slot  (R_ARM_JUMP_SLOT; navshim repoints it)
+#  10 R_ROUTE_FN     MessageRouter::routeMessage           (.dynsym; the wrapper calls it directly)
+#  11 R_QOUT_GOT     MessageRouter::queueOutgoing GOT slot (R_ARM_JUMP_SLOT; navshim repoints it)
+#  12 R_QOUT_FN      MessageRouter::queueOutgoing          (.dynsym; the wrapper calls it directly)
 SYM_REGISTER='_ZN11GalReceiver15registerServiceEP20ProtocolEndpointBase'
 SYM_NAV_VTABLE='_ZTV24NavigationStatusEndpoint'
 SYM_ONCHOPEN='_ZN20ProtocolEndpointBase15onChannelOpenedEh'  # the call displaced from init's tail
@@ -66,6 +77,10 @@ def dynsym_map(e):
     ds=e.get_section_by_name('.dynsym')
     return {sy.name:sy['st_value'] for sy in ds.iter_symbols() if sy.name}
 
+def dynsym_sizes(e):
+    ds=e.get_section_by_name('.dynsym')
+    return {sy.name:sy['st_size'] for sy in ds.iter_symbols() if sy.name}
+
 def jump_slot_map(e):
     """symbol name -> GOT slot vaddr (r_offset) for every R_ARM_JUMP_SLOT relocation."""
     out={}
@@ -99,10 +114,16 @@ def plt_stub_for_got(e,raw,v2f,got_slot):
 def find_bl_to(e,raw,v2f,syms,func_sym,target,last):
     """Scan the function `func_sym` for the BL whose target == `target` (a PLT stub).
     `last=True` keeps the last match (init's tail call); `last=False` the first (shutdown's 1st BL).
-    Returns (file_offset, vaddr) of that BL, or (None,None). Function end = next dynsym symbol."""
+    Returns (file_offset, vaddr) of that BL, or (None,None). Function end = the symbol's own size;
+    only a symbol without one falls back to the next dynsym symbol (which may lie beyond local
+    functions that follow, so a "last" match could then come from one of those)."""
     start=syms[func_sym]
-    higher=[v for v in syms.values() if v>start]
-    end=min(higher) if higher else start+0x400
+    size=dynsym_sizes(e).get(func_sym,0)
+    if size:
+        end=start+size
+    else:
+        higher=[v for v in syms.values() if v>start]
+        end=min(higher) if higher else start+0x400
     hit=(None,None)
     for va in range(start,end,4):
         w=g32(raw,v2f(va))
@@ -316,6 +337,19 @@ def main():
     a=ap.parse_args()
     raw=bytearray(open(a.gal,'rb').read())
     e=ELFFile(io.BytesIO(raw))
+    # The input must be the STOCK library. A stock libgal has no writable+executable segment; ours
+    # adds one, so finding it means this file went through inject.py before (e.g. it was dumped
+    # from a unit that already runs the mod).
+    if any(s['p_type']=='PT_LOAD' and (s['p_flags']&7)==7 for s in e.iter_segments()):
+        sys.exit("ERROR: %s is already patched (it has an injected RWX segment).\n"
+                 "       Use the STOCK libext.google.gal.receiver.so of the unit (the backup made at install)."%a.gal)
+    digest=hashlib.sha256(bytes(raw)).hexdigest()
+    if digest in KNOWN_LIBGAL:
+        print("libgal sha256 %s: known build, %s"%(digest,KNOWN_LIBGAL[digest]))
+    else:
+        print("WARNING: libgal sha256 %s is NOT a build this shim has run on."%digest)
+        print("         Addresses are resolved from this file, but the object layouts are assumed to be")
+        print("         those of the known builds. Test with care and keep the stock file for rollback.")
     minor_patch=None
     if a.aa_protocol_minor is not None:
         minor_patch=patch_protocol_version(e,raw,a.aa_protocol_minor)
@@ -334,7 +368,8 @@ def main():
         if tag in DT: dt[DT[tag]]=(o,val)
         if tag==0: break
         o+=8
-    rel_foff=dt['REL'][1]; rel_sz=dt['RELSZ'][1]; relcount=dt['RELCOUNT'][1]
+    # DT_REL is a virtual address: go through the load map for the file offset.
+    rel_foff=vaddr_to_foff(e)(dt['REL'][1]); rel_sz=dt['RELSZ'][1]; relcount=dt['RELCOUNT'][1]
     n_old=rel_sz//8
     print("libgal: DT_REL@0x%x size=0x%x (%d entries) RELCOUNT=%d phnum=%d"%(rel_foff,rel_sz,n_old,relcount,e_phnum))
 
@@ -469,9 +504,22 @@ def main():
         s32(raw,video_sites[3],video_b[1])
     if sdr_bl is not None:
         s32(raw,sdr_site[0],sdr_bl)
-    # 2) add a 7th phdr (room exists: phoff+phnum*32 .. up to DT_HASH at 0x118)
+    # 2) add one more phdr right after the table. What lies there is checked, not assumed: the
+    #    entry may only cover zero padding or note sections (on the known builds it takes the place
+    #    of .note.gnu.build-id, which nothing on the unit reads) and must end before the first other
+    #    section (.hash on the known builds, at 0x118).
     ph_new_off=e_phoff+e_phnum*e_phentsize
-    assert ph_new_off+e_phentsize<=0x118, "no room for the phdr"
+    ph_new_end=ph_new_off+e_phentsize
+    for sec in e.iter_sections():
+        if sec['sh_type'] in ('SHT_NULL','SHT_NOBITS') or sec['sh_size']==0: continue
+        lo=sec['sh_offset']; hi=lo+sec['sh_size']
+        if lo<ph_new_end and hi>ph_new_off and sec['sh_type']!='SHT_NOTE':
+            sys.exit("ERROR: no room for one more program header: section %s is at 0x%x"%(sec.name,lo))
+    notes=[(sec['sh_offset'],sec['sh_offset']+sec['sh_size']) for sec in e.iter_sections()
+           if sec['sh_type']=='SHT_NOTE']
+    for off in range(ph_new_off,ph_new_end):
+        if raw[off] and not any(lo<=off<hi for lo,hi in notes):
+            sys.exit("ERROR: no room for one more program header: data at file offset 0x%x"%off)
     PT_LOAD=1; PF_R=4;PF_W=2;PF_X=1
     struct.pack_into('<8I',raw,ph_new_off, PT_LOAD,new_foff,new_vaddr,new_vaddr,
                      seg_filesz,seg_memsz, PF_R|PF_W|PF_X, 0x1000)

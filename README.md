@@ -134,8 +134,10 @@ only builds the two artifacts.
 ## Patch the unit (step by step)
 
 You build the two artifacts **against the exact files from your own unit**, then deploy them back
-with the toolbox. Nothing here is firmware-version-specific — the shim auto-adapts across STD2
-firmware builds. (Development was done on **`MST2_EU_SK_ZR_P0480T`**.)
+with the toolbox. The libgal patch resolves its addresses from your file, so another STD2 firmware
+build needs no manual editing — but the mod has only been run on **`MST2_EU_SK_ZR_P0480T`**: the
+object layouts inside libgal and the shadowed HMI classes are taken from that build, and the
+build warns when your libgal is a different one. On another firmware treat it as untested.
 
 > For a pure **FTP + Telnet** install/build/rollback flow, follow
 > [`docs/INSTALL_FTP_TELNET.md`](docs/INSTALL_FTP_TELNET.md) instead (Still requires toolbox to enable FTP/Telnet).
