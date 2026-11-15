@@ -75,22 +75,31 @@ public class MIBLogger {
      */
     static final String MIRROR_PATH = "/dev/shmem/aatokombi.log";
     static final long MIRROR_MAX_BYTES = 1024L * 1024L;
+    private static String mirrorPath = MIRROR_PATH;
+    private static long mirrorMax = MIRROR_MAX_BYTES;
     private static long mirrorBytes = -1L;
 
-    private static synchronized void mirror(String line) {
+    /** Host tests only: another file and limit (the unit always uses the constants above). */
+    static synchronized void mirrorTo(String path, long maxBytes) {
+        mirrorPath = path;
+        mirrorMax = maxBytes;
+        mirrorBytes = -1L;
+    }
+
+    static synchronized void mirror(String line) {
         try {
             if (mirrorBytes < 0L) {
-                mirrorBytes = new java.io.File(MIRROR_PATH).length();   // 0 when there is no file yet
+                mirrorBytes = new java.io.File(mirrorPath).length();   // 0 when there is no file yet
             }
-            if (mirrorBytes >= MIRROR_MAX_BYTES) {
-                java.io.File old = new java.io.File(MIRROR_PATH + ".1");
+            if (mirrorBytes >= mirrorMax) {
+                java.io.File old = new java.io.File(mirrorPath + ".1");
                 old.delete();
-                if (!new java.io.File(MIRROR_PATH).renameTo(old)) {
-                    new java.io.File(MIRROR_PATH).delete();
+                if (!new java.io.File(mirrorPath).renameTo(old)) {
+                    new java.io.File(mirrorPath).delete();
                 }
                 mirrorBytes = 0L;
             }
-            java.io.FileWriter fw = new java.io.FileWriter(MIRROR_PATH, true);
+            java.io.FileWriter fw = new java.io.FileWriter(mirrorPath, true);
             try {
                 fw.write(line);
                 fw.write('\n');

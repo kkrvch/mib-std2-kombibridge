@@ -51,17 +51,20 @@ public final class WheelKeys {
     /** The patch's own off switch (startup_main then starts the stock key panel). */
     private static final String KEYPANEL_PATCH_OFF_FILE = "/tsd/var/aatokombi/no-keypanel-patch";
 
-    private static int viewCode = -2;   // -2 not looked up yet, -1 no patched key panel
+    static int viewCode = -2;   // -2 not looked up yet, -1 no patched key panel (package: host tests)
+
+    /** The decision itself: the View code only with the patched key panel installed and not off. */
+    static int viewCodeFor(boolean patchInstalled, boolean patchOff) {
+        return (patchInstalled && !patchOff) ? KEYPANEL_VIEW_CODE : -1;
+    }
 
     /** KEYPANEL_VIEW_CODE when the patched key panel is installed and on, else -1. Looked up once. */
     private static int viewCode() {
         if (viewCode == -2) {
             int c = -1;
             try {
-                if (new java.io.File(KEYPANEL_PATCH_FILE).exists()
-                        && !new java.io.File(KEYPANEL_PATCH_OFF_FILE).exists()) {
-                    c = KEYPANEL_VIEW_CODE;
-                }
+                c = viewCodeFor(new java.io.File(KEYPANEL_PATCH_FILE).exists(),
+                        new java.io.File(KEYPANEL_PATCH_OFF_FILE).exists());
             } catch (Throwable t) {
                 // not readable: no patch
             }

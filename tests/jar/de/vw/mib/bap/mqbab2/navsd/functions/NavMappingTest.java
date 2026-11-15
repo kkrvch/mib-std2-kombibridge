@@ -333,8 +333,8 @@ public final class NavMappingTest {
     // ---- when the manoeuvre replaces "follow the street" ---------------------------------------
     // 0 means "not said" on both fields; read as "zero away" it would show the manoeuvre all route.
     private static void imminence() {
-        int m = de.aatokombi.Config.MANEUVER_NEAR_METERS;
-        int s = de.aatokombi.Config.MANEUVER_NEAR_SECONDS;
+        int m = de.aatokombi.Config.ManeuverStages.NEAR_METERS;
+        int s = de.aatokombi.Config.ManeuverStages.NEAR_SECONDS;
 
         yes("at the metre gate",        AANavReader.maneuverImminent(m, 0));
         yes("inside the metre gate",    AANavReader.maneuverImminent(m - 1, 0));
@@ -423,8 +423,8 @@ public final class NavMappingTest {
     }
 
     private static void prepareStage() {
-        int m = de.aatokombi.Config.MANEUVER_PREPARE_METERS;
-        int s = de.aatokombi.Config.MANEUVER_PREPARE_SECONDS;
+        int m = de.aatokombi.Config.ManeuverStages.PREPARE_METERS;
+        int s = de.aatokombi.Config.ManeuverStages.PREPARE_SECONDS;
         yes("at the prepare metre gate", AANavReader.maneuverPreparing(m, 0));
         no ("beyond both prepare gates", AANavReader.maneuverPreparing(m + 1, s + 1));
         yes("prepare time gate",         AANavReader.maneuverPreparing(5000, s));
@@ -656,6 +656,7 @@ public final class NavMappingTest {
                 AANavReader.turnToStreet(AANavReader.streetFor(true, "Next St"), "Current St", false),
                 AANavReader.streetFor(true, "Next St"));
         eq("no roads at all", AANavReader.turnToStreet(null, null, false), "");
+    }
 
     private static void playbackMode() {
         // bit0 shuffle, bit1 repeat, bit2 repeat-one -> {stateInfo, stateInfo_Scope}
