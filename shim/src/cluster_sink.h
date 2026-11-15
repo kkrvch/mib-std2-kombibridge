@@ -562,6 +562,12 @@ static u32 g_dmPrev, g_secondIdrDone, g_secondIdrAt;          // reset per AA se
 #define CLUSTER_SECOND_IDR_MS 1500
 #endif
 static u32 g_tickerUp;
+// The ticker thread outlives every AA session. g_clSession = 1 only between cluster_register and
+// the next GalReceiver::shutdown / init: outside it the ticker sends nothing (the MessageRouter is
+// shut down and the endpoints are about to be cleared). g_tickBusy = 1 while a tick is at work, so
+// the session's end can wait for the tick in flight (cluster_video_off). No lock: a spin lock here
+// most likely hung the SAL at the phone's disconnect (2026-11-05).
+static volatile u32 g_clSession, g_tickBusy;
 static u8  g_spsPps[160]; static u32 g_spsPpsLen;   // rewritten SPS + PPS, Annex-B
 
 static u32 cl_now_ms(){
@@ -801,7 +807,7 @@ static void cl_state_file(u32 now,u32 alive){
   g_stateMs=now; g_stateSent=alive; g_stateDm=dm; g_stateTick++;
   // 4th field: the cluster channel of an AA session is open (also without video, e.g. no route)
   char b[40]; char* o=b; *o++= alive?'1':'0'; *o++=' '; *o++= dm?'1':'0'; *o++=' '; o=u2dec(o,g_stateTick);
-  *o++=' '; *o++= g_clusterEp[4]?'1':'0'; *o++='\n';
+  *o++=' '; *o++= (g_clSession && g_clusterEp[4])?'1':'0'; *o++='\n';
   write_file("/dev/shmem/aa_cluster_video",b,(usize)(o-b));
 }
 
@@ -1018,66 +1024,79 @@ static u32 cl_second_idr_on(){                      // the switch file, checked 
   }
   return g_secondIdrFile;
 }
+// One pass of the ticker while an AA session with the cluster channel exists.
+static void cl_tick(u32 now){
+  u32 alive = (g_clStarted || g_idrState) ? 1u : 0u;
+  cl_release_acks(now);
+  cl_state_file(now,alive);
+  cl_poll_commands(now);
+  cl_poll_live_insets(now);
+  if(g_cl.setups && g_clusterEp[4] && !g_idrState) cl_apply_focus(cl_want_video(now));
+  struct kbcv* v=g_kv; if(!v) return;
+  if(alive) v->alive_ms = now ? now : 1u;
+  else if(v->alive_ms) v->alive_ms=0;
+  // The first picture after the AID switches to the phone stays broken until the phone's NEXT key
+  // frame (car 2026-11-03: garbage for ~30 s, the phone's IDR interval, or until a mode switch).
+  // Car 2026-11-04: broken even when the switch happened on the phone's IDR, so the AID's decoder
+  // seems to need a second key frame after the stock stream. Default now: libkb_dm.so hands that
+  // first IDR to the encoder twice. Fallback, only while /tsd/var/aatokombi/second-idr exists:
+  // CLUSTER_SECOND_IDR_MS after EVERY switch to the phone one restart for a fresh IDR (the stock
+  // map shows for the ~3 s of it); at most one per CLUSTER_SECOND_IDR_GAP_MS, so the switch back
+  // after its own restart does not start another.
+  {
+    u32 dmNow = (v->rd_alive_ms && now - v->rd_alive_ms < 2000u) ? 1u : 0u;
+    if(CLUSTER_SECOND_IDR_MS && dmNow && !g_dmPrev && !g_secondIdrAt &&
+       (!g_secondIdrDone || now-g_secondIdrDone>=(u32)CLUSTER_SECOND_IDR_GAP_MS) && cl_second_idr_on())
+      g_secondIdrAt = (now + (u32)CLUSTER_SECOND_IDR_MS) | 1u;
+    g_dmPrev = dmNow;
+    if(g_secondIdrAt && (i32)(now - g_secondIdrAt) >= 0 && g_clStarted && g_focusOn && !g_idrState){
+      g_secondIdrAt=0; g_secondIdrDone=now|1u; g_cl.secondIdr++;
+      g_idrState=1; g_idrT=now; cl_send_focus_mode(2,1);
+    }
+  }
+  if(CLUSTER_IDR_MODE==4 && g_idrState==1 && now-g_idrT>=(u32)CLUSTER_IDR_NATIVE_MS){
+    g_idrState=0; cl_send_focus_mode(1,1);
+  }
+  if(CLUSTER_IDR_MODE==4 && v->want_idr){
+    v->want_idr=0; if(!g_wantSince) g_wantSince=now|1u;
+  }
+  if(CLUSTER_IDR_MODE==4 && g_wantSince && now-g_wantSince>=(u32)CLUSTER_IDR_WAIT_MS && g_clStarted &&
+     g_focusOn && !g_idrState && (!g_idrCycleT || now-g_idrCycleT>=(u32)CLUSTER_IDR_CYCLE_GAP_MS)){
+    g_wantSince=0; g_idrCycleT=now|1u; g_cl.idrCycle++; v->idr_requests++;
+    g_idrState=1; g_idrT=now; cl_send_focus_mode(2,1);        // restart: Start comes with an IDR
+  }
+  if((CLUSTER_IDR_MODE==2 || CLUSTER_IDR_MODE==3) && g_idrState==1 && now-g_idrT>=800u){
+    g_idrState=0; cl_send_focus_mode(1,1);                  // give the cluster back to the phone
+  }
+  if(v->want_idr && g_clStarted && !g_idrState && now-g_idrLast>=CLUSTER_IDR_GAP_MS){
+    v->want_idr=0; v->idr_requests++; g_idrLast=now;
+    if(CLUSTER_IDR_MODE==2){ g_idrState=1; g_idrT=now; cl_send_focus_mode(2,1); }
+    else if(CLUSTER_IDR_MODE==1){ cl_send_focus_mode(1,1); }
+    else if(CLUSTER_IDR_MODE==3 && g_focusOn){
+      if(g_idrSoftT && now-g_idrSoftT < 3u*CLUSTER_IDR_GAP_MS &&
+         (!g_idrCycleT || now-g_idrCycleT >= (u32)CLUSTER_IDR_CYCLE_GAP_MS)){
+        g_idrSoftT=0; g_idrCycleT=now|1u; g_cl.idrCycle++;
+        g_idrState=1; g_idrT=now; cl_send_focus_mode(2,1);      // the soft request did not help
+      } else {
+        g_idrSoftT=now|1u; g_cl.idrSoft++; cl_send_focus_mode(1,1);
+      }
+    }
+  }
+}
+// No AA session: nothing is sent. Frames still waiting for their acknowledgement belong to the
+// session that ended; the phone counts anew in the next one.
+static void cl_tick_idle(u32 now){
+  g_pendHead=g_pendTail; g_ackPending=0; g_drainReq=0; g_repCode=0;
+  cl_state_file(now,0);
+  if(g_kv && g_kv->alive_ms) g_kv->alive_ms=0;
+}
 static void* cl_ticker(void*){
   for(;;){
     if(p_usleep) p_usleep(10000); else return 0;
     u32 now=cl_now_ms();
-    u32 alive = (g_clStarted || g_idrState) ? 1u : 0u;
-    cl_release_acks(now);
-    cl_state_file(now,alive);
-    cl_poll_commands(now);
-    cl_poll_live_insets(now);
-    if(g_cl.setups && g_clusterEp[4] && !g_idrState) cl_apply_focus(cl_want_video(now));
-    struct kbcv* v=g_kv; if(!v) continue;
-    if(alive) v->alive_ms = now ? now : 1u;
-    else if(v->alive_ms) v->alive_ms=0;
-    // The first picture after the AID switches to the phone stays broken until the phone's NEXT key
-    // frame (car 2026-11-03: garbage for ~30 s, the phone's IDR interval, or until a mode switch).
-    // Car 2026-11-04: broken even when the switch happened on the phone's IDR, so the AID's decoder
-    // seems to need a second key frame after the stock stream. Default now: libkb_dm.so hands that
-    // first IDR to the encoder twice. Fallback, only while /tsd/var/aatokombi/second-idr exists:
-    // CLUSTER_SECOND_IDR_MS after EVERY switch to the phone one restart for a fresh IDR (the stock
-    // map shows for the ~3 s of it); at most one per CLUSTER_SECOND_IDR_GAP_MS, so the switch back
-    // after its own restart does not start another.
-    {
-      u32 dmNow = (v->rd_alive_ms && now - v->rd_alive_ms < 2000u) ? 1u : 0u;
-      if(CLUSTER_SECOND_IDR_MS && dmNow && !g_dmPrev && !g_secondIdrAt &&
-         (!g_secondIdrDone || now-g_secondIdrDone>=(u32)CLUSTER_SECOND_IDR_GAP_MS) && cl_second_idr_on())
-        g_secondIdrAt = (now + (u32)CLUSTER_SECOND_IDR_MS) | 1u;
-      g_dmPrev = dmNow;
-      if(g_secondIdrAt && (i32)(now - g_secondIdrAt) >= 0 && g_clStarted && g_focusOn && !g_idrState){
-        g_secondIdrAt=0; g_secondIdrDone=now|1u; g_cl.secondIdr++;
-        g_idrState=1; g_idrT=now; cl_send_focus_mode(2,1);
-      }
-    }
-    if(CLUSTER_IDR_MODE==4 && g_idrState==1 && now-g_idrT>=(u32)CLUSTER_IDR_NATIVE_MS){
-      g_idrState=0; cl_send_focus_mode(1,1);
-    }
-    if(CLUSTER_IDR_MODE==4 && v->want_idr){
-      v->want_idr=0; if(!g_wantSince) g_wantSince=now|1u;
-    }
-    if(CLUSTER_IDR_MODE==4 && g_wantSince && now-g_wantSince>=(u32)CLUSTER_IDR_WAIT_MS && g_clStarted &&
-       g_focusOn && !g_idrState && (!g_idrCycleT || now-g_idrCycleT>=(u32)CLUSTER_IDR_CYCLE_GAP_MS)){
-      g_wantSince=0; g_idrCycleT=now|1u; g_cl.idrCycle++; v->idr_requests++;
-      g_idrState=1; g_idrT=now; cl_send_focus_mode(2,1);        // restart: Start comes with an IDR
-    }
-    if((CLUSTER_IDR_MODE==2 || CLUSTER_IDR_MODE==3) && g_idrState==1 && now-g_idrT>=800u){
-      g_idrState=0; cl_send_focus_mode(1,1);                  // give the cluster back to the phone
-    }
-    if(v->want_idr && g_clStarted && !g_idrState && now-g_idrLast>=CLUSTER_IDR_GAP_MS){
-      v->want_idr=0; v->idr_requests++; g_idrLast=now;
-      if(CLUSTER_IDR_MODE==2){ g_idrState=1; g_idrT=now; cl_send_focus_mode(2,1); }
-      else if(CLUSTER_IDR_MODE==1){ cl_send_focus_mode(1,1); }
-      else if(CLUSTER_IDR_MODE==3 && g_focusOn){
-        if(g_idrSoftT && now-g_idrSoftT < 3u*CLUSTER_IDR_GAP_MS &&
-           (!g_idrCycleT || now-g_idrCycleT >= (u32)CLUSTER_IDR_CYCLE_GAP_MS)){
-          g_idrSoftT=0; g_idrCycleT=now|1u; g_cl.idrCycle++;
-          g_idrState=1; g_idrT=now; cl_send_focus_mode(2,1);      // the soft request did not help
-        } else {
-          g_idrSoftT=now|1u; g_cl.idrSoft++; cl_send_focus_mode(1,1);
-        }
-      }
-    }
+    g_tickBusy=1; __sync_synchronize();          // store busy, then load session (see cluster_video_off)
+    if(g_clSession) cl_tick(now); else cl_tick_idle(now);
+    __sync_synchronize(); g_tickBusy=0;
   }
   return 0;
 }
@@ -1166,7 +1185,14 @@ int cluster_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
   return 0;
 }
 // AA session over (GalReceiver::shutdown) or a new one: the cluster goes back to the stock map.
-static void cluster_video_off(){ g_clStarted=0; g_idrState=0; if(g_kv) g_kv->alive_ms=0; }
+// Runs on the SAL's thread before MessageRouter::shutdown (gal_shutdown_hook) and before the
+// endpoints are cleared (cluster_register). Store session, then load busy: either the ticker sees
+// the session gone, or we see it busy and wait for that tick - at most 200 ms, never forever.
+static void cluster_video_off(){
+  g_clSession=0; __sync_synchronize();
+  for(u32 i=0; i<200u && g_tickBusy && p_usleep; i++) p_usleep(1000);
+  g_clStarted=0; g_idrState=0; if(g_kv) g_kv->alive_ms=0;
+}
 
 // addDiscoveryInfo slot: the service is added at byte level by sdr_queue_hook instead.
 void cluster_discovery(void* /*self*/,void* /*sdr*/){}
@@ -1241,6 +1267,7 @@ static void cluster_register(void* receiver,u32 router){
   ((reg_t)ref(R_REGISTER))(receiver,g_clusterInEp);
   g_clusterId=id; g_clusterInId=iid;
   cluster_flush();
+  __sync_synchronize(); g_clSession=1;                    // both endpoints are registered
 }
 
 #endif // CLUSTER_SINK
