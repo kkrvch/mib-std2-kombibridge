@@ -350,7 +350,12 @@ public class AndroidAutoTarget
         TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__album = trackData.album;
         TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__artist = trackData.artist;
         TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__total_time = trackData.duration;
-        TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__is_cover_available = false;
+        // The cover belongs to the patched GAL media endpoint (applyCoverArt, called on every
+        // metadata event of the phone). With that path on, this callback must not take the cover
+        // away again: arriving after applyCoverArt it would leave the track without one.
+        if (!Config.Media.ENABLED || !Config.Media.SHOW_COVER_ART) {
+            TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__is_cover_available = false;
+        }
         TrackInfo.CURRENT_TRACK_INFO.updateList(TrackInfo.mMetaInfos);
     }
 
