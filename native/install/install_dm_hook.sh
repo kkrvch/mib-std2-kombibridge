@@ -7,9 +7,15 @@
 # cpu.conf is saved once to /tsd/var/aatokombi/cpu.conf.stock. Reboot afterwards.
 #
 # DANGER: a library named in LD_PRELOAD that cannot be loaded keeps DisplayManager from
-# starting and the unit resets. The script therefore copies, compares and only then edits
-# cpu.conf. Keep uninstall_dm_hook.sh at hand. Do not combine with mst2-cluster-nav, which hooks
-# the same DisplayManager functions.
+# starting and the unit resets. The script therefore copies, compares, lets the library CHECK
+# ITSELF on this unit (below) and only then edits cpu.conf. Keep uninstall_dm_hook.sh at hand. Do
+# not combine with mst2-cluster-nav, which hooks the same DisplayManager functions.
+#
+# Self check: the copied library is loaded into a harmless process (`ls`) with KB_DM_CHECK set. It
+# writes one line to /dev/shmem/aatokombi-dm.check - which exists only if the library could be
+# loaded here - saying whether this unit's libOpenMAXAL and DisplayManager are the ones the hook
+# knows (see kb_dm_check in native/src/dm_hook.c). No result, or a libOpenMAXAL that differs:
+# nothing is changed. FORCE=1 sh install_dm_hook.sh ... installs anyway.
 set -e
 SRC="$1"
 LIBDIR=/tsd/lib/aatokombi
@@ -45,6 +51,35 @@ if [ "$SAME" != "0" ]; then
   rm -f $LIB.new; ro
   echo "copy mismatch, nothing changed"; exit 1
 fi
+# --- self check on this unit, before anything refers to the library --------------------------
+CHK=/dev/shmem/aatokombi-dm.check
+DMBIN=
+for x in $(sed -n '/^service iMX6.DispMg/,/^service /{s/^ *command  *\([^ ]*\).*/\1/p;}' $CPU); do DMBIN=$x; break; done
+rm -f $CHK
+LD_PRELOAD=$LIB.new KB_DM_CHECK=1 KB_DM_BIN="$DMBIN" ls /dev/null >/dev/null 2>&1 || true
+refuse() {
+  if [ "$FORCE" = "1" ]; then echo "FORCE=1: installing anyway"; return 0; fi
+  rm -f $LIB.new; ro
+  echo "nothing changed. (FORCE=1 sh $0 ... installs anyway - only if you know why the check is wrong)"
+  exit 1
+}
+if [ ! -s $CHK ]; then
+  echo "self check: no result - the library could not be loaded on this unit."
+  echo "As a preload of DisplayManager it would keep DisplayManager from starting."
+  refuse
+else
+  echo "self check (DisplayManager: ${DMBIN:-not found in cpu.conf}):"
+  sed -n p $CHK
+  if grep -q 'omx=differs' $CHK; then
+    echo "libOpenMAXAL on this unit is not the build the hook knows: the hook would replace nothing"
+    echo "(no AA map on the cluster). This firmware is not supported by libkb_dm.so as it is."
+    refuse
+  fi
+  grep -q 'omx=unknown' $CHK && echo "note: libOpenMAXAL could not be looked at from here; the hook checks it again inside DisplayManager (see /dev/shmem/aatokombi-dm.log after the reboot)"
+  grep -q 'most=ok' $CHK || echo "note: MostSink call site not confirmed: the MOST ring is not waited for (pass-through mode only)"
+  grep -q 'mmr=ok' $CHK || echo "note: mm-renderer client not confirmed: decode mode (the default) may not work; see the log after the reboot"
+fi
+
 mv -f $LIB.new $LIB
 rm -f $VAR/video-off $VAR/dm-strikes $VAR/dm-busy
 
@@ -65,3 +100,5 @@ sed -n '/^service iMX6.DispMg/,/^service /p' $CPU | grep LD_PRELOAD
 sync
 ro
 echo "done - reboot the unit. Off switch: an SD card with an empty file 'aatokombi-video-disable'."
+echo "After the reboot /dev/shmem/aatokombi-dm.log must say 'libOpenMAXAL 0480 layout confirmed';"
+echo "'build differs' there means the hook is inert on this firmware (stock cluster map only)."

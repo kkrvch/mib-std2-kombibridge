@@ -22,6 +22,7 @@ typedef unsigned int uintptr_t;
 #define O_APPEND 0x0008
 #define O_CREAT  0x0100
 #define O_TRUNC  0x0200
+#define SEEK_SET 0
 #define SEEK_END 2
 
 #define PROT_READ  0x0100
@@ -40,6 +41,7 @@ off_t lseek(int fd, off_t off, int whence);
 ssize_t read(int fd, void *buf, size_t n);
 ssize_t write(int fd, const void *buf, size_t n);
 int unlink(const char *path);
+char *getenv(const char *name);
 void *dlopen(const char *path, int mode);
 void *dlsym(void *handle, const char *name);
 void *memcpy(void *dst, const void *src, size_t n);

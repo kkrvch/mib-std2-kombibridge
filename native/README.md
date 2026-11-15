@@ -56,6 +56,34 @@ Never install together with mst2-cluster-nav: both hook the same DisplayManager 
 the unit resets. The installer copies and compares the file before it edits `cpu.conf`; the stock
 `cpu.conf` is kept in `/tsd/var/aatokombi/cpu.conf.stock`.
 
+## Which firmware builds the hook supports, and how you find out
+
+The hook is tied to one build of two files (firmware 0480): the buffer-queue functions of
+`libOpenMAXAL.so.1` with the reader's call site, and - for the MOST ring wait of the pass-through
+mode - one call site in the DisplayManager binary. It never assumes: inside DisplayManager it
+compares them with what it knows and, on any difference, replaces nothing (log line
+`libOpenMAXAL build differs: cluster video stays stock`). An unsupported firmware therefore gets
+the stock cluster map, not a crash.
+
+`install_dm_hook.sh` asks the same question **before** it edits `cpu.conf`: it loads the copied
+library into a harmless process (`LD_PRELOAD=... KB_DM_CHECK=1 ls`) and reads its answer from
+`/dev/shmem/aatokombi-dm.check`:
+
+    loaded=1 omx=ok most=ok mmr=ok ring=ok
+
+| field | ok means | otherwise |
+|---|---|---|
+| (the file exists) | the library can be loaded on this unit | **no install**: as a preload it would keep DisplayManager from starting |
+| `omx` | libOpenMAXAL is the known build | `differs`: **no install** (the hook would be inert). `unknown`: could not be looked at from that process; decided again inside DisplayManager |
+| `most` | MostSink call site as known | pass-through mode runs without the ring wait |
+| `mmr` | mm-renderer client functions present | decode mode (the default) may not work |
+| `ring` | `RingIO::writeAquire` found | pass-through ring wait unavailable |
+
+`FORCE=1 sh install_dm_hook.sh ...` installs regardless. After the reboot the log must say
+`libOpenMAXAL 0480 layout confirmed`. The check has been run on a host only (the ELF reader and the
+installer's decisions); on a unit it is new - if it refuses a unit where the hook is known to work,
+that is a bug in the check, and `FORCE=1` is the way round it.
+
 ## Off switches and diagnostics
 
 - An SD card with an empty file `aatokombi-video-disable`, or `/tsd/var/aatokombi/video-off`:

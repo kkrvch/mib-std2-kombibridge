@@ -212,6 +212,20 @@ static void guard_tick(void)
 
 /* ---------- resolution and build checks ---------- */
 static int omx_missing;                  /* 1: the real mmfbq_* were not found */
+/*
+ * Is this the libOpenMAXAL the hook was written for? The three functions at their known distances
+ * and the reader's call site (bl mmfbq_get_and_wait ; pop {r4, pc}). Returns the load base, 0 if not.
+ * The second half is only read when the first holds, so nothing outside the library is touched.
+ */
+static uintptr_t omx_layout(uintptr_t get_and_wait, uintptr_t get, uintptr_t done)
+{
+    uintptr_t base = get_and_wait - OMX_GET_AND_WAIT;
+    if (get == base + OMX_GET && done == base + OMX_DONE &&
+        *(const uint32_t *)(base + OMX_READER_RETURN) == ARM_POP_R4_PC &&
+        (*(const uint32_t *)(base + OMX_READER_RETURN - 4) & 0x0f000000u) == 0x0b000000u)
+        return base;
+    return 0;
+}
 static void resolve(void)
 {
     void *h;
@@ -230,10 +244,8 @@ static void resolve(void)
         return;
     }
     omx_missing = 0;
-    base = (uintptr_t)real_get_and_wait - OMX_GET_AND_WAIT;
-    if ((uintptr_t)real_get == base + OMX_GET && (uintptr_t)real_done == base + OMX_DONE &&
-        *(const uint32_t *)(base + OMX_READER_RETURN) == ARM_POP_R4_PC &&
-        (*(const uint32_t *)(base + OMX_READER_RETURN - 4) & 0x0f000000u) == 0x0b000000u) {
+    base = omx_layout((uintptr_t)real_get_and_wait, (uintptr_t)real_get, (uintptr_t)real_done);
+    if (base) {
         reader_return = base + OMX_READER_RETURN;
         LOG("libOpenMAXAL 0480 layout confirmed");
     } else {
@@ -577,8 +589,92 @@ EXPORT int ring_acquire(void *ring, void **p, unsigned *n, int partial)
     return r;
 }
 
+/*
+ * ---------- self check at install time ----------
+ * install_dm_hook.sh loads this library into a harmless process (LD_PRELOAD on `ls`) with
+ * KB_DM_CHECK set, BEFORE it touches cpu.conf. Two questions are answered that way, on the unit
+ * itself, with the unit's own files:
+ *   - does the library load here at all (a preload that cannot be loaded keeps DisplayManager from
+ *     starting): the result file exists only if it did;
+ *   - is this the DisplayManager / libOpenMAXAL the hook knows: the same tests the hook makes when
+ *     it runs, plus what the decode mode needs.
+ * Result, one line in CHECK_FILE: "loaded=1 omx=<r> most=<r> mmr=<r> ring=<r>", r = ok | differs |
+ * unknown (unknown = could not be looked at from this process, e.g. the library is not on the
+ * loader's path here; the hook decides again inside DisplayManager).
+ *   omx   libOpenMAXAL layout: without it nothing is replaced, the hook stays inert
+ *   most  MostSink call site in the DisplayManager binary (KB_DM_BIN): without it the MOST ring is
+ *         not waited for (pass-through mode only)
+ *   mmr   mm-renderer client functions: without them no decode mode
+ *   ring  RingIO::writeAquire in libtsd.common.so
+ */
+#define CHECK_FILE "/dev/shmem/aatokombi-dm.check"
+static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
+static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8); }
+
+/* The word at virtual address va of an ELF32 file, through its PT_LOAD headers. 1 = read. */
+static int elf_word(const char *path, uint32_t va, uint32_t *out)
+{
+    uint8_t h[52], ph[32], w[4];
+    uint32_t phoff, phent, phnum, i;
+    int ok = 0, fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    if (read(fd, h, sizeof(h)) == (ssize_t)sizeof(h) && h[0] == 0x7f && h[1] == 'E' && h[2] == 'L' && h[3] == 'F' && h[4] == 1) {
+        phoff = rd32(h + 0x1c); phent = rd16(h + 0x2a); phnum = rd16(h + 0x2c);
+        for (i = 0; i < phnum && phnum < 64 && phent >= 32 && !ok; i++) {
+            if (lseek(fd, (off_t)(phoff + i * phent), SEEK_SET) < 0 || read(fd, ph, 32) != 32) break;
+            if (rd32(ph) == 1 && va >= rd32(ph + 8) && va - rd32(ph + 8) + 4 <= rd32(ph + 16)) {   /* PT_LOAD */
+                if (lseek(fd, (off_t)(rd32(ph + 4) + (va - rd32(ph + 8))), SEEK_SET) >= 0 && read(fd, w, 4) == 4) {
+                    *out = rd32(w); ok = 1;
+                }
+            }
+        }
+    }
+    close(fd);
+    return ok;
+}
+
+static const char *const check_word[3] = { "unknown", "ok", "differs" };   /* 0, 1, 2 */
+static void kb_dm_check(const char *dm_bin)
+{
+    char b[160], *o = b;
+    int omx = 0, most = 0, mmr = 0, ring = 0, fd;
+    void *h;
+    uint32_t w0, w1;
+
+    h = dlopen(OMX_LIB, RTLD_LAZY);
+    if (h) {
+        uintptr_t gw = (uintptr_t)dlsym(h, "mmfbq_get_and_wait"), g = (uintptr_t)dlsym(h, "mmfbq_get"),
+                  d = (uintptr_t)dlsym(h, "mmfbq_done");
+        omx = (gw && g && d && omx_layout(gw, g, d)) ? 1 : 2;
+    }
+    if (dm_bin && *dm_bin && elf_word(dm_bin, MOST_SINK_CALL, &w0) && elf_word(dm_bin, MOST_SINK_RETURN, &w1))
+        most = (w0 == ARM_BL_ACQUIRE && w1 == ARM_SUBS_SB_R0) ? 1 : 2;
+    else if (dm_bin && *dm_bin && exists(dm_bin))
+        most = 2;                                   /* readable, but nothing at those addresses */
+    h = dlopen("libmmrndclient.so.1", RTLD_LAZY);
+    if (h)
+        mmr = (dlsym(h, "mmr_connect") && dlsym(h, "mmr_context_create") && dlsym(h, "mmr_output_attach") &&
+               dlsym(h, "mmr_input_attach") && dlsym(h, "mmr_play") && dlsym(h, "mmr_stop") &&
+               dlsym(h, "mmr_context_destroy") && dlsym(h, "mmr_disconnect")) ? 1 : 2;
+    h = dlopen(COMMON_LIB, RTLD_LAZY);
+    if (h) ring = dlsym(h, RING_ACQUIRE) ? 1 : 2;
+
+    o = put(o, "loaded=1 omx="); o = put(o, check_word[omx]);
+    o = put(o, " most="); o = put(o, check_word[most]);
+    o = put(o, " mmr="); o = put(o, check_word[mmr]);
+    o = put(o, " ring="); o = put(o, check_word[ring]);
+    *o++ = '\n';
+    fd = open(CHECK_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd >= 0) { write(fd, b, (size_t)(o - b)); close(fd); }
+}
+
 EXPORT void kb_dm_init(void)
 {
+    const char *check = getenv("KB_DM_CHECK");
+    if (check && *check) {                           /* loaded by the installer, not by DisplayManager */
+        kb_dm_check(getenv("KB_DM_BIN"));
+        return;
+    }
     LOG("loaded");
     guard_init();
 }
