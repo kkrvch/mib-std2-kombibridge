@@ -936,7 +936,8 @@ static char* u2hex(char* o,u32 v){
 // Totals for the session that is ending. One write per session, so nothing here runs per message.
 static void ids_close_session(){
   if(!g_nIds && !g_idOverflow) return;
-  char b[320]; char* o=b;
+  // Worst case: "end " + 10, MAX_IDS x (2 spaces + 4 hex + space + 10), " +" + 10, newline = 300.
+  char b[384]; char* o=b;
   *o++='e'; *o++='n'; *o++='d'; *o++=' '; o=u2dec(o,g_session);
   for(u32 i=0;i<g_nIds;i++){
     *o++=' '; *o++=' '; o=u2hex(o,g_idSeen[i]); *o++=' '; o=u2dec(o,g_idCnt[i]);

@@ -466,15 +466,26 @@ static u32 cl_rewrite_sdr(const u8* in,u32 n,u8* out,u32 cap){
   return (u32)(o-out);
 }
 
+// Text for the probe file. Every helper checks the room that is left (g_clEnd, set by the one
+// function that formats) and writes nothing when its piece does not fit, so a longer probe line
+// is cut short instead of running over the buffer on the receiving thread's stack.
+static char* g_clEnd;
+static u32 g_clCut;                    // pieces dropped for lack of room (0 unless the buffer is too small)
+static int cl_room(char* o,u32 n){ if(g_clEnd && o+n<=g_clEnd) return 1; g_clCut++; return 0; }
 static void cl_hex(char*& o,const u8* p,u32 n){
   static const char h[]="0123456789abcdef";
+  if(!cl_room(o,2u*n)) return;
   for(u32 i=0;i<n;i++){ *o++=h[p[i]>>4]; *o++=h[p[i]&15]; }
 }
-static void cl_put(char*& o,const char* s){ while(*s) *o++=*s++; }
-static void cl_kv(char*& o,const char* k,u32 v){ cl_put(o,k); o=u2dec(o,v); *o++=' '; }
+static void cl_put(char*& o,const char* s){ if(!cl_room(o,cl_slen(s))) return; while(*s) *o++=*s++; }
+// "<key><decimal>": 11 = ten digits + the terminator u2dec writes.
+static void cl_pv(char*& o,const char* k,u32 v){ if(!cl_room(o,cl_slen(k)+11u)) return; while(*k) *o++=*k++; o=u2dec(o,v); }
+static void cl_kv(char*& o,const char* k,u32 v){ if(!cl_room(o,cl_slen(k)+12u)) return; while(*k) *o++=*k++; o=u2dec(o,v); *o++=' '; }
+static void cl_ch(char*& o,char c){ if(cl_room(o,1)) *o++=c; }
 
 static void cluster_flush(){
-  char b[1900]; char* o=b;
+  char b[2048]; char* o=b;
+  g_clEnd=b+sizeof b-1; g_clCut=0;                 // one byte kept for the final newline
   cl_kv(o,"id=",g_clusterId==0xff?0:g_clusterId);
   cl_kv(o,"sdr_seen=",g_cl.sdrSeen); cl_kv(o,"sdr_patched=",g_cl.sdrPatched); cl_kv(o,"sdr_len=",g_cl.sdrLen);
   cl_kv(o,"sdr_main_video=",g_cl.sdrMainVideo); cl_kv(o,"sdr_main_input=",g_cl.sdrMainInput);
@@ -488,7 +499,7 @@ static void cluster_flush(){
   cl_kv(o,"start_idr_ms0=",g_cl.startIdrMs[0]); cl_kv(o,"start_idr_ms1=",g_cl.startIdrMs[1]);
   cl_kv(o,"start_idr_ms2=",g_cl.startIdrMs[2]); cl_kv(o,"start_idr_ms3=",g_cl.startIdrMs[3]); cl_kv(o,"bind_replies=",g_cl.bindReplies);
   cl_kv(o,"inputs_sent=",g_cl.inputsSent); cl_kv(o,"cmd_seq=",g_cl.cmdSeq); cl_kv(o,"hmi_video=",g_hmiVideo);
-  cl_put(o,"bind_req="); cl_hex(o,g_cl.bindReq,g_cl.bindReqLen); *o++=' '; cl_kv(o,"guidance_only=",g_guideOnly); cl_kv(o,"video_off=",g_videoOff); cl_kv(o,"nav_status=",g_st.status); cl_kv(o,"codec_cfg=",g_cl.cfgMsgs); cl_kv(o,"cfg_len=",g_cl.cfgLen);
+  cl_put(o,"bind_req="); cl_hex(o,g_cl.bindReq,g_cl.bindReqLen); cl_ch(o,' '); cl_kv(o,"guidance_only=",g_guideOnly); cl_kv(o,"video_off=",g_videoOff); cl_kv(o,"nav_status=",g_st.status); cl_kv(o,"codec_cfg=",g_cl.cfgMsgs); cl_kv(o,"cfg_len=",g_cl.cfgLen);
   cl_kv(o,"sps_cropped=",g_cl.spsCropped);
   cl_kv(o,"insets_file=",g_cl.insetsFile); cl_kv(o,"insets_t=",g_cl.insets[0]); cl_kv(o,"insets_b=",g_cl.insets[1]);
   cl_kv(o,"insets_l=",g_cl.insets[2]); cl_kv(o,"insets_r=",g_cl.insets[3]);
@@ -503,13 +514,13 @@ static void cluster_flush(){
   cl_kv(o,"max_au=",g_cl.maxAu); cl_kv(o,"ts_hi=",g_cl.lastTsHi); cl_kv(o,"ts_lo=",g_cl.lastTsLo);
   cl_kv(o,"sent=",g_cl.sent); cl_kv(o,"send_fail=",g_cl.sendFail);
   cl_kv(o,"other=",g_cl.other); cl_kv(o,"last_other_id=",g_cl.lastOtherId);
-  cl_put(o,"field_display_id="); o=u2dec(o,CLUSTER_FIELD_DISPLAY_ID);
-  cl_put(o," field_display_type="); o=u2dec(o,CLUSTER_FIELD_DISPLAY_TYPE);
-  cl_put(o," display_type="); o=u2dec(o,CLUSTER_DISPLAY_TYPE);
-  cl_put(o," resolution="); o=u2dec(o,g_geo.res); cl_put(o," decode_mode="); o=u2dec(o,g_geo.decode); cl_put(o," full_frame="); o=u2dec(o,g_cl.fullFrame); cl_put(o," turn_data="); o=u2dec(o,g_cl.turnData);
-  cl_put(o," live_sent="); o=u2dec(o,g_cl.liveSent); cl_put(o," live_bad="); o=u2dec(o,g_cl.liveBad);
-  cl_put(o," live_t="); o=u2dec(o,g_cl.live[0]); cl_put(o," live_b="); o=u2dec(o,g_cl.live[1]);
-  cl_put(o," live_l="); o=u2dec(o,g_cl.live[2]); cl_put(o," live_r="); o=u2dec(o,g_cl.live[3]); *o++='\n';
+  cl_pv(o,"field_display_id=",CLUSTER_FIELD_DISPLAY_ID);
+  cl_pv(o," field_display_type=",CLUSTER_FIELD_DISPLAY_TYPE);
+  cl_pv(o," display_type=",CLUSTER_DISPLAY_TYPE);
+  cl_pv(o," resolution=",g_geo.res); cl_pv(o," decode_mode=",g_geo.decode); cl_pv(o," full_frame=",g_cl.fullFrame); cl_pv(o," turn_data=",g_cl.turnData);
+  cl_pv(o," live_sent=",g_cl.liveSent); cl_pv(o," live_bad=",g_cl.liveBad);
+  cl_pv(o," live_t=",g_cl.live[0]); cl_pv(o," live_b=",g_cl.live[1]);
+  cl_pv(o," live_l=",g_cl.live[2]); cl_pv(o," live_r=",g_cl.live[3]); g_clEnd=b+sizeof b; cl_ch(o,'\n');
   write_file(CL_PATH,b,(usize)(o-b));
   write_file(CL_CFG_PATH,(const char*)g_cl.cfg,g_cl.cfgLen);
   write_file(CL_PREFIX_PATH,(const char*)g_cl.prefix,g_cl.prefixCount*64u);
