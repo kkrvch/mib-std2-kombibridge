@@ -121,7 +121,14 @@ static void log_line(const char *a, unsigned v, int with_v)
     char b[400], *o = b;
     int fd = open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
     if (fd < 0) return;
-    if (lseek(fd, 0, SEEK_END) > LOG_MAX) { close(fd); return; }
+    if (lseek(fd, 0, SEEK_END) > LOG_MAX) {
+        /* Full: it becomes LOG_PATH ".1" (replacing the one before) and a new one starts, so the
+         * newest lines are always there - stopping here lost exactly those after a long drive. */
+        close(fd);
+        rename(LOG_PATH, LOG_PATH ".1");
+        fd = open(LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0666);
+        if (fd < 0) return;
+    }
     o = put_u(o, now_ms()); o = put(o, " dm: "); o = put(o, a);
     if (with_v) { *o++ = ' '; o = put_u(o, v); }
     *o++ = '\n';

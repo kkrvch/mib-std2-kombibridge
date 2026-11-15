@@ -379,6 +379,16 @@ public final class NavMappingTest {
         eq("ru rerouting",      AANavReader.streetFor(true, "x"), "Перестроение...");
         eq("ru row",            AANavReader.destinationRow(32000, 5100), "1 ч 25 мин / 32 км");
         eq("ru short distance", AANavReader.formatDistance(300), "300 м");
+        de.aatokombi.Strings.overrideLanguage = "en";
+        eq("994 m rounds down to 990 m", AANavReader.formatDistance(994), "990 m");
+        eq("995 m is 1,0 km, not 1000 m", AANavReader.formatDistance(995), "1,0 km");
+        eq("999 m is 1,0 km", AANavReader.formatDistance(999), "1,0 km");
+        eq("1000 m", AANavReader.formatDistance(1000), "1,0 km");
+        eq("under 10 m stays exact", AANavReader.formatDistance(7), "7 m");
+        eq("ferry boat draws follow-street", AANavReader.mapMainElement(15, 3), 11);
+        eq("ferry train draws follow-street", AANavReader.mapMainElement(16, 1), 11);
+        eq("ferry: no direction", AANavReader.mapDirection(16, 1, 0), 0);
+        de.aatokombi.Strings.overrideLanguage = "ru";
         de.aatokombi.Strings.overrideLanguage = "de";       // no row yet -> English
         eq("unknown -> en",     AANavReader.wordFor(4, 2), "Turn right");
         de.aatokombi.Strings.overrideLanguage = "en";

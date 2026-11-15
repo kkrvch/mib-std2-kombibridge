@@ -695,6 +695,10 @@ public final class AANavReader implements Runnable {
             case 12:
             case 13: return (side == 1) ? 22 : 21; // ROUNDABOUT  -> TRS_LEFT/RIGHT
             case 14: return 11;                    // STRAIGHT    -> FOLLOW_STREET
+            case 15:
+            case 16: return 11;                    // FERRY_BOAT / FERRY_TRAIN -> FOLLOW_STREET: the
+                                                   // cluster has no ferry glyph, and "turn" (the
+                                                   // default) is the wrong thing to draw for one
             case 17:
             case 18:
             case 19: return 3;                     // DESTINATION / dest-left / dest-right -> ARRIVED
@@ -722,8 +726,8 @@ public final class AANavReader implements Runnable {
             if (side == 2) return 192;
             return 0;
         }
-        if (event == 1 || event == 2 || event == 14) {
-            return 0;                              // depart / name-change / straight
+        if (event == 1 || event == 2 || event == 14 || event == 15 || event == 16) {
+            return 0;                              // depart / name-change / straight / ferry
         }
         if (event == 11 || event == 12 || event == 13) {    // roundabout: true exit bearing when sent
             if (angle >= 1 && angle <= 360) {
@@ -1036,7 +1040,11 @@ public final class AANavReader implements Runnable {
             if (dist < 10) {
                 return dist + " " + Strings.get(Strings.UNIT_M);   // very short: show the exact metres
             }
-            return (((dist + 5) / 10) * 10) + " " + Strings.get(Strings.UNIT_M);   // else round to nearest 10 m, like Google
+            int rounded = ((dist + 5) / 10) * 10;                  // else round to nearest 10 m, like Google
+            if (rounded < 1000) {
+                return rounded + " " + Strings.get(Strings.UNIT_M);
+            }
+            dist = 1000;                                           // 995..999 m: "1,0 km", not "1000 m"
         }
         return (dist / 1000) + "," + ((dist % 1000) / 100) + " " + Strings.get(Strings.UNIT_KM);
     }

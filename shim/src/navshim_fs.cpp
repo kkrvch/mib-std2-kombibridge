@@ -1118,7 +1118,10 @@ static void* g_inited_receiver = 0;
 typedef int (*mr_route_t)(void*,u32,const void*);
 typedef int (*mr_qout_t)(void*,u32,const void*,u32);
 enum { ID_SERVICE_DISCOVERY_RESPONSE = 0x0006, ID_BATTERY_STATUS_NOTIFICATION = 0x0017 };
-static u8 g_sdpOut[2048];
+// Room for the largest ServiceDiscoveryResponse we send: the cluster sink's rewritten one is built
+// in an 8192-byte buffer and comes through here as well; SKIP_THIS_BLUETOOTH adds a few bytes.
+static u8 g_sdpOut[8192+64];
+static u32 g_sdpTooLong;               // once per process: an SDR that did not fit was sent unchanged
 
 // Outgoing: the ServiceDiscoveryResponse gets BluetoothChannel.adapter_address =
 // "SKIP_THIS_BLUETOOTH" (navproto.h sdp_skip_bluetooth explains why). queueOutgoing copies the
@@ -1126,6 +1129,14 @@ static u8 g_sdpOut[2048];
 // static buffer is fine; discovery runs once per session on the receive thread.
 extern "C" __attribute__((used)) int mr_queue_outgoing(void* self, u32 ch, const void* data, u32 len){
   const u8* p=(const u8*)data;
+  if(p && len>2 && len>=sizeof g_sdpOut && (((u32)p[0]<<8)|p[1])==ID_SERVICE_DISCOVERY_RESPONSE && !g_sdpTooLong){
+    // It goes out as it is, i.e. WITHOUT SKIP_THIS_BLUETOOTH: say so where the census is kept.
+    g_sdpTooLong=1;
+    char b[48]; char* o=b; static const char t[]="sdr too long for the bluetooth skip: ";
+    for(usize i=0;i<sizeof t-1;i++) *o++=t[i];
+    o=u2dec(o,len); *o++='\n';
+    write_file_mode(IDS_PATH, b, (usize)(o-b), "a");
+  }
   if(p && len>2 && len<sizeof g_sdpOut && (((u32)p[0]<<8)|p[1])==ID_SERVICE_DISCOVERY_RESPONSE){
     u32 nl = sdp_skip_bluetooth(p+2, len-2, g_sdpOut+2, sizeof g_sdpOut-2);
     if(nl){

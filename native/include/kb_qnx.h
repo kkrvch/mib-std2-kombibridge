@@ -41,6 +41,7 @@ off_t lseek(int fd, off_t off, int whence);
 ssize_t read(int fd, void *buf, size_t n);
 ssize_t write(int fd, const void *buf, size_t n);
 int unlink(const char *path);
+int rename(const char *from, const char *to);
 char *getenv(const char *name);
 void *dlopen(const char *path, int mode);
 void *dlsym(void *handle, const char *name);

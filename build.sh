@@ -33,7 +33,7 @@ JXE="$(abspath "$JXE")"; GAL="$(abspath "$GAL")"
 mkdir -p "$OUT"; OUT="$(abspath "$OUT")"
 
 # 0) the toolchain image (cached after the first run) — it also runs the jxe2jar converter
-echo "==> [0/4] building toolchain image '$IMAGE' (first run downloads the base image)"
+echo "==> [1/4] building toolchain image '$IMAGE' (first run downloads the base image)"
 docker build -t "$IMAGE" -f docker/Dockerfile .
 
 # 1) MIBHMI.jxe -> MIBHMI.jar with the vendored converter (tools/jxe2jar, Python 3).
@@ -46,11 +46,11 @@ JXE_ID="$(shasum -a256 "$JXE" | cut -d' ' -f1)"
 CONV_ID="$(cat tools/jxe2jar/*.py | shasum -a256 | cut -d' ' -f1)"
 STAMP="jar/lib/.MIBHMI.jxe.sha256"
 if [ -f jar/lib/MIBHMI.jar ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$JXE_ID $CONV_ID" ]; then
-  echo "==> [1/4] jxe2jar: cached jar/lib/MIBHMI.jar matches this .jxe and converter — skipping"
+  echo "==> [2/4] jxe2jar: cached jar/lib/MIBHMI.jar matches this .jxe and converter — skipping"
 else
   WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
   cp "$JXE" "$WORK/MIBHMI.jxe"
-  echo "==> [1/4] jxe2jar: MIBHMI.jxe -> MIBHMI.jar  (tools/jxe2jar, several minutes, once per firmware)"
+  echo "==> [2/4] jxe2jar: MIBHMI.jxe -> MIBHMI.jar  (tools/jxe2jar, several minutes, once per firmware)"
   docker run --rm -v "$PWD":/work -v "$WORK":/data --user "$(id -u):$(id -g)" -e HOME=/tmp -w /data \
     "$IMAGE" python3 -B /work/tools/jxe2jar/jxe2jar.py /data/MIBHMI.jxe /data/MIBHMI.jar
   [ -f "$WORK/MIBHMI.jar" ] || { echo "ERROR: jxe2jar produced no MIBHMI.jar"; exit 1; }
@@ -64,7 +64,7 @@ stage(){ if [ "$1" -ef "$2" ]; then echo "    (already in place: $2)"; else cp -
 stage "$GAL" shim/lib/libext.google.gal.receiver.so
 
 # 3) build BOTH artifacts in the toolchain container (image cached after the first run)
-echo "==> [2/4] running build in container"
+echo "==> [3/4] running build in container"
 docker run --rm -v "$PWD":/work -w /work --user "$(id -u):$(id -g)" \
   -e HOME=/tmp -e VIDEO_PROBE="${VIDEO_PROBE:-0}" -e VIDEO_PROBE_DEEP="${VIDEO_PROBE_DEEP:-0}" \
   -e VIDEO_PIPELINE="${VIDEO_PIPELINE:-0}" -e CLUSTER_SINK="${CLUSTER_SINK:-0}" \
@@ -73,7 +73,7 @@ docker run --rm -v "$PWD":/work -w /work --user "$(id -u):$(id -g)" \
   "$IMAGE" /work/docker/entrypoint.sh
 
 # 4) collect the two deployables
-echo "==> [3/4] collect -> $OUT"
+echo "==> [4/4] collect -> $OUT"
 cp -f jar/build/AAtoKombi.jar                   "$OUT/AAtoKombi.jar"
 cp -f shim/build/libext.google.gal.receiver.so  "$OUT/libext.google.gal.receiver.so"
 if [ "${CLUSTER_SINK:-0}" = "1" ] && [ -f native/build/libkb_dm.so ]; then
@@ -83,9 +83,12 @@ if [ "${CLUSTER_SINK:-0}" = "1" ] && [ -f native/build/libkb_dm.so ]; then
 fi
 
 echo
-echo "OK. Two files ready in $OUT :"
+echo "OK. Ready in $OUT :"
 echo "  AAtoKombi.jar                  -> SD custom/java/AAtoKombi.jar"
 echo "  libext.google.gal.receiver.so  -> SD custom/sal/libext.google.gal.receiver.so"
+if [ -f "$OUT/libkb_dm.so" ] && [ "${CLUSTER_SINK:-0}" = "1" ]; then
+  echo "  libkb_dm.so + install_dm_hook.sh -> FTP to /tmp, then over telnet (native/README.md)"
+fi
 echo "Then on the unit: Toolbox -> Customisation -> Navi -> Enable AAtoKombi -> reboot."
 
 # --- what this build actually IS -------------------------------------------------------------
