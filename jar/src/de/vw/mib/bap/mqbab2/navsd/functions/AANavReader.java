@@ -465,7 +465,7 @@ public final class AANavReader implements Runnable {
             MIBLogger.getInstance().info("nav maneuver " + (imminent ? "shown" : "deferred (follow street)")
                     + ": dist=" + dist + "m time=" + time + "s");
         }
-		
+
         int[] ringFix = ring.apply(event, side, angle, number);
         angle = ringFix[0];
         number = ringFix[1];
@@ -482,38 +482,38 @@ public final class AANavReader implements Runnable {
             mainElement = (side == 1) ? MAIN_ELEMENT_EXIT_ROUNDABOUT_TRS_LEFT : MAIN_ELEMENT_EXIT_ROUNDABOUT_TRS_RIGHT;
             direction = 0;
         }
-		// Exit-road spoke on a roundabout, "" otherwise.
+        // Exit-road spoke on a roundabout, "" otherwise.
         String sideStreets = buildRingSideStreets(event, effAngle);
-		
-		if (imminent || Config.Navigation.SHOW_NEXT_MANEUVER || !Config.ManeuverStages.FOLLOW_STREET) {
-			// Multi-spoke junction schematic (JunctionSchematic) -- STRICTLY gated on top of the
-			// compile-time switch: only on a cluster that is nav-capable (navsd is actually driving
-			// this cluster at all).
-			boolean schematic = Config.Navigation.SHOW_JUNCTION_SCHEMATIC
-					&& ClusterCaps.isNavCapable();
 
-			if (schematic && !exitOnlyStep && (event == 11 || event == 12 || event == 13)) {
-				// Roundabout: always meaningful here, since AA gives an exit number on every roundabout
-				// maneuver regardless of whether lane data is also available.
-				sideStreets = JunctionSchematic.buildRoundabout(effAngle, number,
-						mainElement != 22);                // 22 = ROUNDABOUT_TRS_LEFT (clockwise ring)
-				logSchematic("roundabout", mainElement, direction, sideStreets);
-			} else if (schematic && (mainElement == MAIN_ELEMENT_FOLLOW_STREET
-					|| mainElement == MAIN_ELEMENT_TURN || mainElement == MAIN_ELEMENT_TURN_ON_MAINROAD)) {
-				// Ordinary follow/turn: attach side streets to the SAME mainElement mapMainElement()
-				// already picked -- deliberately NOT SQUARE_TRS_LEFT/RIGHT (VW's glyph for a large
-				// plaza/square-shaped junction, not an ordinary road crossing; see
-				// JunctionSchematic.buildOrdinary()). Only worth it once there are at least two distinct
-				// lane directions to draw (buildOrdinary returns null otherwise); until the phone starts
-				// sending lanes for this junction this falls through to the plain arrow, exactly as
-				// before -- mainElement itself is never touched either way.
+        if (imminent || Config.Navigation.SHOW_NEXT_MANEUVER || !Config.ManeuverStages.FOLLOW_STREET) {
+            // Multi-spoke junction schematic (JunctionSchematic) -- STRICTLY gated on top of the
+            // compile-time switch: only on a cluster that is nav-capable (navsd is actually driving
+            // this cluster at all).
+            boolean schematic = Config.Navigation.SHOW_JUNCTION_SCHEMATIC
+                    && ClusterCaps.isNavCapable();
+
+            if (schematic && !exitOnlyStep && (event == 11 || event == 12 || event == 13)) {
+                // Roundabout: always meaningful here, since AA gives an exit number on every roundabout
+                // maneuver regardless of whether lane data is also available.
+                sideStreets = JunctionSchematic.buildRoundabout(effAngle, number,
+                        mainElement != 22);                // 22 = ROUNDABOUT_TRS_LEFT (clockwise ring)
+                logSchematic("roundabout", mainElement, direction, sideStreets);
+            } else if (schematic && (mainElement == MAIN_ELEMENT_FOLLOW_STREET
+                    || mainElement == MAIN_ELEMENT_TURN || mainElement == MAIN_ELEMENT_TURN_ON_MAINROAD)) {
+                // Ordinary follow/turn: attach side streets to the SAME mainElement mapMainElement()
+                // already picked -- deliberately NOT SQUARE_TRS_LEFT/RIGHT (VW's glyph for a large
+                // plaza/square-shaped junction, not an ordinary road crossing; see
+                // JunctionSchematic.buildOrdinary()). Only worth it once there are at least two distinct
+                // lane directions to draw (buildOrdinary returns null otherwise); until the phone starts
+                // sending lanes for this junction this falls through to the plain arrow, exactly as
+                // before -- mainElement itself is never touched either way.
                 String ordinary = JunctionSchematic.buildOrdinaryFromLaneState(mainElement, NavState.laneState);
-				if (ordinary != null) {
-					sideStreets = ordinary;
-					logSchematic("ordinary", mainElement, direction, sideStreets);
-				}
-			}
-		}
+                if (ordinary != null) {
+                    sideStreets = ordinary;
+                    logSchematic("ordinary", mainElement, direction, sideStreets);
+                }
+            }
+        }
 
         // Second, smaller arrow (maneuver_2): the manoeuvre after this one, or this one as a preview.
         // In the prepare stage maneuver_1 already shows this manoeuvre, so maneuver_2 behaves as near.

@@ -42,7 +42,7 @@ ConfigurationServiceListener {
         if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
     }
 
-	/**
+    /**
      * Called once by AANavReader, at the moment AA route guidance STARTS (NavState.ACTIVE
      * false->true), to pick the starting BAP rgtype for this guidance session: arrows (0) or the
      * stock map (3, MOST_MAP) per Config.ClusterMap.START_ON_MAP.

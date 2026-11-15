@@ -23,9 +23,9 @@ public final class NavState {
     public static volatile String  nextRoad       = "";
     // Junction-glyph geometry -> ManeuverDescriptor col3 (Maneuver_1.sidestreets, a BAPString(17)).
     // On a nav-capable cluster this may be a MULTI-character schematic string (see JunctionSchematic)
-	// -- each character is an independent side-street spoke on the same 0..255 CCW scale as `direction`,
-	// decoded by the stock Guidance/GuidanceModel widget. Which form is written for a given frame is
-	// decided entirely by AANavReader.publishNavsd(); this field itself carries either one opaquely.
+    // -- each character is an independent side-street spoke on the same 0..255 CCW scale as `direction`,
+    // decoded by the stock Guidance/GuidanceModel widget. Which form is written for a given frame is
+    // decided entirely by AANavReader.publishNavsd(); this field itself carries either one opaquely.
     public static volatile String  sideStreets    = "";
     public static volatile int     distanceMeters = 0;
     // On the approach segment, i.e. the real manoeuvre is drawn, not FOLLOW_STREET -> bargraph on.
