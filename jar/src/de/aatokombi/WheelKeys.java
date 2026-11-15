@@ -39,11 +39,38 @@ public final class WheelKeys {
      * DSI key code (keyboard 4) of the steering-wheel View key with the patched J5 key panel
      * (native/keypanel: the stock key table drops MQB 0x23; the patch maps it to this code, default
      * 59). The key is then logged as "wheel View", counted in /dev/shmem/aa_view_key and kept from
-     * the stock key handling (its stock meaning would be MQB 0x22, absent on the MQB wheel).
-     * -1: no patched key panel, code not treated specially. The patch is on hold (docs/
-     * CLUSTER_VIEW_AND_KEYS.md); must match keypanel_patch.py --view-dsi.
+     * the stock key handling. Must match keypanel_patch.py --view-dsi.
+     *
+     * Only on a unit where that patch is installed (viewCode()): without it code 59 is the stock
+     * key MQB 0x22 - absent on the MQB wheel, but a real key on other wheels, and swallowing it
+     * there would take that key away from the driver.
      */
     private static final int KEYPANEL_VIEW_CODE = 59;
+    /** Installed by native/keypanel/install_keypanel_patch.sh, removed by its uninstall script. */
+    private static final String KEYPANEL_PATCH_FILE = "/tsd/lib/aatokombi/j5/tsd.mibstd2.keypanel";
+    /** The patch's own off switch (startup_main then starts the stock key panel). */
+    private static final String KEYPANEL_PATCH_OFF_FILE = "/tsd/var/aatokombi/no-keypanel-patch";
+
+    private static int viewCode = -2;   // -2 not looked up yet, -1 no patched key panel
+
+    /** KEYPANEL_VIEW_CODE when the patched key panel is installed and on, else -1. Looked up once. */
+    private static int viewCode() {
+        if (viewCode == -2) {
+            int c = -1;
+            try {
+                if (new java.io.File(KEYPANEL_PATCH_FILE).exists()
+                        && !new java.io.File(KEYPANEL_PATCH_OFF_FILE).exists()) {
+                    c = KEYPANEL_VIEW_CODE;
+                }
+            } catch (Throwable t) {
+                // not readable: no patch
+            }
+            viewCode = c;
+            ClusterVideo.log("wheel View key: " + (c < 0 ? "no patched key panel, code "
+                    + KEYPANEL_VIEW_CODE + " stays a stock key" : "patched key panel, code " + c));
+        }
+        return viewCode;
+    }
 
     private static boolean modeKeyFired;
     private static volatile boolean cycleRequested;
@@ -65,8 +92,8 @@ public final class WheelKeys {
      * "presses state". Returns true: the stock key handling must not see this key.
      */
     private static boolean viewKey(int keyboard, int code, int state) {
-        if (KEYPANEL_VIEW_CODE < 0 || code != KEYPANEL_VIEW_CODE
-                || (keyboard != KEYBOARD_MFW && keyboard != KEYBOARD_MFW_3GP)) return false;
+        if ((keyboard != KEYBOARD_MFW && keyboard != KEYBOARD_MFW_3GP) || code != KEYPANEL_VIEW_CODE
+                || viewCode() != code) return false;
         if (state == 1) {
             viewHeld = false;
         } else if (state >= 3) {
@@ -127,10 +154,15 @@ public final class WheelKeys {
      * MHI2Q code registers its own DSIKeyPanelListener next to the stock one. So: one extra
      * listener on each other instance 0..OTHER_INSTANCES, logging "wheel key/encoder iN ..." only
      * (no actions, a duplicate of a system-instance key must not cycle twice). Never throws.
+     * Diagnostics only, so only at Config.Advanced.LOG_LEVEL DEBUG or TRACE: an everyday build
+     * registers nothing on the other key panel instances.
      */
     private static final int OTHER_INSTANCES = 7;
 
     public static void attachOtherInstances(de.vw.mib.asl.framework.api.dsiproxy.DSIProxy proxy, int systemInstance) {
+        if (Config.Advanced.LOG_LEVEL > de.adi961.miblogger.MIBLogger.DEBUG) {
+            return;
+        }
         ClusterVideo.log("key panel: system instance " + systemInstance);
         for (int i = 0; i <= OTHER_INSTANCES; i++) {
             if (i == systemInstance) continue;
