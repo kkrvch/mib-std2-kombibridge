@@ -88,7 +88,11 @@ that is a bug in the check, and `FORCE=1` is the way round it.
 
 - An SD card with an empty file `aatokombi-video-disable`, or `/tsd/var/aatokombi/video-off`:
   pass-through within 2 s.
-- Crash guard: two quick DisplayManager restarts while phone frames were being replaced write
-  `video-off` (reinstall to clear).
+- Crash guard, both modes: `/tsd/var/aatokombi/dm-busy` exists while the phone's video is on the
+  cluster (written once per video session, removed when it ends normally). Found at start = the
+  session before ended in a crash or power cut: the log says `the previous video session did not
+  end normally, strike N`. Two in a row write `video-off` (reinstall, or remove `video-off` and
+  `dm-strikes`, to clear). If that line appears after an ordinary ignition-off, tell the author:
+  the guard would then switch the hook off after two trips.
 - Log: `/dev/shmem/aatokombi-dm.log`. Counters (`rd_frames`, `rd_state`, ring waits) also appear in
   libgal's `/dev/shmem/aa_cluster_probe`.

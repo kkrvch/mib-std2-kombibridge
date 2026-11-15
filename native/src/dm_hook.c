@@ -31,8 +31,8 @@
  * Any mismatch: nothing is replaced (logged once).
  *
  * Safety: kill switch (file aatokombi-video-disable on any mounted SD card, or
- * /tsd/var/aatokombi/video-off) checked every 2 s; crash guard (two quick restarts while busy
- * switch the hook off for good, see guard_*).
+ * /tsd/var/aatokombi/video-off) checked every 2 s; crash guard (two video sessions in a row that
+ * did not end normally switch the hook off for good, see guard_*).
  */
 #include "kb_qnx.h"
 #include "cluster_video_shm.h"
@@ -92,7 +92,6 @@ static uint32_t frame_size;
 static unsigned idr_wait_ms;
 static int disabled_for_good;
 static unsigned switch_checked, switch_off;
-static unsigned busy_written;
 static unsigned ring_wait_max, ring_report_ms;
 
 /* ---------- small helpers ---------- */
@@ -101,12 +100,6 @@ static unsigned now_ms(void)
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (unsigned)t.tv_sec * 1000u + (unsigned)t.tv_nsec / 1000000u;
-}
-static long now_rt(void)
-{
-    struct timespec t;
-    clock_gettime(CLOCK_REALTIME, &t);
-    return t.tv_sec;
 }
 static int exists(const char *path)
 {
@@ -177,37 +170,43 @@ static int switched_off(void)
 }
 
 /*
- * busy file = realtime seconds of the last minute in which phone frames replaced stock ones.
- * Found at start and younger than 180 s: DisplayManager died while we were working and the unit
- * came straight back. Two such starts in a row: off until video-off is removed by reinstalling.
+ * Crash guard. The busy file exists exactly while the phone's video is on the cluster through this
+ * library - handed to the encoder (pass-through, GUARD_PASS) or played by mm-renderer (decode
+ * mode, GUARD_DEC). It is written once when that begins and removed when it ends in the normal
+ * way: two operations on the flash per video session, nothing in between.
+ * Found at start, the session before did not end that way: DisplayManager died, or the unit lost
+ * power, while we were at work. That is a strike. Two in a row (a normal end in between clears
+ * the count): off for good, until video-off is removed by reinstalling.
+ * Whether an ordinary ignition-off ends the session in time is not known from the code: the log
+ * line below shows it after the next start.
  */
+#define GUARD_PASS 1u
+#define GUARD_DEC  2u
+static unsigned guard_users;
 static void guard_init(void)
 {
     if (exists(BUSY_FILE)) {
-        long t = (long)read_u(BUSY_FILE);
-        if (t && now_rt() - t < 180) {
-            unsigned s = read_u(STRIKES_FILE) + 1;
-            write_u(STRIKES_FILE, s);
-            LOGV("restart while busy, strike", s);
-            if (s >= 2) {
-                write_u(OFF_FILE, 1);
-                disabled_for_good = 1;
-                LOG("off for good after repeated crashes; reinstall to enable");
-            }
-        } else {
-            write_u(STRIKES_FILE, 0);
+        unsigned s = read_u(STRIKES_FILE) + 1;
+        write_u(STRIKES_FILE, s);
+        LOGV("the previous video session did not end normally (crash or power cut), strike", s);
+        if (s >= 2) {
+            write_u(OFF_FILE, 1);
+            disabled_for_good = 1;
+            LOG("off for good after repeated crashes; reinstall to enable");
         }
         unlink(BUSY_FILE);
     }
 }
-static void guard_busy(int on)
+static void guard_busy(unsigned who, int on)
 {
-    if (on) { write_u(BUSY_FILE, (unsigned)now_rt()); busy_written = now_ms(); }
-    else { unlink(BUSY_FILE); write_u(STRIKES_FILE, 0); busy_written = 0; }
-}
-static void guard_tick(void)
-{
-    if (busy_written && now_ms() - busy_written >= 60000u) guard_busy(1);
+    unsigned before = guard_users, after = on ? (before | who) : (before & ~who);
+    if (after == before) return;                     /* nothing changes: no file access at all */
+    guard_users = after;
+    if (!before) write_u(BUSY_FILE, 1);
+    else if (!after) {
+        unlink(BUSY_FILE);
+        if (read_u(STRIKES_FILE)) write_u(STRIKES_FILE, 0);
+    }
 }
 
 /* ---------- resolution and build checks ---------- */
@@ -455,13 +454,12 @@ EXPORT void *mmfbq_get_and_wait(void *q, const struct timespec *deadline)
     } else if (q && q == cluster_queue && phone_alive()) {
         if (!phone) {
             idr_wait_logged = 0;
-            phone = 1; need_idr = 1; guard_busy(1);
+            phone = 1; need_idr = 1; guard_busy(GUARD_PASS, 1);
             dup_pending = !exists(NO_DUP_FILE); dup_now = 0;
             if (kv) next_seq = resync_seq(kv->write_seq);   /* start at the newest IDR in the ring */
             if (kv) kv->rd_state = 1;
             LOG("cluster: Android Auto video");
         }
-        guard_tick();
         while (!((volatile int *)q)[0xb] && !past(deadline) && phone_alive()) {
             void *e;
             unsigned head, size;
@@ -511,7 +509,7 @@ EXPORT void *mmfbq_get_and_wait(void *q, const struct timespec *deadline)
         else if (need_idr && idr_wait_ms && now_ms() - idr_wait_ms >= IDR_FALLBACK_MS) LOG("no key frame for 1 s");
     }
     if (phone) {
-        phone = 0; wait_stock_idr = 1; guard_busy(0);
+        phone = 0; wait_stock_idr = 1; guard_busy(GUARD_PASS, 0);
         dup_pending = 0; dup_now = 0;
         if (kv) kv->rd_alive_ms = 0;
         if (kv) kv->rd_state = 0;

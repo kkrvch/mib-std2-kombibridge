@@ -343,7 +343,13 @@ static void *dec_thread(void *arg)
     }
     for (;;) {
         usleep(200000);
-        if (!kv || !dec_stream_alive() || switched_off()) continue;
+        if (!kv || !dec_stream_alive() || switched_off()) {
+            guard_busy(GUARD_DEC, 0);           /* the stream ended: the session ended normally */
+            continue;
+        }
+        /* Crash guard on the flash (survives a reset of the unit, which the RAM file above does
+         * not): set once per stream, however often dec_run is tried again while it lasts. */
+        guard_busy(GUARD_DEC, 1);
         { int fd = open(DEC_RUN_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0666); if (fd >= 0) close(fd); }
         dec_timeouts = 0;
         LOG("dec: decode mode starts");
