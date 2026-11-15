@@ -134,10 +134,13 @@ only builds the two artifacts.
 ## Patch the unit (step by step)
 
 You build the two artifacts **against the exact files from your own unit**, then deploy them back
-with the toolbox. The libgal patch resolves its addresses from your file, so another STD2 firmware
-build needs no manual editing — but the mod has only been run on **`MST2_EU_SK_ZR_P0480T`**: the
-object layouts inside libgal and the shadowed HMI classes are taken from that build, and the
-build warns when your libgal is a different one. On another firmware treat it as untested.
+with the toolbox. The libgal patch reads what it needs out of your file: the function addresses
+from its symbols and the object layouts (where the message router sits, the endpoint fields, the
+vtable slots, the buffer words) from the code of its own small functions. When that code does not
+look as expected the build stops and writes nothing, rather than produce a library that crashes;
+when only the media part differs, it builds without now-playing. The mod has been run in a car on
+**`MST2_EU_SK_ZR_P0480T`** only, and the shadowed HMI classes come from that build — on another
+firmware a successful build is a good sign, not a test drive.
 
 > For a pure **FTP + Telnet** install/build/rollback flow, follow
 > [`docs/INSTALL_FTP_TELNET.md`](docs/INSTALL_FTP_TELNET.md) instead (Still requires toolbox to enable FTP/Telnet).

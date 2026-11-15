@@ -238,11 +238,11 @@ enum { CL_CODEC_H264_BP = 3 };          // MediaCodecType; VideoSink::handleSetu
 
 typedef int (*qout_t)(u32 router,u32 channel,const void* data,u32 len);
 
-static u8  g_clusterEp[0x40] __attribute__((aligned(8)));
-static u32 g_clusterVT[10]   __attribute__((aligned(8)));
+static u8  g_clusterEp[EP_BYTES] __attribute__((aligned(8)));
+static u32 g_clusterVT[VT_MAX]   __attribute__((aligned(8)));
 static u8  g_clusterId = 0xff;
 static u8  g_clusterInId = 0xff;
-static u8  g_clusterInEp[0x40] __attribute__((aligned(8)));
+static u8  g_clusterInEp[EP_BYTES] __attribute__((aligned(8)));
 static u8  g_sdrBuf[8192];
 
 struct ClusterProbe {
@@ -533,12 +533,12 @@ static void cluster_video_off();
 
 static void cl_send_on(u8* ep,u32 type,const u8* body,u32 n){
   u8 m[64];
-  if(n>sizeof m-2 || !ep[4]){ g_cl.sendFail++; return; }             // +4 = channel open (stock flag)
+  if(n>sizeof m-2 || !ep_open(ep)){ g_cl.sendFail++; return; }       // channel open (stock flag)
   m[0]=(u8)(type>>8); m[1]=(u8)type;
   for(u32 i=0;i<n;i++) m[2+i]=body[i];
   qout_t q=(qout_t)ref(R_QUEUE_OUT);
   if(!q){ g_cl.sendFail++; return; }
-  q(*(u32*)(ep+8), ep[5], m, n+2);
+  q(*(u32*)(ep+lay(L_EP_ROUTER)), ep[lay(L_EP_CHANNEL)], m, n+2);
   g_cl.sent++;
 }
 static void cl_send(u32 type,const u8* body,u32 n){ cl_send_on(g_clusterEp,type,body,n); }
@@ -818,7 +818,7 @@ static void cl_state_file(u32 now,u32 alive){
   g_stateMs=now; g_stateSent=alive; g_stateDm=dm; g_stateTick++;
   // 4th field: the cluster channel of an AA session is open (also without video, e.g. no route)
   char b[40]; char* o=b; *o++= alive?'1':'0'; *o++=' '; *o++= dm?'1':'0'; *o++=' '; o=u2dec(o,g_stateTick);
-  *o++=' '; *o++= (g_clSession && g_clusterEp[4])?'1':'0'; *o++='\n';
+  *o++=' '; *o++= (g_clSession && ep_open(g_clusterEp))?'1':'0'; *o++='\n';
   write_file("/dev/shmem/aa_cluster_video",b,(usize)(o-b));
 }
 
@@ -904,7 +904,7 @@ static u8* cl_varint64(u8* o,u32 hi,u32 lo){
   }
 }
 static void cl_send_input(u32 code,u32 relative,i32 value){
-  if(!g_clusterInEp[4]){ g_cl.sendFail++; return; }
+  if(!ep_open(g_clusterInEp)){ g_cl.sendFail++; return; }
   u32 ms=cl_now_ms();
   // ns = ms * 1e6 as 64-bit: hi/lo of ms*1000000
   u32 lo = ms*1000000u;
@@ -970,7 +970,7 @@ static void cl_send_live_insets(const u32* v){
 static void cl_poll_live_insets(u32 now){
   if(g_liveChk && now-g_liveChk<500u) return;
   g_liveChk=now|1u;
-  if(!g_clStarted || !g_clusterEp[4] || !p_fopen || !p_fread || !p_fclose) return;
+  if(!g_clStarted || !ep_open(g_clusterEp) || !p_fopen || !p_fread || !p_fclose) return;
   u32 fresh = g_liveStartSeen!=g_cl.starts;            // a new Start: the phone is back to the SDR insets
   void* f=p_fopen(CLUSTER_LIVE_INSETS_FILE,"r");
   if(!f){ g_liveTxt[0]=0; g_liveStartSeen=g_cl.starts; return; }
@@ -1020,7 +1020,7 @@ static void cl_poll_commands(u32 now){
     else if(cl_word(c,"video") && cl_parse_int(c,&a)) g_hmiVideo = a?1u:0u;
     else if(cl_word(c,"insets")){
       i32 t4[4]; u32 ok=1; for(u32 j=0;j<4;j++) if(!cl_parse_int(c,&t4[j]) || t4[j]<0) ok=0;
-      if(ok && g_clStarted && g_clusterEp[4]){ u32 v[4]; for(u32 j=0;j<4;j++) v[j]=(u32)t4[j]; cl_send_live_insets(v); }
+      if(ok && g_clStarted && ep_open(g_clusterEp)){ u32 v[4]; for(u32 j=0;j<4;j++) v[j]=(u32)t4[j]; cl_send_live_insets(v); }
     }
   }
 }
@@ -1046,7 +1046,7 @@ static void cl_tick(u32 now){
   cl_state_file(now,alive);
   cl_poll_commands(now);
   cl_poll_live_insets(now);
-  if(g_cl.setups && g_clusterEp[4] && !g_idrState) cl_apply_focus(cl_want_video(now));
+  if(g_cl.setups && ep_open(g_clusterEp) && !g_idrState) cl_apply_focus(cl_want_video(now));
   struct kbcv* v=g_kv; if(!v) return;
   if(alive) v->alive_ms = now ? now : 1u;
   else if(v->alive_ms) v->alive_ms=0;
@@ -1135,11 +1135,8 @@ int cluster_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
   u32 id=msgId&0xffff;
   const u8* p=0; u32 n=0;
   {
-    const u32* io = bufref ? *(const u32* const*)((const u8*)bufref+4) : 0;
-    if(io){
-      const u8* base=(const u8*)io[0]; u32 off=io[2], end=io[3];
-      if(base && end>off+2 && (end-off-2)<0x100000){ p=base+off+2; n=end-off-2; }
-    }
+    u32 mn; const u8* m=io_bytes(bufref,&mn);
+    if(m && mn>2 && (mn-2)<0x100000){ p=m+2; n=mn-2; }
   }
   if(id==0x0000 || id==0x0001){
     // 0x0000 carries an 8-byte BE timestamp before the access unit; 0x0001 is codec config.
@@ -1241,12 +1238,9 @@ int cluster_input_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* buf
   u32 id=msgId&0xffff;
   g_cl.inMsgs++; g_cl.inLastId=id;
   if(id==0x8002){
-    const u32* io = bufref ? *(const u32* const*)((const u8*)bufref+4) : 0;
-    if(io){
-      const u8* base=(const u8*)io[0]; u32 off=io[2], end=io[3];
-      if(base && end>off+2){ u32 n=end-off-2; if(n>sizeof g_cl.bindReq) n=sizeof g_cl.bindReq;
-        for(u32 i=0;i<n;i++) g_cl.bindReq[i]=base[off+2+i]; g_cl.bindReqLen=n; }
-    }
+    u32 mn; const u8* m=io_bytes(bufref,&mn);
+    if(m && mn>2){ u32 n=mn-2; if(n>sizeof g_cl.bindReq) n=sizeof g_cl.bindReq;
+      for(u32 i=0;i<n;i++) g_cl.bindReq[i]=m[2+i]; g_cl.bindReqLen=n; }
     u8 b[4]; u8* o=b; o=cl_field_u(o,1,0);
     cl_send_on(g_clusterInEp,0x8003,b,(u32)(o-b));
     g_cl.bindReplies++;
@@ -1254,7 +1248,7 @@ int cluster_input_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* buf
   cluster_flush();
   return 0;
 }
-static u32 g_clusterInVT[10] __attribute__((aligned(8)));
+static u32 g_clusterInVT[VT_MAX] __attribute__((aligned(8)));
 
 static void cluster_register(void* receiver,u32 router){
   cluster_video_off();
@@ -1267,18 +1261,16 @@ static void cluster_register(void* receiver,u32 router){
   const u32* svt=(const u32*)ref(R_NAV_VTABLE);           // ProtocolEndpointBase slots 0..9
   u8 id=pick_free_id(router);
   if(id==0xff) return;
-  for(int i=0;i<10;i++){ g_clusterVT[i]=svt[i]; g_clusterInVT[i]=svt[i]; }
-  g_clusterVT[7]=(u32)&cluster_route;       g_clusterVT[9]=(u32)&cluster_discovery;
-  g_clusterInVT[7]=(u32)&cluster_input_route; g_clusterInVT[9]=(u32)&cluster_discovery;
-  *(u32*)(g_clusterEp+0x00)=(u32)g_clusterVT+8;
-  *(u32*)(g_clusterEp+0x08)=router;
-  g_clusterEp[0x0c]=id; g_clusterEp[0x05]=id;
+  vt_copy(g_clusterVT,svt); vt_copy(g_clusterInVT,svt);
+  g_clusterVT[lay(L_VT_ROUTE)]=(u32)&cluster_route;
+  g_clusterVT[lay(L_VT_DISCOVERY)]=(u32)&cluster_discovery;
+  g_clusterInVT[lay(L_VT_ROUTE)]=(u32)&cluster_input_route;
+  g_clusterInVT[lay(L_VT_DISCOVERY)]=(u32)&cluster_discovery;
+  ep_init(g_clusterEp,(u32)g_clusterVT+8,router,id);
   ((reg_t)ref(R_REGISTER))(receiver,g_clusterEp);
   u8 iid=pick_free_id(router);                            // after the video sink took its slot
   if(iid==0xff || iid==id) return;                        // no pair -> discovery stays stock
-  *(u32*)(g_clusterInEp+0x00)=(u32)g_clusterInVT+8;
-  *(u32*)(g_clusterInEp+0x08)=router;
-  g_clusterInEp[0x0c]=iid; g_clusterInEp[0x05]=iid;
+  ep_init(g_clusterInEp,(u32)g_clusterInVT+8,router,iid);
   ((reg_t)ref(R_REGISTER))(receiver,g_clusterInEp);
   g_clusterId=id; g_clusterInId=iid;
   cluster_flush();

@@ -16,9 +16,9 @@
 # Per-firmware addresses are AUTO-RESOLVED:
 #   inject.py reads the target libgal's own .dynsym / relocations / .plt and the BL site in
 #   GalReceiver::init, and bakes the right absolute addresses into the blob's .galrefs slots.
-#   So no manual address editing is needed for another STD2 libgal build. The object layouts the
-#   shim relies on are NOT resolved, though: inject.py warns when the libgal is not a build the
-#   shim has run on (KNOWN_LIBGAL there).
+#   So no manual address editing is needed for another STD2 libgal build. The object layouts are
+#   read from the target as well (layout.py -> the blob's .gallayout slots); when they cannot be
+#   verified inject.py writes nothing.
 #   (If the BL auto-locator ever fails on an exotic build, pass --bl-offset 0xNNNN to inject.py.)
 #
 # Usage:   ./build.sh /path/to/libext.google.gal.receiver.so

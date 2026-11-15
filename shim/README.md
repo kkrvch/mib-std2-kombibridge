@@ -101,6 +101,36 @@ want to double-check. If a `BL` auto-locator fails on some exotic build, overrid
 The probe uses two additional ARM `B` patches at the VideoSink entry points and refuses to write
 if their target prologues differ from the verified target build.
 
+### Object layouts (`layout.py`, the `.gallayout` slots)
+
+Addresses are half of what differs between builds; the other half is where things sit inside
+libgal's objects. `layout.py` reads those from the target too and `inject.py` writes them into the
+blob's `.gallayout` slots (`g_lay[]` in `navshim_fs.cpp`), which the shim uses instead of literals:
+
+| slot | read from |
+|---|---|
+| `L_ROUTER_OFF` | `GalReceiver::registerService`: `add r0, r0, #off; b MessageRouter::registerService` |
+| `L_EP_SVCID`, `L_TABLE_BIAS` | `MessageRouter::registerService`: `ldrb rA,[r1,#svcid]` ... `add rA,rA,#bias; ldr rX,[r0,rA,lsl #2]` |
+| `L_EP_OPEN`, `L_EP_CHANNEL` | `ProtocolEndpointBase::onChannelOpened`: the two `strb` |
+| `L_EP_ROUTER` | `NavigationStatusEndpoint::start`: the `ldr r0,[this,#router]` next to `ldrb r1,[this,#channel]` |
+| `L_VT_WORDS`, `L_VT_ROUTE`, `L_VT_DISCOVERY` | the relocations of `_ZTV24NavigationStatusEndpoint` (which slot names which method) |
+| `L_IO_REF`, `L_IO_DATA`, `L_IO_START`, `L_IO_END` | the prologue of `NavigationStatusEndpoint::routeMessage` |
+| `L_NAV_LISTENER`, `L_MEDIA_LISTENER` | the first load of `handleNavigationStatus` / `handleMediaPlaybackStatus` |
+| `L_MEDIA_OK` | 1 when the media listener code has a known fingerprint |
+
+Two things are not single numbers and are compared by a fingerprint instead (sha256 of the
+function's code with branch displacements and literal-pool contents masked, so code that only
+moved keeps it): the stock `NavigationStatusEndpoint::addDiscoveryInfo` (it serialises endpoint
+fields the shim fills in) and the three media functions whose listener calling conventions the
+shim's `m_status` / `m_metadata` are written against.
+
+Outcome: everything read and known -> patched; media code differs -> patched without the media
+endpoint (a warning says so); anything else -> `inject.py` stops and writes nothing
+(`--assume-reference-layout` overrides that, for experiments). `python3 shim/layout.py <libgal>`
+prints the table for a library without patching it; `tests/inject/run.sh` runs the checks on
+altered copies. Only one firmware build was available, so "another build" has so far only been
+simulated that way.
+
 When the probe is installed on the unit, it writes the following RAM-only artifacts under
 `/dev/shmem/`: `aa_video_probe` (summary), `aa_video_probe_samples` (sample history),
 `aa_video_probe_config` (bounded codec-config bytes), `aa_video_probe_payload` (bounded candidate

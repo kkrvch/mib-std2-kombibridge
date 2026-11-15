@@ -43,6 +43,55 @@ extern "C" __attribute__((section(".galrefs"), used))
 volatile u32 g_ref[N_REFS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static inline u32 ref(int i){ return g_ref[i]; }            // = libbase + VA
 
+// ===== .gallayout: the object layouts of THIS libgal ==========================================
+// Offsets and indices, not addresses: nothing is relocated. The values below are those of the
+// build the shim was written on; the injector replaces them with what shim/layout.py reads out of
+// the target libgal's own code (and refuses to patch when it cannot). Order MUST match
+// layout.py's LAYOUT list.
+//   L_ROUTER_OFF      MessageRouter inside GalReceiver
+//   L_TABLE_BIAS      MessageRouter's service table: word index = service id + bias
+//   L_EP_OPEN / L_EP_CHANNEL / L_EP_ROUTER / L_EP_SVCID   fields of a ProtocolEndpointBase
+//   L_VT_WORDS / L_VT_ROUTE / L_VT_DISCOVERY   an endpoint vtable symbol: its length in words, the
+//                     word index of routeMessage and of addDiscoveryInfo (2 header words included)
+//   L_IO_REF          the IoBuffer* inside a shared_ptr<IoBuffer>
+//   L_IO_DATA / L_IO_START / L_IO_END   IoBuffer: data pointer, first valid byte, end
+//   L_NAV_LISTENER / L_MEDIA_LISTENER   listener pointer of the two stock endpoints
+//   L_MEDIA_OK        0 = the media listener's calling conventions could not be verified on this
+//                     build: the media endpoint is not registered at all
+enum { L_ROUTER_OFF=0, L_TABLE_BIAS, L_EP_OPEN, L_EP_CHANNEL, L_EP_ROUTER, L_EP_SVCID,
+       L_VT_WORDS, L_VT_ROUTE, L_VT_DISCOVERY, L_IO_REF, L_IO_DATA, L_IO_START, L_IO_END,
+       L_NAV_LISTENER, L_MEDIA_LISTENER, L_MEDIA_OK, N_LAY };
+extern "C" __attribute__((section(".gallayout"), used))
+volatile u32 g_lay[N_LAY] = { 4, 0x40, 4, 5, 8, 0xc, 10, 7, 9, 4, 0, 8, 0xc, 0x2c, 0x18, 1 };
+static inline u32 lay(int i){ return g_lay[i]; }
+
+// The bytes a routeMessage call carries (bufref = const shared_ptr<IoBuffer>&), from the first
+// valid one; 0 when there is nothing usable. The 2-byte message id is still in front.
+static const u8* io_bytes(const void* bufref,u32* len){
+  *len=0;
+  const u8* io = bufref ? *(const u8* const*)((const u8*)bufref+lay(L_IO_REF)) : 0;
+  if(!io) return 0;
+  const u8* base=*(const u8* const*)(io+lay(L_IO_DATA));
+  u32 off=*(const u32*)(io+lay(L_IO_START)), end=*(const u32*)(io+lay(L_IO_END));
+  if(!base || end<off) return 0;
+  *len=end-off; return base+off;
+}
+// A protocol endpoint of our own: the fields the stock base class and MessageRouter read.
+enum { EP_BYTES = 0x40, VT_MAX = 16 };
+static inline u32 ep_open(const u8* ep){ return ep[lay(L_EP_OPEN)]; }
+static void ep_init(u8* ep,u32 vptr,u32 router,u8 id){
+  *(u32*)(ep+0x00) = vptr;                        // C++ ABI: the vptr is the first word
+  *(u32*)(ep+lay(L_EP_ROUTER)) = router;          // MessageRouter*
+  ep[lay(L_EP_SVCID)] = id;                       // service id
+  ep[lay(L_EP_CHANNEL)] = id;                     // channel
+}
+// A private copy of a stock endpoint vtable symbol; the caller swaps slots and uses copy + 8
+// (C++ ABI: two header words - offset-to-top and RTTI - precede the first slot).
+static void vt_copy(u32* dst,const u32* src){
+  u32 n=lay(L_VT_WORDS); if(n>VT_MAX) n=VT_MAX;
+  for(u32 i=0;i<n;i++) dst[i]=src[i];
+}
+
 // ===== minimal freestanding libc =====
 static void* my_memset(void* d,int c,usize n){ u8* p=(u8*)d; while(n--) *p++=(u8)c; return d; }
 static usize my_strlen(const char* s){ const char* p=s; while(*p) ++p; return (usize)(p-s); }
@@ -1013,11 +1062,8 @@ int nav_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
   // prologue: IoBuffer* = *(bufref+4); data = buf[0]+buf[2]+2, len = buf[3]-buf[2]-2 (2 = the id).
   const u8* payload = 0; u32 plen = 0;
   {
-    const u32* io = bufref ? *(const u32* const*)((const u8*)bufref+4) : 0;
-    if(io){
-      const u8* base=(const u8*)io[0]; u32 off=io[2], size=io[3];
-      if(base && size>off+2 && (size-off-2)<0x40000){ payload = base+off+2; plen = size-off-2; }
-    }
+    u32 n; const u8* m=io_bytes(bufref,&n);
+    if(m && n>2 && (n-2)<0x40000){ payload = m+2; plen = n-2; }
   }
   if(dump_on()) dump_nav_raw(id,payload,plen);   // DEBUG only; before any parsing, so nothing is lost
   if(id==0x8006 || id==0x8007){
@@ -1051,11 +1097,11 @@ int nav_route(void* /*self*/,u32 /*channel*/,u32 msgId,const void* bufref){
   note_swallowed(id,payload,plen);               // the census is the only record left of these
   return 0;
 }
-static u32 g_navVT[10] __attribute__((aligned(8)));   // private copy of the 40-byte stock vtable
+static u32 g_navVT[VT_MAX] __attribute__((aligned(8)));   // private copy of the stock vtable
 
 // ===== endpoint objects (layout from RE, sizeof ~0x30 → reserve 0x40) =====
-static u8 g_navEp[0x40]   __attribute__((aligned(8)));
-static u8 g_mediaEp[0x40] __attribute__((aligned(8)));
+static u8 g_navEp[EP_BYTES]   __attribute__((aligned(8)));
+static u8 g_mediaEp[EP_BYTES] __attribute__((aligned(8)));
 // Track the receiver we armed, so we don't double-register within one live session. GalReceiver::init
 // runs again on every AA reconnect and re-initialises the MessageRouter (clearing our registrations),
 // so we MUST re-register each session. The SAL may reuse the SAME GalReceiver object across a
@@ -1096,12 +1142,9 @@ extern "C" __attribute__((used)) int mr_queue_outgoing(void* self, u32 ch, const
 // It is a notification — the phone expects no reply.
 extern "C" __attribute__((used)) int mr_route_message(void* self, u32 ch, const void* bufref){
   if((ch&0xff)==0 && bufref){
-    const u32* io = *(const u32* const*)((const u8*)bufref+4);   // shared_ptr<IoBuffer> -> IoBuffer*
-    if(io){
-      const u8* base=(const u8*)io[0]; u32 off=io[2], size=io[3];
-      if(base && size>=off+2 && (((u32)base[off]<<8)|base[off+1])==ID_BATTERY_STATUS_NOTIFICATION)
-        return 0;
-    }
+    u32 n; const u8* m=io_bytes(bufref,&n);
+    if(m && n>=2 && (((u32)m[0]<<8)|m[1])==ID_BATTERY_STATUS_NOTIFICATION)
+      return 0;
   }
   return ((mr_route_t)ref(R_ROUTE_FN))(self, ch, bufref);
 }
@@ -1160,7 +1203,7 @@ __attribute__((naked,used)) extern "C" void video_config_trampoline(){
 // router table: system services take the low ids, a free one is almost certainly here.
 static u8 pick_free_id(u32 router){
   u32* tbl=(u32*)router;
-  for(u32 id=0x10; id<0x40; ++id) if(tbl[id+0x40]==0) return (u8)id;
+  for(u32 id=0x10; id<0x40; ++id) if(tbl[id+lay(L_TABLE_BIAS)]==0) return (u8)id;
   return 0xff;
 }
 
@@ -1210,36 +1253,32 @@ extern "C" __attribute__((used)) void gal_nav_inject(void* receiver){
   g_nIds=0; g_idOverflow=0;
   ids_open_session();
 
-  u32 router = (u32)receiver + 4;                 // MessageRouter is embedded at receiver+4
+  u32 router = (u32)receiver + lay(L_ROUTER_OFF); // MessageRouter is embedded in the receiver
   u8 id = pick_free_id(router);
   if(id==0xff){ return; }
-  // Private copy of the stock 40-byte vtable with slot 7 (vptr+0x14 = routeMessage) swapped for
-  // ours; the stock table is left alone so libgal's own endpoints keep working. Slot offsets come
-  // from its .rel.dyn entries: +0x00/+0x04 dtor, +0x08/+0x0c/+0x10 channel hooks, +0x14 routeMessage,
-  // +0x18 handleRawMessage, +0x1c addDiscoveryInfo.
-  { const u32* svt=(const u32*)ref(R_NAV_VTABLE);
-    for(int i=0;i<10;i++) g_navVT[i]=svt[i];
-    g_navVT[7]=(u32)&nav_route; }
-  *(u32*)(g_navEp+0x00) = (u32)g_navVT + 8;       // vptr = our table + 8
-  *(u32*)(g_navEp+0x08) = router;                 // MessageRouter*
-  g_navEp[0x0c] = id;                             // service id
-  g_navEp[0x05] = id;                             // channel
-  *(u32*)(g_navEp+0x24) = 2;                      // InstrumentClusterType = 2 (enum/text, mono)
-  *(u32*)(g_navEp+0x2c) = (u32)&g_listener;       // listener -> ours
+  // Private copy of the stock vtable with the routeMessage slot swapped for ours; the stock table
+  // is left alone so libgal's own endpoints keep working. The slot comes from the vtable's
+  // relocations (layout.py); on the reference build: +0x00/+0x04 dtor, +0x08/+0x0c/+0x10 channel
+  // hooks, +0x14 routeMessage, +0x18 handleRawMessage, +0x1c addDiscoveryInfo (from vptr).
+  vt_copy(g_navVT,(const u32*)ref(R_NAV_VTABLE));
+  g_navVT[lay(L_VT_ROUTE)]=(u32)&nav_route;
+  ep_init(g_navEp,(u32)g_navVT + 8,router,id);
+  // InstrumentClusterType = 2 (enum/text, mono), read by the stock addDiscoveryInfo. Its place is
+  // not derived: layout.py lets the patch through only when that function is the known code.
+  *(u32*)(g_navEp+0x24) = 2;
+  *(u32*)(g_navEp+lay(L_NAV_LISTENER)) = (u32)&g_listener;   // listener -> ours
 
   ((reg_t)ref(R_REGISTER))(receiver, g_navEp);    // register with the router
   // We never call NavigationStatusEndpoint::start() — after auth the phone sees the service in
   // discovery and opens the nav channel itself; a prematurely queued start message breaks auth.
 
   // --- MediaPlaybackStatusEndpoint (now-playing). Register AFTER nav so pick_free_id picks a
-  //     different free slot. Listener pointer is at +0x18 (NOT +0x2c); no clusterType. ---
-  u8 mid = pick_free_id(router);
+  //     different free slot. Stock vtable, stock dispatcher: our listener gets its callbacks, whose
+  //     argument conventions are known only for the code layout.py recognises (L_MEDIA_OK). ---
+  u8 mid = lay(L_MEDIA_OK) ? pick_free_id(router) : 0xff;
   if(mid != 0xff){
-    *(u32*)(g_mediaEp+0x00) = ref(R_MEDIA_VTABLE) + 8; // vptr = vtable+8
-    *(u32*)(g_mediaEp+0x08) = router;                  // MessageRouter*
-    g_mediaEp[0x0c] = mid;                             // service id
-    g_mediaEp[0x05] = mid;                             // channel
-    *(u32*)(g_mediaEp+0x18) = (u32)&g_mediaListener;   // listener -> ours (media: +0x18)
+    ep_init(g_mediaEp,ref(R_MEDIA_VTABLE) + 8,router,mid);
+    *(u32*)(g_mediaEp+lay(L_MEDIA_LISTENER)) = (u32)&g_mediaListener;   // listener -> ours
     ((reg_t)ref(R_REGISTER))(receiver, g_mediaEp);
   }
 #if CLUSTER_SINK

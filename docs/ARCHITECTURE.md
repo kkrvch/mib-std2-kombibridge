@@ -158,10 +158,14 @@ The same library exposes more endpoints the SAL likewise ignores:
   are usually compatible, but strictly should be recompiled against the target `MIBHMI.jar`.
 - **shim** - `inject.py` **auto-resolves** all per-firmware addresses
   from the target libgal's own `.dynsym` / relocations / `.plt`, and auto-locates the `BL` patch
-  site by scanning `GalReceiver::init` for the call to the `onChannelOpened` PLT stub. What it
-  cannot resolve are the object layouts the shim relies on (the MessageRouter inside GalReceiver,
-  its service table, endpoint fields, callback arguments): those are known from the dev unit's
-  build only, and `inject.py` warns when the libgal is not one it knows (`KNOWN_LIBGAL`). (Confirmed necessary in practice: even two copies
+  site by scanning `GalReceiver::init` for the call to the `onChannelOpened` PLT stub. The
+  object layouts the shim relies on (the MessageRouter inside GalReceiver, its service table,
+  endpoint fields, vtable slots, IoBuffer words, listener pointers) are read by `shim/layout.py`
+  from the instructions of the small exported functions that use them and baked into the blob's
+  `.gallayout` slots; what is not a single number (the media listener's calling conventions, the
+  fields the stock `addDiscoveryInfo` serialises) is compared by a position-independent
+  fingerprint of the code. A failed check stops the build (navigation) or leaves the media
+  endpoint out. `tests/inject` exercises this on altered copies of the real library. (Confirmed necessary in practice: even two copies
   of the same build — the device copy vs the firmware-image copy — have addresses shifted by 8 bytes, so the
   old hardcoded values were wrong for the firmware-image libgal.) See
   [`../shim/README.md`](../shim/README.md).

@@ -8,6 +8,7 @@
 import sys, struct, io, argparse, hashlib
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
+import layout     # shim/layout.py: the object layouts, read out of the target libgal
 
 R_RELATIVE=23
 R_JUMP_SLOT=22
@@ -16,10 +17,10 @@ TRAMPOLINE_SYM2='shutdown_trampoline'
 TRAMPOLINE_VIDEO_DATA='video_data_trampoline'
 TRAMPOLINE_VIDEO_CONFIG='video_config_trampoline'
 
-# libgal builds this shim has actually run on (sha256 of the STOCK file -> where it comes from).
-# Function addresses are resolved from any build, but the object layouts the shim relies on
-# (MessageRouter inside GalReceiver, its service table, the endpoint fields, the listener
-# callbacks' arguments, IoBuffer) are known only from these: another build gets a warning.
+# libgal builds this shim has actually RUN on in a car (sha256 of the STOCK file -> where it comes
+# from). Any other build is patched from what its own code says (function addresses here, object
+# layouts in layout.py) or refused; this list only decides between "known" and "never run" in
+# the build output.
 KNOWN_LIBGAL={
     '7af20a37e9fc111058e54f6a94d432f0e4be8c8731bafdbd1d653e17ee180499': 'development unit (MST2_EU_SK_ZR_P0480T)',
 }
@@ -286,13 +287,17 @@ def verify_patched_output(path, expected):
         foff,pc,target=cs
         if bl_target(g32(raw,foff),pc) != target:
             raise ValueError("cluster SDR BL does not resolve to sdr_queue_hook 0x%x"%target)
+    for foff,val in expected.get('layout',[]):
+        if g32(raw,foff) != val:
+            raise ValueError("object layout word at file offset 0x%x was not written"%foff)
     minor_patch=expected.get('minor_patch')
     if minor_patch is not None:
         mov,reg,minor=minor_patch
         if g32(raw,mov) != (0xE3A00000 | (reg<<12) | minor):
             raise ValueError("advertised AA protocol minor patch was not written")
-    print("VERIFIED: ELF layout, both trampolines, %d injected relocations%s" %
-          (len(expected['new_reloc_offsets']), ', AA protocol 1.%d'%minor_patch[2] if minor_patch else ''))
+    print("VERIFIED: ELF layout, both trampolines, %d injected relocations, %d object layout words%s" %
+          (len(expected['new_reloc_offsets']), len(expected.get('layout',[])),
+           ', AA protocol 1.%d'%minor_patch[2] if minor_patch else ''))
 
 
 def blob_image_and_relocs(blob_path):
@@ -310,11 +315,14 @@ def blob_image_and_relocs(blob_path):
                 relocs.append(r['r_offset'])
     gr=e.get_section_by_name('.galrefs')
     galrefs=[gr['sh_addr']+i*4 for i in range(gr['sh_size']//4)]
+    gl=e.get_section_by_name('.gallayout')
+    if gl is None: sys.exit("ERROR: the blob has no .gallayout section (old navshim sources?)")
+    gallayout=[gl['sh_addr']+i*4 for i in range(gl['sh_size']//4)]
     ds=e.get_section_by_name('.dynsym')
     ent={sy.name:sy['st_value'] for sy in ds.iter_symbols()
          if sy.name in (TRAMPOLINE_SYM,TRAMPOLINE_SYM2,TRAMPOLINE_VIDEO_DATA,TRAMPOLINE_VIDEO_CONFIG,
                         CLUSTER_SDR_HOOK)}
-    return img,hi,relocs,galrefs,ent
+    return img,hi,relocs,galrefs,gallayout,ent
 
 def main():
     ap=argparse.ArgumentParser()
@@ -331,6 +339,10 @@ def main():
                          'below 1.7 has no nav at all. Default: leave the firmware alone.')
     ap.add_argument('--video-probe',action='store_true',
                     help='also hook target VideoSink codec/data callbacks into the capture-only probe')
+    ap.add_argument('--assume-reference-layout',action='store_true',
+                    help='patch although the object layouts could not be read out of this libgal, '
+                         'with the values of the reference build. For experiments only: a wrong '
+                         'layout crashes the SAL when the phone connects.')
     ap.add_argument('--cluster-sink',action='store_true',
                     help='redirect the ServiceDiscoveryResponse send through sdr_queue_hook so the '
                          'blob can advertise its experimental cluster video sink')
@@ -347,9 +359,24 @@ def main():
     if digest in KNOWN_LIBGAL:
         print("libgal sha256 %s: known build, %s"%(digest,KNOWN_LIBGAL[digest]))
     else:
-        print("WARNING: libgal sha256 %s is NOT a build this shim has run on."%digest)
-        print("         Addresses are resolved from this file, but the object layouts are assumed to be")
-        print("         those of the known builds. Test with care and keep the stock file for rollback.")
+        print("NOTE: libgal sha256 %s is not a build the mod has run on in a car."%digest)
+        print("      Addresses and object layouts are read from this file (below); keep the stock file for rollback.")
+    # Object layouts, from the still unmodified bytes. Errors mean the navigation part cannot be
+    # trusted on this build: no patched library is written.
+    lay,lay_errors,lay_warnings,lay_fp=layout.resolve(e,bytes(raw))
+    print("object layouts read from libgal:")
+    for nm in layout.LAYOUT_NAMES:
+        print("    %-17s = 0x%x%s"%(nm,lay[nm],'' if lay[nm]==layout.REFERENCE[nm]
+                                    else '   (reference build: 0x%x)'%layout.REFERENCE[nm]))
+    for w in lay_warnings: print("WARNING: "+w)
+    if lay_errors:
+        for x in lay_errors: print("LAYOUT: "+x)
+        if not a.assume_reference_layout:
+            sys.exit("ERROR: the object layouts of this libgal could not be verified (%d check%s failed, above).\n"
+                     "       Nothing was written. This build needs a look by hand: see shim/layout.py."
+                     %(len(lay_errors),'' if len(lay_errors)==1 else 's'))
+        print("WARNING: --assume-reference-layout: continuing with the reference build's layouts. UNVERIFIED.")
+        media_ok=lay['L_MEDIA_OK']; lay=dict(layout.REFERENCE); lay['L_MEDIA_OK']=media_ok
     minor_patch=None
     if a.aa_protocol_minor is not None:
         minor_patch=patch_protocol_version(e,raw,a.aa_protocol_minor)
@@ -373,7 +400,12 @@ def main():
     n_old=rel_sz//8
     print("libgal: DT_REL@0x%x size=0x%x (%d entries) RELCOUNT=%d phnum=%d"%(rel_foff,rel_sz,n_old,relcount,e_phnum))
 
-    img,hi,brelocs,galrefs,ent=blob_image_and_relocs(a.blob)
+    img,hi,brelocs,galrefs,gallayout,ent=blob_image_and_relocs(a.blob)
+    if len(gallayout)!=len(layout.LAYOUT_NAMES):
+        sys.exit("ERROR: g_lay slot count mismatch: navshim has %d, layout.py has %d"
+                 %(len(gallayout),len(layout.LAYOUT_NAMES)))
+    for off,nm in zip(gallayout,layout.LAYOUT_NAMES):   # plain numbers: no relocation
+        s32(img,off,lay[nm])
     print("blob: image=0x%x bytes, %d blob-relocs, %d galrefs, %s"%(hi,len(brelocs),len(galrefs),ent))
 
     # --- AUTO-RESOLVE the per-firmware addresses from THIS libgal and bake them into .galrefs ---
@@ -551,6 +583,7 @@ def main():
                          'config_tramp':new_vaddr+ent[TRAMPOLINE_VIDEO_CONFIG], 'config_branch':video_b[1]}
                         if a.video_probe else None),
         'minor_patch':minor_patch,
+        'layout':[(new_foff+off,lay[nm]) for off,nm in zip(gallayout,layout.LAYOUT_NAMES)],
         'cluster_sdr': ((sdr_site[0],sdr_site[1],new_vaddr+ent[CLUSTER_SDR_HOOK]) if sdr_site else None),
     })
 
