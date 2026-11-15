@@ -57,6 +57,17 @@ NavigationServiceListener {
         this.sendTurnToInfoStatus(this.computeTurnToInfoStatus());
     }
 
+    /**
+     * Stock method, unchanged: the unit's own next-turn street and signpost. It is part of what the
+     * stock class offers its subclasses - TurnToInfoArabic (not shadowed) overrides it and calls
+     * this one - so the shadow must have it (found by tools/check_shadows.py api).
+     */
+    protected void setTurnToInfoStatusData(TurnToInfo_Status turnToInfo_Status) {
+        NavigationTurnToInfo n = this.getNavigationService().getTurnToInfo();
+        turnToInfo_Status.turnToInfo.setContent(n.getTurnToInfoStreet());
+        turnToInfo_Status.signPost.setContent(n.getTurnToInfoSignPost());
+    }
+
     private TurnToInfo_Status computeTurnToInfoStatus() {
         TurnToInfo_Status turnToInfo_Status = this.dequeueBAPEntity();
         // navsd-shadow delta: street straight from NavState (the AA next-turn road); on a nav-capable
@@ -82,9 +93,8 @@ NavigationServiceListener {
                 turnToInfo_Status.turnToInfo.setContent(street);
                 turnToInfo_Status.signPost.setContent("");
             } else if (ClusterCaps.isNavCapable()) {
-                NavigationTurnToInfo n = this.getNavigationService().getTurnToInfo();
-                turnToInfo_Status.turnToInfo.setContent(n.getTurnToInfoStreet());
-                turnToInfo_Status.signPost.setContent(n.getTurnToInfoSignPost());
+                // the stock path, through the stock method: a subclass may override it
+                this.setTurnToInfoStatusData(turnToInfo_Status);
             } else {
                 turnToInfo_Status.turnToInfo.setContent("");
                 turnToInfo_Status.signPost.setContent("");

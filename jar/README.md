@@ -87,3 +87,27 @@ artifacts:
 - comment out `@Override` (not valid in 1.3),
 - make autoboxing explicit (`Integer`→`.intValue()`, `Boolean`→`.booleanValue()`),
 - give any uninitialised `static final` (CFR-inlined constants) a dummy initialiser.
+
+## Shadows are checked against your MIBHMI.jar
+
+A shadow is a copy of a stock class of one firmware with the mod's changes in it. `jar/build.sh`
+therefore runs `tools/check_shadows.py` twice against the `MIBHMI.jar` it compiles with:
+
+- **before compiling** - every stock class the sources shadow (and its nested classes) must have
+  the fingerprint recorded in `jar/shadows.lock`. The fingerprint is symbolic (superclass,
+  interfaces, fields with their constant values, each method's code with constant-pool references
+  resolved to names), so it follows what the class is and does, not how the converter laid the
+  file out. A difference names the members that differ.
+- **after compiling** - every shadow must offer what its stock class offers to the rest of the HMI:
+  same superclass, its interfaces, every non-private field / method / constructor, same constant
+  values. (This found a stock method missing from the `TurnToInfo` shadow and the zeros in the
+  `Constants` stub.)
+
+A failed check stops the build. `ALLOW_SHADOW_MISMATCH=1 ./build.sh ...` builds anyway, for
+experiments on another firmware; the result is unverified. After the shadows have really been
+brought in line with another firmware's classes, record it:
+`python3 tools/check_shadows.py update jar/lib/MIBHMI.jar jar/src jar/shadows.lock`.
+
+What the check cannot tell: whether a shadow that matches still BEHAVES right on a unit - only a
+car shows that. `shadows.lock` was taken from the MIBHMI.jar of the development unit
+(MST2_EU_SK_ZR_P0480T).
