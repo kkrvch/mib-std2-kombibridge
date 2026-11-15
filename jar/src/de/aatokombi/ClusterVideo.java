@@ -203,6 +203,35 @@ public final class ClusterVideo {
         try { MIBLogger.getInstance().debug(s); } catch (Throwable t) {}
     }
 
+    private static boolean lastFlag, lastSess;
+
+    /**
+     * "<alive> <dm> <tick> [<session>]" -> {"1"/"0" video on the AID (alive and dm both 1), tick,
+     * "1"/"0" session}, or null when there is nothing to read (null, empty, shorter than
+     * "a d t"). Without the session field (an older libgal) the session follows the video flag.
+     */
+    static String[] parseState(String content) {
+        if (content == null) {
+            return null;
+        }
+        String s = content.trim();
+        if (s.length() < 5 || s.charAt(1) != ' ' || s.charAt(3) != ' ') {
+            return null;
+        }
+        boolean flag = s.charAt(0) == '1' && s.charAt(2) == '1';
+        String tick;
+        boolean sess;
+        int sp1 = s.indexOf(' ', 4);
+        if (sp1 > 0) {
+            tick = s.substring(4, sp1);
+            sess = s.substring(sp1 + 1).trim().equals("1");
+        } else {
+            tick = s.substring(4);
+            sess = flag;   // older libgal without the session field
+        }
+        return new String[]{ flag ? "1" : "0", tick, sess ? "1" : "0" };
+    }
+
     public static void poll() {
         if (WheelKeys.takeCycleRequest()) {
             if (session) {
@@ -217,31 +246,32 @@ public final class ClusterVideo {
             return;
         }
         readMs = now;
-        boolean flag = false, sess = false;
-        String tick = null;
+        String content = null;
         FileInputStream in = null;
         try {
             in = new FileInputStream(PATH);
             byte[] b = new byte[40];
             int n = in.read(b);
             if (n > 0) {
-                String s = new String(b, 0, n).trim();
-                // "<alive> <dm> <tick> [<session>]": alive and dm must both be 1
-                flag = s.length() >= 3 && s.charAt(0) == '1' && s.charAt(2) == '1';
-                int sp1 = s.indexOf(' ', 4);
-                if (sp1 > 0) {
-                    tick = s.substring(4, sp1);
-                    sess = s.substring(sp1 + 1).trim().equals("1");
-                } else {
-                    tick = s.length() > 4 ? s.substring(4) : s;
-                    sess = flag;   // older libgal without the session field
-                }
+                content = new String(b, 0, n);
             }
         } catch (Throwable t) {
             // no CLUSTER_SINK libgal, or no AA session yet
         } finally {
             try { if (in != null) in.close(); } catch (Throwable t) {}
         }
+        String[] st = parseState(content);
+        if (st == null) {
+            // Nothing readable: no file at all, or the libgal is rewriting it right now (it is
+            // truncated and written again about once a second). Not news - the last state stands
+            // until the tick goes stale. Taking it for "closed" made the session flap.
+            st = new String[]{ lastFlag ? "1" : "0", null, lastSess ? "1" : "0" };
+        }
+        boolean flag = "1".equals(st[0]);
+        String tick = st[1];
+        boolean sess = "1".equals(st[2]);
+        lastFlag = flag;
+        lastSess = sess;
         if (tick != null && !tick.equals(lastTick)) {
             lastTick = tick;
             tickMs = now;

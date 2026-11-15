@@ -12,7 +12,7 @@ import java.io.FileReader;
 
 /**
  * Reads the Android Auto now-playing track from /dev/shmem/aa_media (written by the patched GAL
- * receiver / navshim MediaPlaybackStatusEndpoint, see work/shim/) and shows it on the cluster's
+ * receiver / navshim MediaPlaybackStatusEndpoint, see shim/src/navshim_fs.cpp) and shows it on the cluster's
  * media widget via {@link CurrentStationInfo}. Gated by {@link Config#Media.ENABLED}.
  *
  * IPC line (the shim rewrites the whole line, O_TRUNC):
@@ -114,7 +114,7 @@ public class ShmemMediaReader implements Runnable {
         // connected: present+valid => use it; absent (older shim) OR torn/garbage (partial read of the
         // truncate-rewritten file) => default 1 (assume connected), so we never spuriously clear.
         int connected = (int) parseLongSafe(f.length > 7 ? f[7] : null, 1L);
-        long session  = parseLongSafe(f.length > 8 ? f[8] : null, -1L);
+        long session  = sessionOf(f, lastSession);
 
         // New AA session (phone reconnected): drop stale now-playing and re-arm the seq tracker.
         if (session != lastSession) {
@@ -183,6 +183,15 @@ public class ShmemMediaReader implements Runnable {
                 target.applyCoverArt(coverLen);
             }
         }
+    }
+
+    /**
+     * The session epoch (field 8). A line that does not carry a readable one - cut short, or from
+     * an older shim - keeps the session we already know: reading it as "another session" cleared
+     * the now-playing text and re-staged the cover for nothing.
+     */
+    static long sessionOf(String[] f, long known) {
+        return parseLongSafe(f.length > 8 ? f[8] : null, known);
     }
 
     /** Parse a long, defaulting on null / garbage. */

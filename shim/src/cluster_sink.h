@@ -991,7 +991,11 @@ static void cl_poll_commands(u32 now){
   const char* p=buf;
   while(*p){
     const char* line=p; while(*p && *p!='\n') p++;
-    const char* e=p; if(*p) p++;
+    const char* e=p;
+    // A line without its newline is one the jar is still writing (or the read was cut short):
+    // leave it for the next poll. Taking its sequence now would lose the command for good.
+    if(!*p) break;
+    p++;
     char l[96]; u32 k=0; while(line<e && k<sizeof l-1) l[k++]=*line++; l[k]=0;
     const char* c=l; i32 seq,a=0,b=0;
     if(!cl_parse_int(c,&seq) || (u32)seq<=g_cmdLast) continue;
