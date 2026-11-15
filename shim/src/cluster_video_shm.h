@@ -23,7 +23,8 @@
 
 #define KBCV_SHM_NAME   "/aatokombi-cluster-video"
 #define KBCV_MAGIC      0x5643424bu   /* "KBCV" little-endian */
-#define KBCV_VERSION    2u
+#define KBCV_VERSION    3u
+#define KBCV_HEADER_BYTES 256u        /* everything before slot[]: fixed, see struct kbcv */
 #define KBCV_SLOTS      24u
 #define KBCV_SLOT_BYTES 256000u
 #define KBCV_AU_MAX     250000u       /* the cluster decoder's frame limit */
@@ -74,7 +75,19 @@ struct kbcv {
    * phone's H.264 is passed through to the AID. Coded size and the crop's top-left corner. */
   volatile unsigned mode;
   unsigned coded_w, coded_h, crop_x, crop_y;
+  /*
+   * The header is KBCV_HEADER_BYTES long whatever it holds, so slot[] never moves. A new field
+   * takes its place from `reserved` (the memory is zero-filled, so 0 must mean "not set / older
+   * side"). Bump KBCV_VERSION whenever a field changes its meaning, size or place: the reader
+   * refuses any other version (native/src/dm_hook.c kv_open), and the two libraries are installed
+   * separately.
+   */
+  unsigned reserved[33];
   struct kbcv_slot slot[KBCV_SLOTS];
 };
+
+/* Compile-time check, C99 and C++ alike: the build fails if the header is not KBCV_HEADER_BYTES. */
+typedef char kbcv_header_size_check[
+  (sizeof(struct kbcv) - KBCV_SLOTS * sizeof(struct kbcv_slot)) == KBCV_HEADER_BYTES ? 1 : -1];
 
 #endif

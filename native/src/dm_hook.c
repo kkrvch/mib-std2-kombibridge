@@ -76,6 +76,7 @@ static int most_sink_ok = -1;
 
 static struct kbcv *kv;
 static unsigned kv_last_try;
+static int kv_version_logged;
 static void *cluster_queue;
 static struct element ours;
 static uint8_t frame[KBCV_SLOT_BYTES];
@@ -247,7 +248,17 @@ static int kv_open(void)
     p = mmap(NULL, sizeof(struct kbcv), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     close(fd);
     if (p == MAP_FAILED || !p) return 0;
-    if (((struct kbcv *)p)->magic != KBCV_MAGIC || ((struct kbcv *)p)->version != KBCV_VERSION) return 0;
+    if (((struct kbcv *)p)->magic != KBCV_MAGIC || ((struct kbcv *)p)->version != KBCV_VERSION) {
+        /* Not ours (yet): the libgal sets the magic last, or it is built for another layout.
+         * Unmap before the next try - this runs once a second, and the mapping is ~6 MB. */
+        unsigned magic = ((struct kbcv *)p)->magic, version = ((struct kbcv *)p)->version;
+        munmap(p, sizeof(struct kbcv));
+        if (magic == KBCV_MAGIC && !kv_version_logged) {
+            kv_version_logged = 1;
+            LOGV("cluster video memory has another version (libgal and libkb_dm.so differ): stock map only, version", version);
+        }
+        return 0;
+    }
     kv = (struct kbcv *)p;
     LOG("cluster video memory found");
     return 1;

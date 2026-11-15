@@ -48,6 +48,7 @@ int usleep(unsigned usec);
 int clock_gettime(int clock, struct timespec *ts);
 int shm_open(const char *name, int flags, int mode);
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off);
+int munmap(void *addr, size_t len);
 int sem_timedwait_monotonic(void *sem, const struct timespec *abs_timeout);
 typedef struct { void *base; size_t len; } iov_t;
 int pthread_create(int *thr, const void *attr, void *(*fn)(void *), void *arg);
