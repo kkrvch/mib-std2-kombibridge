@@ -5,7 +5,7 @@ import de.adi961.miblogger.MIBLogger;
 /**
  * Switch for the shim's trip dump (shim/src/navshim_fs.cpp, "trip dump"): every message the phone
  * sends on the navigation and media channels, written by the patched GAL library to
- * aa_dump_nav.log / aa_dump_media.log on the SD card (else /dev/shmem).
+ * aa_dump_nav.log / aa_dump_media.log in /dev/shmem (RAM only, never the SD card).
  *
  * The shim is built separately and has no Config of its own, so the one switch stays here:
  * Config.Advanced.LOG_LEVEL at DEBUG (or TRACE) creates the flag file FLAG at HMI start, anything quieter

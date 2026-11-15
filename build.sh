@@ -109,6 +109,14 @@ if [ -n "$CONSTANTS" ]; then
   echo "  Config.java:"
   printf '%s\n' "$CONSTANTS" \
     | while read -r name value; do printf "    %-44s %s\n" "$name" "$value"; done
+  # A diagnostic build keeps logs and trip dumps in the head unit's RAM: fine for a test drive,
+  # not what should stay on the unit or be given to anybody else.
+  case "$CONSTANTS" in
+    *"Advanced.LOG_LEVEL MIBLogger.INFO"*|*"Advanced.LOG_LEVEL MIBLogger.ERROR"*|*"Advanced.LOG_LEVEL MIBLogger.SILENT"*) ;;
+    *) echo
+       echo "  NOTE: Advanced.LOG_LEVEL is DEBUG/TRACE - a DIAGNOSTIC build (RAM log + trip dumps on)."
+       echo "        Set it to MIBLogger.INFO for everyday use." ;;
+  esac
 else
   # Silence here would read as "no switches", which is never true — say it is the reader that broke.
   echo "  Config.java: could not read the constants (declaration style changed? see build.sh)"

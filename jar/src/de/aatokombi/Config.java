@@ -261,7 +261,9 @@ public final class Config {
          * DEBUG (or TRACE) also switches on the shim's trip dump (see de.aatokombi.TripDump): every
          * message the phone sends on the navigation and media channels, raw, plus every line handed
          * to the jar, appended to /dev/shmem/aa_dump_nav.log and /dev/shmem/aa_dump_media.log (RAM
-         * only, never the SD card; gone after a reboot). Each file stops at 8 MB.
+         * only, never the SD card; gone after a reboot). Each file stops at 8 MB. The jar's own
+         * log is then also mirrored to /dev/shmem/aatokombi.log (the newest 1..2 MB are kept, see
+         * MIBLogger). All of this is RAM of the head unit: a build for everyday use is INFO.
          */
         public static final int LOG_LEVEL = MIBLogger.DEBUG;
     }

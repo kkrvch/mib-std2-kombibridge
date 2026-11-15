@@ -13,7 +13,7 @@ Our own code:
   the runtime already gates — the lane row and the destination distance / travel time (present only
   when the phone sends them), the rerouting notice (protocol 1.7 only) — deliberately have no switch
   of their own.
-- `de/adi961/miblogger/MIBLogger.java` — logger (also mirrors to `/dev/shmem/aatokombi.log`).
+- `de/adi961/miblogger/MIBLogger.java` — logger (at DEBUG also mirrors to `/dev/shmem/aatokombi.log`, newest 1..2 MB kept).
 - `de/vw/mib/bap/mqbab2/navsd/functions/AANavReader.java` — polls `/dev/shmem/aa_nav`
   (written by the shim), maps the maneuver/street/distance/lanes/destination, and drives **both**
   outputs: the navsd cluster Navigation menu on a nav-capable cluster, or the media now-playing
