@@ -211,19 +211,25 @@ static void guard_tick(void)
 }
 
 /* ---------- resolution and build checks ---------- */
+static int omx_missing;                  /* 1: the real mmfbq_* were not found */
 static void resolve(void)
 {
     void *h;
     uintptr_t base;
-    if (real_done) return;
+    if (real_done || omx_missing) return;
     h = dlopen(OMX_LIB, RTLD_LAZY);
     real_get_and_wait = h ? (void *(*)(void *, const struct timespec *))dlsym(h, "mmfbq_get_and_wait") : 0;
     real_get = h ? (void *(*)(void *))dlsym(h, "mmfbq_get") : 0;
     real_done = h ? (int (*)(void *, void *))dlsym(h, "mmfbq_done") : 0;
     if (!real_get_and_wait || !real_get || !real_done) {
-        LOG("libOpenMAXAL symbols not found");
-        for (;;) usleep(1000000);                    /* cannot pass through: never return junk */
+        /* Cannot pass through. The callers below then behave as an empty queue (see omx_missing):
+         * the calling thread keeps running and can still be told to stop, instead of hanging here
+         * for good. */
+        if (!omx_missing) { omx_missing = 1; LOG("libOpenMAXAL symbols not found: buffer queues report empty"); }
+        real_get_and_wait = 0; real_get = 0; real_done = 0;
+        return;
     }
+    omx_missing = 0;
     base = (uintptr_t)real_get_and_wait - OMX_GET_AND_WAIT;
     if ((uintptr_t)real_get == base + OMX_GET && (uintptr_t)real_done == base + OMX_DONE &&
         *(const uint32_t *)(base + OMX_READER_RETURN) == ARM_POP_R4_PC &&
@@ -421,6 +427,7 @@ static int dec_started;
 EXPORT void *mmfbq_get_and_wait(void *q, const struct timespec *deadline)
 {
     resolve();
+    if (omx_missing) { usleep(WAIT_SLICE_MS * 1000); return NULL; }     /* "nothing came in time" */
     if (!dec_started) { dec_started = 1; dec_start(); keys_start(); }   /* decode-mode and J5 key threads */
     if (!reader_return || (uintptr_t)__builtin_return_address(0) != reader_return)
         return real_get_and_wait(q, deadline);
@@ -519,9 +526,11 @@ EXPORT int mmfbq_done(void *q, void *e)
 {
     resolve();
     if (e == &ours) return 0;
+    if (omx_missing) return -1;
     return real_done(q, e);
 }
 
+static int acquire_missing_logged;
 int ring_acquire(void *ring, void **p, unsigned *n, int partial) __asm__(RING_ACQUIRE);
 EXPORT int ring_acquire(void *ring, void **p, unsigned *n, int partial)
 {
@@ -531,7 +540,13 @@ EXPORT int ring_acquire(void *ring, void **p, unsigned *n, int partial)
     if (!real_acquire) {
         void *h = dlopen(COMMON_LIB, RTLD_LAZY);
         real_acquire = h ? (int (*)(void *, void **, unsigned *, int))dlsym(h, RING_ACQUIRE) : 0;
-        if (!real_acquire) { LOG("RingIO::writeAquire not found"); for (;;) usleep(1000000); }
+        if (!real_acquire) {
+            /* Cannot pass through: report "no room in the ring" (the caller's own failure path)
+             * rather than hang the MOST sink's thread for good. Looked up again on the next call. */
+            if (!acquire_missing_logged) { acquire_missing_logged = 1; LOG("RingIO::writeAquire not found: ring reports full"); }
+            usleep(WAIT_SLICE_MS * 1000);
+            return 0;
+        }
     }
     r = real_acquire(ring, p, n, partial);
     if (r || !phone || from != MOST_SINK_RETURN) { ring_stalled = ring_stalled && !r; return r; }
