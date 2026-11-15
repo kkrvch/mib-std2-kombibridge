@@ -33,6 +33,11 @@ if [ -e /tsd/bin/system/startup_main ] && ! grep -q AAtoKombi /tsd/bin/system/st
   echo "/tsd/bin/system/startup_main exists and is not ours, nothing changed"; exit 1
 fi
 
+# From here the system partition is writable. ro() puts it back exactly once, and the trap runs it
+# on EVERY way out - also when set -e ends the script in the middle.
+RW=1
+ro() { if [ -n "$RW" ]; then RW=; . /tsd/etc/persistence/esd/scripts/util_mount_ro.sh; fi; }
+trap ro 0
 . /tsd/etc/persistence/esd/scripts/util_mount.sh
 mkdir -p $D /tsd/var/aatokombi
 cp -f "$BIN" $D/tsd.mibstd2.keypanel
@@ -41,12 +46,12 @@ sed 's#^   command /tsd/bin/keypanel/tsd.mibstd2.keypanel #   command /net/imx6'
   $J5/tsd/etc/system/main.conf > $D/main.conf
 N=$(grep -c "^   command /net/imx6$D/tsd.mibstd2.keypanel " $D/main.conf || true)
 if [ "$N" != "1" ] || ! size_ok $D/tsd.mibstd2.keypanel; then
-  rm -f $D/main.conf $D/tsd.mibstd2.keypanel; . /tsd/etc/persistence/esd/scripts/util_mount_ro.sh
+  rm -f $D/main.conf $D/tsd.mibstd2.keypanel; ro
   echo "could not write the copies, nothing changed"; exit 1
 fi
 cp -f "$SM" /tsd/bin/system/startup_main
 chmod 755 /tsd/bin/system/startup_main
 rm -f /tsd/var/aatokombi/no-keypanel-patch
 sync
-. /tsd/etc/persistence/esd/scripts/util_mount_ro.sh
+ro
 echo "installed: reboot the unit. J5 slog then shows 'AAtoKombi startup_main'; View arrives as a key."

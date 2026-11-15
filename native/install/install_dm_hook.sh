@@ -24,6 +24,11 @@ if grep -q 'mst2-cluster-nav' $CPU; then
   exit 1
 fi
 
+# From here the system partition is writable. ro() puts it back exactly once, and the trap runs it
+# on EVERY way out - also when set -e ends the script in the middle (a failed cp, a full partition).
+RW=1
+ro() { if [ -n "$RW" ]; then RW=; . /tsd/etc/persistence/esd/scripts/util_mount_ro.sh; fi; }
+trap ro 0
 . /tsd/etc/persistence/esd/scripts/util_mount.sh
 mkdir -p $LIBDIR $VAR
 [ -f $VAR/cpu.conf.stock ] || cp $CPU $VAR/cpu.conf.stock
@@ -37,7 +42,7 @@ else
   if [ "$(wc -c < "$SRC")" = "$(wc -c < $LIB.new)" ]; then SAME=0; else SAME=1; fi
 fi
 if [ "$SAME" != "0" ]; then
-  rm -f $LIB.new; . /tsd/etc/persistence/esd/scripts/util_mount_ro.sh
+  rm -f $LIB.new; ro
   echo "copy mismatch, nothing changed"; exit 1
 fi
 mv -f $LIB.new $LIB
@@ -49,7 +54,7 @@ else
   sed '/^service iMX6.DispMg/,/^service /s#^\(   envar LD_PRELOAD .*\)$#\1:'"$LIB"'#' $CPU > $CPU.new
   N=$(sed -n '/^service iMX6.DispMg/,/^service /p' $CPU.new | grep -c 'libkb_dm.so' || true)
   if [ "$N" != "1" ] || [ ! -s $CPU.new ]; then
-    rm -f $CPU.new; . /tsd/etc/persistence/esd/scripts/util_mount_ro.sh
+    rm -f $CPU.new; ro
     echo "could not edit cpu.conf (found $N), nothing changed"; exit 1
   fi
   chmod 644 $CPU.new
@@ -58,5 +63,5 @@ else
 fi
 sed -n '/^service iMX6.DispMg/,/^service /p' $CPU | grep LD_PRELOAD
 sync
-. /tsd/etc/persistence/esd/scripts/util_mount_ro.sh
+ro
 echo "done - reboot the unit. Off switch: an SD card with an empty file 'aatokombi-video-disable'."
