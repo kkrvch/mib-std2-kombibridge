@@ -133,15 +133,15 @@ public class AndroidAutoTarget
         // cluster surface when nav is off (not started -> NavState.ACTIVE stays false -> navsd renders
         // stock; the media branch is off too). Defensive: must never break target construction.
         // AAtoKombi: at DEBUG, ask the patched GAL library for its per-trip dump (see TripDump).
-        try { de.aatokombi.TripDump.apply(); } catch (Throwable t) {}
-        try { de.aatokombi.ClusterVideo.applyMode(); } catch (Throwable t) {}
+        try { de.aatokombi.TripDump.apply(); } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#1", t); }
+        try { de.aatokombi.ClusterVideo.applyMode(); } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#2", t); }
         try {
             if (Config.Navigation.ENABLED) de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
-        } catch (Throwable t) {}
+        } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#3", t); }
         // AAtoKombi: feed the real AA now-playing track via /dev/shmem/aa_media (patched GAL media
         // endpoint), shown in the cluster media widget when no route guidance is active.
         // Gated by Config.Media.ENABLED so now-playing can be turned off independently.
-        try { if (Config.Media.ENABLED) new ShmemMediaReader(this).start(); } catch (Throwable t) {}
+        try { if (Config.Media.ENABLED) new ShmemMediaReader(this).start(); } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#4", t); }
         this.requestHandler.initNavigationListener(this.navigationListener);
         this.aslHandler.initNavigationListener(this.navigationListener);
         this.audioHandler.initTimerHandler(this.timerHandler);
@@ -450,9 +450,13 @@ public class AndroidAutoTarget
             return coverDirCached;
         }
         String tmp = "/var/app/icab/tmp";
-        try { new java.io.File(tmp).mkdirs(); } catch (Throwable t) {}
+        try { new java.io.File(tmp).mkdirs(); } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#5", t); }
         coverDirCached = dirWritable(tmp) ? tmp : "/dev/shmem";
-        MIBLogger.getInstance().debug("coverDir -> " + coverDirCached);
+        // INFO, once: where the covers go and what that path really is (a link into /dev/shmem
+        // shows here), so the log answers whether this is RAM.
+        String real = coverDirCached;
+        try { real = new java.io.File(coverDirCached).getCanonicalPath(); } catch (Throwable t) { real = "?"; }
+        MIBLogger.getInstance().info("cover art is staged in " + coverDirCached + " (real path " + real + ")");
         return coverDirCached;
     }
 

@@ -104,10 +104,10 @@ ExboxServiceListener {
     public static void pokeNav() {
         CurrentStationInfo i = INSTANCE;
         if (i != null) {
-            try { i.process(-1); } catch (Throwable t) {}
+            try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("CurrentStationInfo#1", t); }
         }
         // Fan out to the PQ audiosd shadow (reads these same holders); no-op on MQB. Guarded.
-        try { de.vw.mib.bap.mqbpq.audiosd.functions.CurrentStationInfo.poke(); } catch (Throwable t) {}
+        try { de.vw.mib.bap.mqbpq.audiosd.functions.CurrentStationInfo.poke(); } catch (Throwable t) { de.aatokombi.Quiet.note("CurrentStationInfo#2", t); }
     }
 
     // Clamp our injected text to 72 chars so an over-long title/street can never overflow the

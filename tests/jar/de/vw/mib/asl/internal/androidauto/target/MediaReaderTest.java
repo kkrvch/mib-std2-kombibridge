@@ -38,6 +38,10 @@ public final class MediaReaderTest {
         eq("empty session field", ShmemMediaReader.sessionOf(fields("Song\tArtist\tAlbum\t12\t200\t3\t4096\t1\t"), 7L), 7L);
         eq("garbage in the session field", ShmemMediaReader.sessionOf(fields("S\tA\tB\t1\t2\t3\t4\t1\tx7"), 7L), 7L);
         eq("older shim, three fields, nothing known yet", ShmemMediaReader.sessionOf(fields("Song\tArtist\tAlbum"), -1L), -1L);
+        if (!"12 Song\tArtist".equals(ShmemMediaReader.firstLine("12 Song\tArtist\nrest\n"))) { failed++; System.out.println("  FAIL first line"); }
+        if (!"12 Song".equals(ShmemMediaReader.firstLine("12 Song"))) { failed++; System.out.println("  FAIL line without newline"); }
+        if (!"12 Song".equals(ShmemMediaReader.firstLine("12 Song\r\n"))) { failed++; System.out.println("  FAIL CR LF"); }
+        if (!"".equals(ShmemMediaReader.firstLine("\nx"))) { failed++; System.out.println("  FAIL empty first line"); }
         System.out.println("media session field     " + (failed == 0 ? "ok" : "FAILED"));
         System.out.println(failed == 0 ? "all tests passed" : "TESTS FAILED");
         if (failed != 0) {

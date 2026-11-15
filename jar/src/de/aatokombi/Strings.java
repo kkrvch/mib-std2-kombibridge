@@ -38,7 +38,8 @@ public final class Strings {
     public static final int UNIT_KM     = 21;
     public static final int UNIT_H      = 22;
     public static final int UNIT_MIN    = 23;
-    static final int COUNT = 24;
+    public static final int DECIMAL     = 24;   // the decimal separator of "1.2 km"
+    static final int COUNT = 25;
 
     // ---- the table: { language, START, CONTINUE, ... } in key order --------------------------
     private static final String[][] TABLE = {
@@ -46,12 +47,12 @@ public final class Strings {
           "Start", "Continue", "Bear left", "Bear right", "Turn left", "Turn right", "Turn",
           "Sharp left", "Sharp right", "U-turn", "On-ramp", "Exit", "Fork", "Merge",
           "Roundabout", "Straight", "Ferry", "Arrive", "Rerouting...", "exit",
-          "m", "km", "h", "min" },
+          "m", "km", "h", "min", "." },
         { "ru",
           "Старт", "Прямо", "Плавно налево", "Плавно направо", "Налево", "Направо", "Поворот",
           "Резко налево", "Резко направо", "Разворот", "Въезд", "Съезд", "Развилка", "Слияние",
           "Кольцо", "Прямо", "Паром", "Финиш", "Перестроение...", "съезд",
-          "м", "км", "ч", "мин" },
+          "м", "км", "ч", "мин", "," },
     };
 
     /** Test/override hook: a non-null value wins over the unit's language. */

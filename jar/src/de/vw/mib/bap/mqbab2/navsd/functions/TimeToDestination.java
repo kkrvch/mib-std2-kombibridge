@@ -45,7 +45,7 @@ SystemServiceListener {
     private static volatile TimeToDestination INSTANCE = null;
     public static void poke() {
         TimeToDestination i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("TimeToDestination#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -58,7 +58,7 @@ SystemServiceListener {
             try {
                 this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
                 this.getSystemService().addSystemServiceListener(this, SYSTEM_LISTENER_IDS);
-            } catch (Throwable t) {}
+            } catch (Throwable t) { de.aatokombi.Quiet.note("TimeToDestination#2", t); }
         }
         return null;
     }
@@ -136,7 +136,8 @@ SystemServiceListener {
      * where it is covered by the host test.
      */
     private void setTimeInfoFromAndroidAuto(TimeToDestination_Status timeToDestination_Status) {
-        int seconds = NavState.destinationSeconds;
+        NavState.Destination dest = NavState.destination;   // one read: the time and the clock string
+        int seconds = dest.seconds;
         boolean valid = seconds > 0;
         try {
             timeToDestination_Status.timeInfo.navigationTimeFormat = this.getSystemService().getSystemTimeFormat() == 0 ? 1 : 0;
@@ -152,7 +153,7 @@ SystemServiceListener {
         } catch (Throwable t) {
             preference = 0;
         }
-        int[] clock = (preference == 1 && valid) ? AANavReader.parseEtaClock(NavState.destinationEta) : null;
+        int[] clock = (preference == 1 && valid) ? AANavReader.parseEtaClock(dest.eta) : null;
         logForm(preference, clock);
         if (clock != null) {
             timeToDestination_Status.timeInfo.timeInfoType = 1;   // arrival clock
@@ -191,7 +192,7 @@ SystemServiceListener {
         if (de.aatokombi.Config.Advanced.LOG_LEVEL > de.adi961.miblogger.MIBLogger.DEBUG) {
             return;
         }
-        String line = "TimeToDestination: pref=" + preference + " eta='" + NavState.destinationEta + "' -> "
+        String line = "TimeToDestination: pref=" + preference + " eta='" + NavState.destination.eta + "' -> "
                 + (clock != null ? ("arrival " + clock[0] + ":" + clock[1]) : "remaining");
         if (!line.equals(lastFormLog)) {
             lastFormLog = line;
@@ -222,7 +223,7 @@ SystemServiceListener {
             try {
                 this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
                 this.getSystemService().removeSystemServiceListener(this, SYSTEM_LISTENER_IDS);
-            } catch (Throwable t) {}
+            } catch (Throwable t) { de.aatokombi.Quiet.note("TimeToDestination#3", t); }
         }
     }
 

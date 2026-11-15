@@ -62,7 +62,7 @@ RadioServiceListener {
         }
         aaPlaybackMode = mode;
         SourceState i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("SourceState#1", t); } }
     }
 
     private void applyAndroidAutoPlaybackMode(SourceState_Status sourceState_Status) {

@@ -236,7 +236,7 @@ public final class ClusterVideo {
         if (WheelKeys.takeCycleRequest()) {
             if (session) {
                 nextMode();
-                try { de.vw.mib.bap.mqbab2.navsd.functions.ActiveRgType.poke(); } catch (Throwable t) {}
+                try { de.vw.mib.bap.mqbab2.navsd.functions.ActiveRgType.poke(); } catch (Throwable t) { de.aatokombi.Quiet.note("ClusterVideo#1", t); }
             } else {
                 log("mode key held without an AA cluster session: ignored");
             }

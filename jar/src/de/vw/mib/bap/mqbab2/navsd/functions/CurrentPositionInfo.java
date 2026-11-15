@@ -31,7 +31,7 @@ NavigationServiceListener {
     private static volatile CurrentPositionInfo INSTANCE = null;
     public static void poke() {
         CurrentPositionInfo i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("CurrentPositionInfo#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -40,7 +40,7 @@ NavigationServiceListener {
         // break navsd startup. Like stock, no initial status (null).
         INSTANCE = this;
         if (ClusterCaps.isNavCapable()) {
-            try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+            try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) { de.aatokombi.Quiet.note("CurrentPositionInfo#2", t); }
         }
         return null;
     }
@@ -58,8 +58,9 @@ NavigationServiceListener {
 
     private void setCurrentPositionInfoStatusData(CurrentPositionInfo_Status currentPositionInfo_Status) {
         try {
-            String aaRoad = NavState.currentRoad;
-            if (ClusterCaps.isNavCapable() && NavState.ACTIVE && aaRoad != null && aaRoad.length() > 0) {
+            NavState.Streets st = NavState.streets;           // one read
+            String aaRoad = st.currentRoad;
+            if (ClusterCaps.isNavCapable() && NavState.ACTIVE && aaRoad.length() > 0) {
                 // navsd-shadow delta: the AA current road (0x8007 current_road), when the phone names
                 // it. Google Maps does not send it at all (trip dump 2026-10), so without it we fall
                 // through to the stock value below: the unit's own map-matched street, which is what
@@ -75,8 +76,7 @@ NavigationServiceListener {
                     // navsd-shadow delta: the unit does not know the street either (e.g. a car park at
                     // the start of a trip, before the car is on a mapped road): the navigator's own
                     // line for the current step ("В сторону ул. Ленина") rather than nothing.
-                    String hint = NavState.nextRoad;
-                    out = (hint != null) ? hint : "";
+                    out = st.nextRoad;
                 }
                 currentPositionInfo_Status.positionInfo.setContent(out);
                 logStock(string, navStatus, out);
@@ -122,7 +122,7 @@ NavigationServiceListener {
     public void uninitialize() {
         // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
         if (ClusterCaps.isNavCapable()) {
-            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) { de.aatokombi.Quiet.note("CurrentPositionInfo#3", t); }
         }
     }
 

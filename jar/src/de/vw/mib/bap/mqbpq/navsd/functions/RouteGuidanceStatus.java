@@ -20,7 +20,7 @@ extends RouteGuidanceStatusStage {
     public static boolean isActive() { return INSTANCE != null; }
     public static void poke() {
         RouteGuidanceStatus i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("RouteGuidanceStatus#1", t); } }
     }
 
     private void setRouteGuidanceStatus(RouteGuidance_Status_Status routeGuidance_Status_Status) {

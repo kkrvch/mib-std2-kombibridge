@@ -39,7 +39,7 @@ ConfigurationServiceListener {
     private static volatile ActiveRgType INSTANCE = null;
     public static void poke() {
         ActiveRgType i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("ActiveRgType#1", t); } }
     }
 
     /**
@@ -50,7 +50,7 @@ ConfigurationServiceListener {
     public static void primeForAAStart(boolean wantMap) {
         ActiveRgType i = INSTANCE;
         if (i == null) return;
-        try { i.setCurrentRgType(wantMap ? 3 : 0); } catch (Throwable t) {}
+        try { i.setCurrentRgType(wantMap ? 3 : 0); } catch (Throwable t) { de.aatokombi.Quiet.note("ActiveRgType#2", t); }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -71,7 +71,7 @@ ConfigurationServiceListener {
                     this.setCurrentRgType(0);
                 }
                 this.determineInternalSwitchState();
-            } catch (Throwable t) {}
+            } catch (Throwable t) { de.aatokombi.Quiet.note("ActiveRgType#3", t); }
         }
         return this.computeActiveRgType();
     }
@@ -116,7 +116,7 @@ ConfigurationServiceListener {
     public void uninitialize() {
         // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
         if (ClusterCaps.isNavCapable()) {
-            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) { de.aatokombi.Quiet.note("ActiveRgType#4", t); }
         }
     }
 
@@ -139,12 +139,12 @@ ConfigurationServiceListener {
         try {
             cycle = aaCycle();
             int sw = -1;
-            try { sw = this.getNavigationService().getMapSwitchState(); } catch (Throwable t) {}
+            try { sw = this.getNavigationService().getMapSwitchState(); } catch (Throwable t) { de.aatokombi.Quiet.note("ActiveRgType#5", t); }
             ClusterVideo.log("ActiveRgType SetGet rgtype=" + activeRgType_SetGet.rgtype
                     + " current=" + this.getCurrentRgType() + " mapSwitchState=" + sw
                     + " aaSession=" + ClusterVideo.session() + " aaVideo=" + ClusterVideo.alive()
                     + " mode=" + ClusterVideo.modeName(ClusterVideo.mode()));
-        } catch (Throwable t) {}
+        } catch (Throwable t) { de.aatokombi.Quiet.note("ActiveRgType#6", t); }
         if (cycle) {
             // car log 2026-10-30: the cluster sends this as part of the head unit's "Map" button
             // (SetGet rgtype=3, then mapSwitchState 5 -> 2); holding the mode key sends nothing
@@ -255,7 +255,7 @@ ConfigurationServiceListener {
                     ClusterVideo.switchTo(sw == 1 || sw == 3 ? 0 : 3);
                 }
                 lastMapSwitchState = sw;
-            } catch (Throwable t) {}
+            } catch (Throwable t) { de.aatokombi.Quiet.note("ActiveRgType#7", t); }
         }
         this.process(-1);
     }

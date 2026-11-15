@@ -33,7 +33,7 @@ NavigationServiceListener {
     private static volatile ManeuverDescriptor INSTANCE = null;
     public static void poke() {
         ManeuverDescriptor i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("ManeuverDescriptor#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -41,7 +41,7 @@ NavigationServiceListener {
         // On a nav-capable cluster register it so the unit's own nav re-sends when AA is inactive.
         INSTANCE = this;
         if (ClusterCaps.isNavCapable()) {
-            try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+            try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) { de.aatokombi.Quiet.note("ManeuverDescriptor#2", t); }
         }
         return this.computeManeuverDescriptorStatus();
     }
@@ -180,7 +180,7 @@ NavigationServiceListener {
     public void uninitialize() {
         // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
         if (ClusterCaps.isNavCapable()) {
-            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) { de.aatokombi.Quiet.note("ManeuverDescriptor#3", t); }
         }
     }
 
@@ -206,9 +206,9 @@ NavigationServiceListener {
                 // the cluster draw a spurious approach road, so non-roundabout maneuvers still send ""
                 // (NavState.sideStreets is "" then). For a roundabout, AANavReader synthesizes one
                 // EXIT-road spoke at the taken-exit bearing, so the glyph draws the exit you take.
-                String ss = (NavState.sideStreets != null) ? NavState.sideStreets : "";
+                NavState.Maneuver mv = NavState.maneuver;     // one read: arrow, direction, geometry, second arrow
                 ManeuverDescriptor_Status.Maneuver_1 m = this.validateManeuverData(
-                        NavState.direction, NavState.mainElement, ss, NavState.zLevelGuidance);
+                        mv.direction, mv.mainElement, mv.sideStreets, mv.zLevelGuidance);
                 maneuverDescriptor_Status.maneuver_1.direction = m.direction;
                 maneuverDescriptor_Status.maneuver_1.mainElement = m.mainElement;
                 maneuverDescriptor_Status.maneuver_1.sidestreets.setContent(m.sidestreets);
@@ -216,7 +216,7 @@ NavigationServiceListener {
                 // maneuver_2 = the small second arrow (Config.Navigation.SHOW_NEXT_MANEUVER; AANavReader decides
                 // what it shows). Written on EVERY send, empty when there is none: the status object
                 // is a pooled entity, so an untouched field would carry the previous value over.
-                NavState.NextManeuver next = NavState.nextManeuver;
+                NavState.NextManeuver next = mv.next;
                 if (next != null) {
                     ManeuverDescriptor_Status.Maneuver_1 n2 = this.validateManeuverData(
                             next.direction, next.mainElement, next.sideStreets, 0);

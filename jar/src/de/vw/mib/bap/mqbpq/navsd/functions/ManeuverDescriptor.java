@@ -40,7 +40,7 @@ extends ManeuverDescriptorStage {
     public static boolean isActive() { return INSTANCE != null; }
     public static void poke() {
         ManeuverDescriptor i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("ManeuverDescriptor#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -194,10 +194,11 @@ extends ManeuverDescriptorStage {
 
     private void fillManeuverDescriptor(ManeuverDescriptor_StatusArray maneuverDescriptor_StatusArray) {
         if (NavState.ACTIVE) {   // AA active -> one element from NavState; else stock ASL iterators
-            int n2 = NavState.direction;
-            int n3 = NavState.mainElement;
-            String string = (NavState.sideStreets != null) ? NavState.sideStreets : "";
-            int n4 = NavState.zLevelGuidance;
+            NavState.Maneuver mv = NavState.maneuver;         // one read
+            int n2 = mv.direction;
+            int n3 = mv.mainElement;
+            String string = mv.sideStreets;
+            int n4 = mv.zLevelGuidance;
             ManeuverDescriptor_ManeuverDescription add = this.neededAdditionalManeuver(n2, n3, string, n4);
             ManeuverDescriptor_ManeuverDescription main = this.validateManeuverData(n2, n3, string, n4);
             main.setArrayHeader(maneuverDescriptor_StatusArray.getArrayHeader());

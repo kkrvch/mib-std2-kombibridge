@@ -7,8 +7,7 @@ import de.vw.mib.bap.mqbab2.audiosd.functions.SourceState;
 import de.vw.mib.asl.framework.internal.framework.ServiceManager;
 import de.vw.mib.timer.Timer;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
+import java.io.FileInputStream;
 
 /**
  * Reads the Android Auto now-playing track from /dev/shmem/aa_media (written by the patched GAL
@@ -90,6 +89,11 @@ public class ShmemMediaReader implements Runnable {
 
     private void processOnce() {
         String line = readLine();
+        if (line == UNCHANGED) {
+            // Byte for byte what the last poll handled (a paused track, a closed session).
+            maybeClearStale();
+            return;
+        }
         if (line == null || line.length() == 0) {
             maybeClearStale();
             return;
@@ -263,27 +267,62 @@ public class ShmemMediaReader implements Runnable {
         CurrentStationInfo.mediaDurSec = 0;
         CurrentStationInfo.pokeNav();
         if (Config.Media.SHOW_COVER_ART && target != null) {
-            try { target.applyCoverArt(0); } catch (Throwable t) {}
+            try { target.applyCoverArt(0); } catch (Throwable t) { de.aatokombi.Quiet.note("ShmemMediaReader#1", t); }
             lastCoverSeq = -2L;
         }
         MIBLogger.getInstance().debug("aa_media cleared now-playing");
     }
 
+    // The file as last read: an unchanged one is not split and parsed again.
+    private final byte[] rawBuf = new byte[1024];
+    private final byte[] lastRaw = new byte[1024];
+    private int lastRawLen = -1;
+    private static final String UNCHANGED = new String("unchanged");   // compared by identity
+
     private String readLine() {
-        BufferedReader br = null;
+        FileInputStream in = null;
         try {
-            br = new BufferedReader(new FileReader(PATH));
-            return br.readLine();
+            in = new FileInputStream(PATH);
+            int n = 0;
+            int r;
+            while (n < rawBuf.length && (r = in.read(rawBuf, n, rawBuf.length - n)) > 0) {
+                n += r;
+            }
+            if (n <= 0) {
+                return null;                       // the shim is rewriting it right now
+            }
+            if (n == lastRawLen) {
+                int i = 0;
+                while (i < n && rawBuf[i] == lastRaw[i]) {
+                    i++;
+                }
+                if (i == n) {
+                    return UNCHANGED;
+                }
+            }
+            System.arraycopy(rawBuf, 0, lastRaw, 0, n);
+            lastRawLen = n;
+            return firstLine(new String(rawBuf, 0, n));
         } catch (Exception ex) {
             return null; // file absent yet / transient -> ignore
         } finally {
-            if (br != null) {
+            if (in != null) {
                 try {
-                    br.close();
+                    in.close();
                 } catch (Exception ex) {
                     // ignore
                 }
             }
         }
+    }
+
+    /** The text up to its first line end. */
+    static String firstLine(String text) {
+        int nl = text.indexOf('\n');
+        int end = (nl < 0) ? text.length() : nl;
+        if (end > 0 && text.charAt(end - 1) == '\r') {
+            end--;
+        }
+        return text.substring(0, end);
     }
 }

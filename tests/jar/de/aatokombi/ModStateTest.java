@@ -86,6 +86,24 @@ public final class ModStateTest {
         ok("the same code on another keyboard: nothing", !WheelKeys.takeCycleRequest());
     }
 
+    private static void quiet() {
+        String where = "ModStateTest#1";
+        ok("a place never noted counts 0", Quiet.count(where, false) == 0);
+        for (int i = 1; i <= 7; i++) Quiet.note(where, new RuntimeException("x" + i));
+        ok("every swallowed exception is counted", Quiet.count(where, false) == 7);
+        ok("another place has its own count", Quiet.count("ModStateTest#2", false) == 0);
+        ok("the first ones are logged", Quiet.logged(1) && Quiet.logged(Quiet.FIRST));
+        ok("then it goes quiet", !Quiet.logged(Quiet.FIRST + 1) && !Quiet.logged(Quiet.EVERY - 1));
+        ok("and reports again every EVERY-th", Quiet.logged(Quiet.EVERY) && Quiet.logged(2 * Quiet.EVERY));
+        try {
+            Quiet.note(null, null);
+            Quiet.note("ModStateTest#3", null);
+            ok("note itself never throws", true);
+        } catch (Throwable t) {
+            ok("note itself never throws", false);
+        }
+    }
+
     private static String pad(String s) {
         StringBuffer b = new StringBuffer(s);
         while (b.length() < 24) b.append(' ');
@@ -94,13 +112,14 @@ public final class ModStateTest {
 
     public static void main(String[] args) {
         MIBLogger.getInstance().setLogLevel(MIBLogger.SILENT);   // the key handling logs every key
-        String[] names = { "cluster state line", "wheel view key", "wheel mode key" };
+        String[] names = { "cluster state line", "wheel view key", "wheel mode key", "swallowed exceptions" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
                 case 0: stateLine(); break;
                 case 1: viewKey(); break;
-                default: modeKey(); break;
+                case 2: modeKey(); break;
+                default: quiet(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));
         }

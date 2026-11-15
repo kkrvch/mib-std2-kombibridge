@@ -9,8 +9,7 @@ import de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo;
 import de.vw.mib.timer.Timer;
 import org.dsi.ifc.androidauto2.Constants;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
+import java.io.FileInputStream;
 import java.util.StringTokenizer;
 
 /**
@@ -68,6 +67,17 @@ public final class AANavReader implements Runnable {
     private long lastSession = -1L;   // AA session epoch from the shim; change => phone reconnected
     private boolean cleared = true;
     private boolean lastImminent = true;   // log only the edges (see publishNavsd)
+    // A function is re-sent when what it shows changed; all of them at the start of a guidance
+    // session and every FULL_POKE_MS, so a status the cluster missed does not stay missed.
+    private static final long FULL_POKE_MS = 5000L;
+    private long lastFullPokeMs = 0L;
+    private NavState.LaneState pokedLanes = null;
+    private NavState.Destination pokedDestination = null;
+    // The file as last read: an unchanged file is not parsed again (three polls a second).
+    private final byte[] rawBuf = new byte[1536];
+    private final byte[] lastRaw = new byte[1536];
+    private int lastRawLen = -1;
+    private static final String[] UNCHANGED = new String[0];
     private final RingMemory ring = new RingMemory();   // roundabout exit-step continuity (see RingMemory)
 
     /**
@@ -172,6 +182,11 @@ public final class AANavReader implements Runnable {
 
     private void processOnce() {
         String[] lines = readLines();
+        if (lines == UNCHANGED) {
+            // Byte for byte what the last poll handled: same sequence, same session, same flags.
+            maybeClearStale();
+            return;
+        }
         String line = (lines != null) ? lines[0] : null;
         if (line == null || line.length() == 0) {
             maybeClearStale();
@@ -218,7 +233,7 @@ public final class AANavReader implements Runnable {
         // seq), so this must be checked BEFORE the frozen-seq branch.
         if (connected == 0) {
             if (lastStatus == 1 && handler != null) {
-                try { handler.navigationFocus(Constants.NAVFOCUS_NATIVE); } catch (Throwable t) {}
+                try { handler.navigationFocus(Constants.NAVFOCUS_NATIVE); } catch (Throwable t) { de.aatokombi.Quiet.note("AANavReader#1", t); }
             }
             lastStatus = -1;   // non-active sentinel: forces a PROJECTED re-grab when guidance resumes
             lastSeq = seq;
@@ -259,7 +274,7 @@ public final class AANavReader implements Runnable {
         int norm = guiding ? 1 : status;
         if (!guiding) {
             if (norm != lastStatus && handler != null) {
-                try { handler.navigationFocus(Constants.NAVFOCUS_NATIVE); } catch (Throwable t) {}
+                try { handler.navigationFocus(Constants.NAVFOCUS_NATIVE); } catch (Throwable t) { de.aatokombi.Quiet.note("AANavReader#2", t); }
             }
             lastStatus = norm;
             clearActive();
@@ -271,9 +286,8 @@ public final class AANavReader implements Runnable {
         cleared = false;
         NavState.laneState = packLaneState(taggedLine(lines, '2')); // only for a frame we are about to publish
         String distText = taggedLine(lines, '3');  // phone-rendered distance, 1.7 only; null on 1.3
-        applyDestination(taggedLine(lines, '4'));  // distance/time to destination, 1.7 only
-        String eta = taggedLine(lines, '8');       // the phone's arrival clock string, 1.7 only
-        NavState.destinationEta = (eta != null) ? eta : "";
+        // distance/time to the destination (line 4) and the phone's arrival clock (line 8), 1.7 only
+        NavState.destination = destinationOf(taggedLine(lines, '4'), taggedLine(lines, '8'));
 
         // Router: one parse, exactly one output, chosen by the runtime cluster type.
         if (navCapable()) {
@@ -289,7 +303,7 @@ public final class AANavReader implements Runnable {
                     packNextManeuver(taggedLine(lines, '5')), taggedLine(lines, '6'), rerouting);
         } else {
             if (statusEdge && handler != null) {
-                try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
+                try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) { de.aatokombi.Quiet.note("AANavReader#3", t); }
             }
             publishMedia(event, side, number, streetFor(rerouting, road), dist, distText,
                     taggedLine(lines, '9'));
@@ -525,7 +539,7 @@ public final class AANavReader implements Runnable {
                 && (maneuverPreparing(dist, time) || !Config.ManeuverStages.FOLLOW_STREET)
                 && prepareElementFor(mainElement) >= 0;
         boolean shown = imminent || preparing;     // maneuver_1 names the manoeuvre itself
-        NavState.nextManeuver   = Config.Navigation.SHOW_NEXT_MANEUVER
+        NavState.NextManeuver nextM = Config.Navigation.SHOW_NEXT_MANEUVER
                 ? nextManeuverFor(shown, mainElement, direction, sideStreets, next) : null;
         int doubleDir = (Config.Navigation.SHOW_DOUBLE_TURN && imminent && !rerouting)
                 ? doubleTurnDirection(mainElement, side, next) : -1;
@@ -554,55 +568,77 @@ public final class AANavReader implements Runnable {
             mainElement = MAIN_ELEMENT_RECALC_ROUTE;
             direction = 0;
             sideStreets = "";
-            NavState.nextManeuver = null;
+            nextM = null;
             dist = 0;
             imminent = false;
             shown = false;
             NavState.laneState = NavState.NO_LANES;
         }
         direction = renderableDirection(mainElement, direction);   // never a direction the glyph lacks
-        NavState.mainElement    = mainElement;
-        NavState.direction      = direction;
-        NavState.currentRoad    = (currentRoad != null) ? currentRoad : "";
         // The street line names the road the manoeuvre turns into only once it is near; while the
         // arrow is FOLLOW_STREET or the PREPARE_* glyph it names the road the car is on (user
         // request 2026-10). AA's current road when the phone sends one; otherwise TurnToInfo asks
-        // the unit's own map-matching for it (NavState.streetWantsCurrentPosition).
-        NavState.street         = rerouting ? ""
-                : turnToStreet(road, currentRoad, imminent);                      // -> TurnToInfo
-        NavState.nextRoad       = (road != null) ? road : "";
-        NavState.streetWantsCurrentPosition = !rerouting && !imminent
-                && (currentRoad == null || currentRoad.length() == 0);
-        NavState.sideStreets    = sideStreets;
-        NavState.approaching    = imminent;
-        NavState.distanceMeters = dist;                          // raw metres (stock formatter in the shadow)
-        NavState.zLevelGuidance = 0;
-        NavState.ACTIVE         = true;
+        // the unit's own map-matching for it (Streets.wantsCurrentPosition).
+        NavState.Maneuver mv = new NavState.Maneuver(mainElement, direction, sideStreets, 0, nextM);
+        NavState.Streets st = new NavState.Streets(
+                rerouting ? "" : turnToStreet(road, currentRoad, imminent),          // -> TurnToInfo
+                currentRoad, road,
+                !rerouting && !imminent && (currentRoad == null || currentRoad.length() == 0));
+        NavState.Distance dn = new NavState.Distance(dist, imminent);   // raw metres, bargraph while approaching
+        NavState.LaneState lanes = NavState.laneState;
+        NavState.Destination dest = NavState.destination;
+
+        // Who has something new to say. Everybody at the start of guidance and every FULL_POKE_MS.
+        long now = System.currentTimeMillis();
+        boolean all = !NavState.ACTIVE || now - lastFullPokeMs >= FULL_POKE_MS || now < lastFullPokeMs;
+        boolean maneuverNew = all || !mv.same(NavState.maneuver);
+        boolean streetsNew = all || !st.same(NavState.streets);
+        boolean distanceNew = all || !dn.same(NavState.distance);
+        boolean lanesNew = all || !lanes.same(pokedLanes);
+        boolean destinationNew = all || !dest.same(pokedDestination);
+
+        // Each carrier in one write; ACTIVE last, so a reader that sees it also sees this frame.
+        NavState.maneuver = mv;
+        NavState.streets = st;
+        NavState.distance = dn;
+        NavState.ACTIVE = true;
         if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) {
             // What actually goes out on BAP this frame -- the other half of the shim's trip dump.
-            NavState.NextManeuver nm = NavState.nextManeuver;
             MIBLogger.getInstance().debug("navsd out: imminent=" + imminent + " prep=" + preparing
                     + (rerouting ? " REROUTE" : "")
                     + " m1=" + mainElement + "/" + direction + " ss=" + sideStreets.length()
-                    + " m2=" + (nm == null ? "-" : (nm.mainElement + "/" + nm.direction))
-                    + " street='" + NavState.street + "' pos='" + NavState.currentRoad + "'");
+                    + " m2=" + (nextM == null ? "-" : (nextM.mainElement + "/" + nextM.direction))
+                    + " street='" + st.street + "' pos='" + st.currentRoad + "'"
+                    + " send=" + (all ? "all" : ((maneuverNew ? "M" : "") + (distanceNew ? "D" : "")
+                            + (streetsNew ? "S" : "") + (lanesNew ? "L" : "") + (destinationNew ? "T" : ""))));
         }
-        // MQB navsd shadows (no-op on PQ):
-        ActiveRgType.poke();
-        RGStatus.poke();
-        ManeuverDescriptor.poke();
-        DistanceToNextManeuver.poke();
-        TurnToInfo.poke();
-        CurrentPositionInfo.poke();          // fn 19
-        LaneGuidance.poke();                 // fn 24
-        DistanceToDestination.poke();        // fn 21
-        TimeToDestination.poke();            // fn 22
-        // PQ navsd shadows (no-op on MQB; PQ has no ActiveRgType/RGStatus):
-        de.vw.mib.bap.mqbpq.navsd.functions.RouteGuidanceStatus.poke();
-        de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.poke();
-        de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
-        de.vw.mib.bap.mqbpq.navsd.functions.TurnToInfo.poke();
-        de.vw.mib.bap.mqbpq.navsd.functions.DistanceTimeToDestination.poke();   // PQ merges fn 21+22
+        // MQB navsd shadows (no-op on PQ), then the PQ ones (no-op on MQB; PQ has no
+        // ActiveRgType/RGStatus). Same order as before, only the unchanged ones left out.
+        if (all) {
+            lastFullPokeMs = now;
+            ActiveRgType.poke();
+            RGStatus.poke();
+        }
+        if (maneuverNew) ManeuverDescriptor.poke();
+        if (distanceNew) DistanceToNextManeuver.poke();
+        if (streetsNew) {
+            TurnToInfo.poke();
+            CurrentPositionInfo.poke();          // fn 19
+        }
+        if (lanesNew) {
+            pokedLanes = lanes;
+            LaneGuidance.poke();                 // fn 24
+        }
+        if (destinationNew) {
+            pokedDestination = dest;
+            DistanceToDestination.poke();        // fn 21
+            TimeToDestination.poke();            // fn 22
+        }
+        if (all) de.vw.mib.bap.mqbpq.navsd.functions.RouteGuidanceStatus.poke();
+        if (maneuverNew) de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.poke();
+        if (distanceNew) de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
+        if (streetsNew) de.vw.mib.bap.mqbpq.navsd.functions.TurnToInfo.poke();
+        if (destinationNew) de.vw.mib.bap.mqbpq.navsd.functions.DistanceTimeToDestination.poke();   // PQ merges fn 21+22
     }
 
     /**
@@ -822,8 +858,8 @@ public final class AANavReader implements Runnable {
                 : (word.length() > 0 ? (word + " " + exit) : exit);
         // How far the whole trip still has to go -- already parsed for this frame (processOnce), on
         // this path as much as on the nav-capable one; until now nothing read it here.
-        CurrentStationInfo.navQuaternary =
-                destinationRow(NavState.destinationMeters, NavState.destinationSeconds);
+        NavState.Destination dest = NavState.destination;
+        CurrentStationInfo.navQuaternary = destinationRow(dest.meters, dest.seconds);
         CurrentStationInfo.pokeNav();
     }
 
@@ -1008,12 +1044,12 @@ public final class AANavReader implements Runnable {
     }
 
     /**
-     * How far the whole trip still has to go: "850 m" / "9,4 km" / "32 km". The tenth of a kilometre
+     * How far the whole trip still has to go: "850 m" / "9.4 km" / "32 km". The tenth of a kilometre
      * that {@link #formatDistance} keeps is right for a manoeuvre a few hundred metres ahead and
      * noise on a number this size, so it is dropped past 10 km.
      */
     static String formatTripDistance(int meters) {
-        if (meters >= 10000) {
+        if (meters >= 9950) {                      // from where one decimal would read "10.0"
             return ((meters + 500) / 1000) + " " + Strings.get(Strings.UNIT_KM);
         }
         return formatDistance(meters);
@@ -1031,7 +1067,7 @@ public final class AANavReader implements Runnable {
         return hm[1] + " " + Strings.get(Strings.UNIT_MIN);
     }
 
-    /** "300 m" / "1,2 km" / "" when unknown. */
+    /** "300 m" / "1.2 km" (the separator is the language's, Strings.DECIMAL) / "" when unknown. */
     static String formatDistance(int dist) {
         if (dist <= 0) {
             return "";
@@ -1044,9 +1080,10 @@ public final class AANavReader implements Runnable {
             if (rounded < 1000) {
                 return rounded + " " + Strings.get(Strings.UNIT_M);
             }
-            dist = 1000;                                           // 995..999 m: "1,0 km", not "1000 m"
+            dist = 1000;                                           // 995..999 m: one kilometre, not "1000 m"
         }
-        return (dist / 1000) + "," + ((dist % 1000) / 100) + " " + Strings.get(Strings.UNIT_KM);
+        int tenths = (dist + 50) / 100;                            // nearest 100 m (it used to be cut off)
+        return (tenths / 10) + Strings.get(Strings.DECIMAL) + (tenths % 10) + " " + Strings.get(Strings.UNIT_KM);
     }
 
     // ===== shared lifecycle ====================================================================
@@ -1075,23 +1112,23 @@ public final class AANavReader implements Runnable {
         // an un-gated poke here would push navsd traffic onto a non-nav cluster (Blocker 2).
         if (navCapable()) {
             try {
+                // Everything back to empty BEFORE anybody is poked: a stale destination outliving
+                // its route would otherwise be the one number on the cluster nobody can tell is stale.
                 NavState.ACTIVE = false;
-                NavState.approaching = false;
+                NavState.maneuver = NavState.NO_MANEUVER;
+                NavState.streets = NavState.NO_STREETS;
+                NavState.distance = NavState.NO_DISTANCE;
+                NavState.laneState = NavState.NO_LANES;
+                NavState.destination = NavState.NO_DESTINATION;
+                pokedLanes = null;
+                pokedDestination = null;
                 ActiveRgType.poke();
                 RGStatus.poke();
                 ManeuverDescriptor.poke();
                 DistanceToNextManeuver.poke();
                 TurnToInfo.poke();
-                NavState.laneState = NavState.NO_LANES;
-                NavState.nextManeuver = null;
-                NavState.currentRoad = "";
                 CurrentPositionInfo.poke();
                 LaneGuidance.poke();
-                // Zero before poking: a stale destination outliving its route would otherwise be the
-                // one number on the cluster nobody can tell is stale.
-                NavState.destinationMeters = 0;
-                NavState.destinationSeconds = 0;
-                NavState.destinationEta = "";
                 DistanceToDestination.poke();
                 TimeToDestination.poke();
                 de.vw.mib.bap.mqbpq.navsd.functions.RouteGuidanceStatus.poke();
@@ -1112,9 +1149,7 @@ public final class AANavReader implements Runnable {
                 // reason the nav-capable branch does: a destination that outlives its route is the
                 // one number on the cluster nobody can tell is stale.
                 NavState.laneState = NavState.NO_LANES;
-                NavState.destinationMeters = 0;
-                NavState.destinationSeconds = 0;
-                NavState.destinationEta = "";
+                NavState.destination = NavState.NO_DESTINATION;
                 NavigationHandler.aaRouteGuidanceActive = false;
                 CurrentStationInfo.pokeNav();
             } catch (Throwable t) {
@@ -1152,23 +1187,55 @@ public final class AANavReader implements Runnable {
      * Any element may be null.
      */
     private String[] readLines() {
-        BufferedReader br = null;
+        FileInputStream in = null;
         try {
-            br = new BufferedReader(new FileReader(PATH));
-            // Line 1 plus every tagged line the shim may write (2v, 3, 4, 5, ...), with headroom: a
-            // marker that does not fit here would silently never be seen.
-            String[] out = new String[12];
-            for (int i = 0; i < out.length; i++) {
-                out[i] = br.readLine();
+            in = new FileInputStream(PATH);
+            int n = 0;
+            int r;
+            while (n < rawBuf.length && (r = in.read(rawBuf, n, rawBuf.length - n)) > 0) {
+                n += r;
             }
-            return out;
+            if (n <= 0) {
+                return null;                       // the shim is rewriting it right now
+            }
+            if (n == lastRawLen) {
+                int i = 0;
+                while (i < n && rawBuf[i] == lastRaw[i]) {
+                    i++;
+                }
+                if (i == n) {
+                    return UNCHANGED;
+                }
+            }
+            System.arraycopy(rawBuf, 0, lastRaw, 0, n);
+            lastRawLen = n;
+            return splitLines(new String(rawBuf, 0, n), 12);
         } catch (Exception ex) {
             return null; // file absent yet / transient -> ignore
         } finally {
-            if (br != null) {
-                try { br.close(); } catch (Exception ex) {}
+            if (in != null) {
+                try { in.close(); } catch (Exception ex) {}
             }
         }
+    }
+
+    /**
+     * The first `max` lines of the file's text, null for every line that is not there. Line 1 plus
+     * every tagged line the shim may write (2v, 3, 4, 5, ...), with headroom: a marker that does not
+     * fit would silently never be seen. A line still without its newline counts (the last one).
+     */
+    static String[] splitLines(String text, int max) {
+        String[] out = new String[max];
+        int start = 0;
+        int len = text.length();
+        for (int i = 0; i < max && start < len; i++) {
+            int nl = text.indexOf('\n', start);
+            int end = (nl < 0) ? len : nl;
+            int cut = (end > start && text.charAt(end - 1) == '\r') ? end - 1 : end;
+            out[i] = text.substring(start, cut);
+            start = (nl < 0) ? len : nl + 1;
+        }
+        return out;
     }
 
     /** The extra line tagged with `marker`, without its 2-char prefix, or null if it isn't there. */
@@ -1309,10 +1376,10 @@ public final class AANavReader implements Runnable {
         return new int[]{ meters, seconds };
     }
 
-    private void applyDestination(String payload) {
+    /** Line 4 (distance / time) and line 8 (arrival clock) as the one thing the cluster shows. */
+    static NavState.Destination destinationOf(String payload, String eta) {
         int[] d = packDestination(payload);
-        NavState.destinationMeters = d[0];
-        NavState.destinationSeconds = d[1];
+        return new NavState.Destination(d[0], d[1], eta);
     }
 
     /**

@@ -29,7 +29,7 @@ NavigationServiceListener {
     private static volatile TurnToInfo INSTANCE = null;
     public static void poke() {
         TurnToInfo i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("TurnToInfo#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -37,7 +37,7 @@ NavigationServiceListener {
         // On a nav-capable cluster register it so the unit's own nav re-sends when AA is inactive.
         INSTANCE = this;
         if (ClusterCaps.isNavCapable()) {
-            try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+            try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) { de.aatokombi.Quiet.note("TurnToInfo#2", t); }
         }
         return this.computeTurnToInfoStatus();
     }
@@ -74,8 +74,9 @@ NavigationServiceListener {
         // cluster, when AA is inactive, the unit's own next-turn street + signpost instead.
         try {
             if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
-                String street = NavState.street != null ? NavState.street : "";
-                if (NavState.streetWantsCurrentPosition) {
+                NavState.Streets st = NavState.streets;       // one read: the line and what to do without it
+                String street = st.street;
+                if (st.wantsCurrentPosition) {
                     // Not near yet and AA named no current road: the unit's own map-matched street
                     // (the same value CurrentPositionInfo falls back to), else the next-turn road.
                     String own = null;
@@ -88,7 +89,7 @@ NavigationServiceListener {
                         own = null;
                     }
                     street = (own != null && own.length() > 0) ? own
-                            : (NavState.nextRoad != null ? NavState.nextRoad : "");
+                            : st.nextRoad;
                 }
                 turnToInfo_Status.turnToInfo.setContent(street);
                 turnToInfo_Status.signPost.setContent("");
@@ -121,7 +122,7 @@ NavigationServiceListener {
     public void uninitialize() {
         // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
         if (ClusterCaps.isNavCapable()) {
-            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) { de.aatokombi.Quiet.note("TurnToInfo#3", t); }
         }
     }
 

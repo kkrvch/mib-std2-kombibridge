@@ -182,7 +182,7 @@ public final class NavMappingTest {
     // ---- destination -> the row that fills the slot when there are no lanes ---------------------
     private static void destinationRow() {
         eq("the DHU capture",  AANavReader.destinationRow(11460, 2170), "36 min / 11 km");
-        eq("under 10 km keeps the decimal", AANavReader.destinationRow(9430, 600), "10 min / 9,4 km");
+        eq("under 10 km keeps the decimal", AANavReader.destinationRow(9430, 600), "10 min / 9.4 km");
         eq("nearly there",     AANavReader.destinationRow(850, 90), "2 min / 850 m");
         eq("over an hour",     AANavReader.destinationRow(32000, 5100), "1 h 25 min / 32 km");
 
@@ -196,7 +196,9 @@ public final class NavMappingTest {
         eq("trip distance rounds to whole km", AANavReader.formatTripDistance(32499), "32 km");
         eq("trip distance rounds up",          AANavReader.formatTripDistance(32500), "33 km");
         eq("10 km is the switch",              AANavReader.formatTripDistance(10000), "10 km");
-        eq("just under it",                    AANavReader.formatTripDistance(9999), "9,9 km");
+        eq("just under it rounds up to it",    AANavReader.formatTripDistance(9999), "10 km");
+        eq("9949 m keeps the decimal",         AANavReader.formatTripDistance(9949), "9.9 km");
+        eq("9950 m is 10 km, not 10.0",        AANavReader.formatTripDistance(9950), "10 km");
     }
 
     // ---- destination line -> distance / remaining travel time ----------------------------------
@@ -381,9 +383,17 @@ public final class NavMappingTest {
         eq("ru short distance", AANavReader.formatDistance(300), "300 м");
         de.aatokombi.Strings.overrideLanguage = "en";
         eq("994 m rounds down to 990 m", AANavReader.formatDistance(994), "990 m");
-        eq("995 m is 1,0 km, not 1000 m", AANavReader.formatDistance(995), "1,0 km");
-        eq("999 m is 1,0 km", AANavReader.formatDistance(999), "1,0 km");
-        eq("1000 m", AANavReader.formatDistance(1000), "1,0 km");
+        eq("995 m is one kilometre, not 1000 m", AANavReader.formatDistance(995), "1.0 km");
+        eq("999 m", AANavReader.formatDistance(999), "1.0 km");
+        eq("1000 m", AANavReader.formatDistance(1000), "1.0 km");
+        eq("1949 m rounds down", AANavReader.formatDistance(1949), "1.9 km");
+        eq("1950 m rounds up (it used to be cut to 1.9)", AANavReader.formatDistance(1950), "2.0 km");
+        eq("12345 m", AANavReader.formatDistance(12345), "12.3 km");
+        de.aatokombi.Strings.overrideLanguage = "ru";
+        eq("ru: decimal comma", AANavReader.formatDistance(1234), "1,2 км");
+        de.aatokombi.Strings.overrideLanguage = "de";
+        eq("a language without a row: English words and separator", AANavReader.formatDistance(1234), "1.2 km");
+        de.aatokombi.Strings.overrideLanguage = "en";
         eq("under 10 m stays exact", AANavReader.formatDistance(7), "7 m");
         eq("ferry boat draws follow-street", AANavReader.mapMainElement(15, 3), 11);
         eq("ferry train draws follow-street", AANavReader.mapMainElement(16, 1), 11);
@@ -668,6 +678,78 @@ public final class NavMappingTest {
         eq("no roads at all", AANavReader.turnToStreet(null, null, false), "");
     }
 
+    private static void eqB(String what, boolean got, boolean want) {
+        eq(what, got ? 1 : 0, want ? 1 : 0);
+    }
+
+    /** The carriers the shadows read, and the question "has this function anything new to send". */
+    private static void carriers() {
+        NavState.Maneuver m = new NavState.Maneuver(13, 64, "\u0026", 0, null);
+        eqB("maneuver: equal values are the same", m.same(new NavState.Maneuver(13, 64, "\u0026", 0, null)), true);
+        eqB("maneuver: other arrow", m.same(new NavState.Maneuver(14, 64, "\u0026", 0, null)), false);
+        eqB("maneuver: other direction", m.same(new NavState.Maneuver(13, 192, "\u0026", 0, null)), false);
+        eqB("maneuver: other geometry", m.same(new NavState.Maneuver(13, 64, "", 0, null)), false);
+        eqB("maneuver: null geometry is empty", new NavState.Maneuver(13, 64, null, 0, null).same(new NavState.Maneuver(13, 64, "", 0, null)), true);
+        NavState.NextManeuver n = new NavState.NextManeuver(21, 32, "x");
+        eqB("maneuver: second arrow appears", m.same(new NavState.Maneuver(13, 64, "\u0026", 0, n)), false);
+        eqB("maneuver: same second arrow", new NavState.Maneuver(13, 64, "\u0026", 0, n)
+                .same(new NavState.Maneuver(13, 64, "\u0026", 0, new NavState.NextManeuver(21, 32, "x"))), true);
+        eqB("maneuver: other second arrow", new NavState.Maneuver(13, 64, "\u0026", 0, n)
+                .same(new NavState.Maneuver(13, 64, "\u0026", 0, new NavState.NextManeuver(21, 48, "x"))), false);
+        eqB("maneuver: nothing before", m.same(null), false);
+
+        NavState.Streets s = new NavState.Streets("Next St", "Current St", "Next St", false);
+        eqB("streets: equal", s.same(new NavState.Streets("Next St", "Current St", "Next St", false)), true);
+        eqB("streets: other line", s.same(new NavState.Streets("Other", "Current St", "Next St", false)), false);
+        eqB("streets: other current road", s.same(new NavState.Streets("Next St", "", "Next St", false)), false);
+        eqB("streets: flag", s.same(new NavState.Streets("Next St", "Current St", "Next St", true)), false);
+        eq("streets: null is empty", new NavState.Streets(null, null, null, false).street, "");
+
+        eqB("distance: equal", new NavState.Distance(300, true).same(new NavState.Distance(300, true)), true);
+        eqB("distance: a metre less", new NavState.Distance(300, true).same(new NavState.Distance(299, true)), false);
+        eqB("distance: approach flag", new NavState.Distance(300, true).same(new NavState.Distance(300, false)), false);
+
+        NavState.Destination d = AANavReader.destinationOf("11460 2170", "17:42");
+        eq("destination: metres", d.meters, 11460);
+        eq("destination: seconds", d.seconds, 2170);
+        eq("destination: eta", d.eta, "17:42");
+        eqB("destination: equal", d.same(AANavReader.destinationOf("11460 2170", "17:42")), true);
+        eqB("destination: clock moved", d.same(AANavReader.destinationOf("11460 2170", "17:43")), false);
+        eqB("destination: nothing said is the empty one", AANavReader.destinationOf(null, null).same(NavState.NO_DESTINATION), true);
+        eqB("destination: malformed is the empty one", AANavReader.destinationOf("x y", null).same(NavState.NO_DESTINATION), true);
+
+        NavState.LaneState l = AANavReader.packLaneState("v 2 2 2 9 1 7");
+        eqB("lanes: equal content, other object", l.same(AANavReader.packLaneState("v 2 2 2 9 1 7")), true);
+        eqB("lanes: highlight moved", l.same(AANavReader.packLaneState("v 2 2 3 8 1 7")), false);
+        eqB("lanes: none vs none", NavState.NO_LANES.same(AANavReader.packLaneState(null)), true);
+        eqB("lanes: some vs none", l.same(NavState.NO_LANES), false);
+        eqB("lanes: nothing before", l.same(null), false);
+    }
+
+    /** The file's text into lines: what BufferedReader.readLine used to give. */
+    private static void fileLines() {
+        String[] a = AANavReader.splitLines("1 1 4 1 0 0 300 20 1 1 5 Main St\n2v 1 1 3\n4 1000 60\n", 12);
+        eq("line 1", a[0], "1 1 4 1 0 0 300 20 1 1 5 Main St");
+        eq("line 2", a[1], "2v 1 1 3");
+        eq("line 3", a[2], "4 1000 60");
+        eqNull("no line 4 after the final newline", a[3]);
+        eq("lanes found by marker", AANavReader.taggedLine(a, '2'), "v 1 1 3");
+        eq("destination found by marker", AANavReader.taggedLine(a, '4'), "1000 60");
+        String[] b = AANavReader.splitLines("only line, no newline", 12);
+        eq("a last line without newline counts", b[0], "only line, no newline");
+        eqNull("and nothing after it", b[1]);
+        String[] c = AANavReader.splitLines("a\r\nb\r\n", 12);
+        eq("CR LF: first", c[0], "a");
+        eq("CR LF: second", c[1], "b");
+        String[] e = AANavReader.splitLines("a\n\nc\n", 12);
+        eq("an empty line in the middle stays a line", e[1], "");
+        eq("and the one after it", e[2], "c");
+        String[] f = AANavReader.splitLines("1\n2\n3\n4\n", 2);
+        eq("more lines than asked for: the first ones", f[1], "2");
+        eq("array is as long as asked", f.length, 2);
+        eqNull("empty text", AANavReader.splitLines("", 12)[0]);
+    }
+
     private static void playbackMode() {
         // bit0 shuffle, bit1 repeat, bit2 repeat-one -> {stateInfo, stateInfo_Scope}
         int[][] cases = {
@@ -701,7 +783,7 @@ public final class NavMappingTest {
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
                            "directions", "roundabout angles", "imminence",
-						   "next maneuver", "current road", "playback mode", "prepare stage", "eta clock", "i18n", "ring continuity", "double turn", "junction schematic" };
+						   "next maneuver", "current road", "playback mode", "prepare stage", "eta clock", "i18n", "ring continuity", "double turn", "junction schematic", "carriers", "file lines" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -723,7 +805,9 @@ public final class NavMappingTest {
                 case 15: i18n(); break;
                 case 16: ringContinuity(); break;
                 case 17: doubleTurn(); break;
-                default: junctionSchematic(); break;
+                case 18: junctionSchematic(); break;
+                case 19: carriers(); break;
+                default: fileLines(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));
         }

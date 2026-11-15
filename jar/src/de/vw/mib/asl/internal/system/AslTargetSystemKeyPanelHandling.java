@@ -79,27 +79,27 @@ ASLSystemKeyPanelHandling {
     }
 
     public void updateKey(int n, int n2, int n3, int n4) {
-        try { if (de.aatokombi.WheelKeys.key(n, n2, n3, n4, -1)) return; } catch (Throwable t) {}
+        try { if (de.aatokombi.WheelKeys.key(n, n2, n3, n4, -1)) return; } catch (Throwable t) { de.aatokombi.Quiet.note("AslTargetSystemKeyPanelHandling#1", t); }
         if (n4 == 1) {
             this.processKeyEvent(n, n2, n3);
         }
     }
 
     public void updateKey2(int n, int n2, int n3, int n4, int n5) {
-        try { if (de.aatokombi.WheelKeys.key(n, n2, n3, n4, n5)) return; } catch (Throwable t) {}
+        try { if (de.aatokombi.WheelKeys.key(n, n2, n3, n4, n5)) return; } catch (Throwable t) { de.aatokombi.Quiet.note("AslTargetSystemKeyPanelHandling#2", t); }
         n3 = this.overrideKeyState(n3);
         this.processKeyEvent(n, n2, n3);
     }
 
     public void updateEncoder(int n, int n2, int n3, int n4) {
-        try { de.aatokombi.WheelKeys.encoder(n, n2, n3, n4, -1); } catch (Throwable t) {}
+        try { de.aatokombi.WheelKeys.encoder(n, n2, n3, n4, -1); } catch (Throwable t) { de.aatokombi.Quiet.note("AslTargetSystemKeyPanelHandling#3", t); }
         if (n4 == 1) {
             this.processEncoderEvent(n, n2, n3, 0);
         }
     }
 
     public void updateEncoder2(int n, int n2, int n3, int n4, int n5) {
-        try { de.aatokombi.WheelKeys.encoder(n, n2, n3, n4, n5); } catch (Throwable t) {}
+        try { de.aatokombi.WheelKeys.encoder(n, n2, n3, n4, n5); } catch (Throwable t) { de.aatokombi.Quiet.note("AslTargetSystemKeyPanelHandling#4", t); }
         if (n5 == 1) {
             this.processEncoderEvent(n, n2, n3, n4);
         }
@@ -267,7 +267,7 @@ ASLSystemKeyPanelHandling {
         dSIProxy.addResponseListener(this, class$org$dsi$ifc$keypanel$DSIKeyPanelListener == null ? (class$org$dsi$ifc$keypanel$DSIKeyPanelListener = AslTargetSystemKeyPanelHandling.class$("org.dsi.ifc.keypanel.DSIKeyPanelListener")) : class$org$dsi$ifc$keypanel$DSIKeyPanelListener, configurationManagerDiag.getSystemKeyPanelInstance(), this);
         this.dsiKeyPanel.setNotification(new int[]{25, 23, 20}, (DSIListener)this);
         // Shadow delta: diagnostic listeners on the OTHER key-panel instances (OK / View search).
-        try { de.aatokombi.WheelKeys.attachOtherInstances(dSIProxy, configurationManagerDiag.getSystemKeyPanelInstance()); } catch (Throwable t) {}
+        try { de.aatokombi.WheelKeys.attachOtherInstances(dSIProxy, configurationManagerDiag.getSystemKeyPanelInstance()); } catch (Throwable t) { de.aatokombi.Quiet.note("AslTargetSystemKeyPanelHandling#5", t); }
     }
 
     public void updateGesture2(int n, int n2, int n3, boolean bl, int n4, int n5, int n6, int n7, int n8) {

@@ -70,7 +70,7 @@ implements TimerNotifier {
     public static void poke() {
         CurrentStationInfo i = INSTANCE;
         if (i != null) {
-            try { i.process(-1); } catch (Throwable t) {}
+            try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("CurrentStationInfo#1", t); }
         }
     }
 

@@ -43,7 +43,7 @@ NavigationServiceListener {
     private static volatile DistanceToDestination INSTANCE = null;
     public static void poke() {
         DistanceToDestination i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("DistanceToDestination#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -55,7 +55,7 @@ NavigationServiceListener {
             try {
                 this.getSystemService().addSystemServiceListener(this, SYSTEM_LISTENER_IDS);
                 this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
-            } catch (Throwable t) {}
+            } catch (Throwable t) { de.aatokombi.Quiet.note("DistanceToDestination#2", t); }
         }
         return this.computeDistanceToDestinationStatus();
     }
@@ -90,7 +90,7 @@ NavigationServiceListener {
             try {
                 this.getSystemService().removeSystemServiceListener(this, SYSTEM_LISTENER_IDS);
                 this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
-            } catch (Throwable t) {}
+            } catch (Throwable t) { de.aatokombi.Quiet.note("DistanceToDestination#3", t); }
         }
     }
 
@@ -150,7 +150,7 @@ NavigationServiceListener {
         // is, so a waypoint cannot be told from the final destination: report the neutral value the
         // stock uses for everything that is not explicitly a stopover.
         distanceToDestination_Status.distanceToDestinationType.distanceToStopover = false;
-        int meters = NavState.destinationMeters;
+        int meters = NavState.destination.meters;
         int[] nArray = new int[2];
         try {
             if (this.getSystemService().getCurrentDistanceUnit() == 1) {
@@ -172,7 +172,7 @@ NavigationServiceListener {
         // navsd-shadow delta: the stock asks the unit's OWN route guidance, which is not running
         // while AA guides — the same trap that kept the lane row empty. Gate on our own state.
         if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
-            distanceToDestination_Status.validityInformation.distanceToDestinationValid = NavState.destinationMeters > 0;
+            distanceToDestination_Status.validityInformation.distanceToDestinationValid = NavState.destination.meters > 0;
             return;
         }
         distanceToDestination_Status.validityInformation.distanceToDestinationValid = this.getNavigationService().getRouteGuidanceState() == 1;
