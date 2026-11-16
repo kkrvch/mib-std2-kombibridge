@@ -46,7 +46,7 @@ static struct {
     mmr_parm_t ctxparm, inparm; mmr_oparm_t outparm; dict_new_t dnew; dict_set_t dset;
 } M;
 static int dec_coid = -1;
-static uint8_t dec_au[KBCV_SLOT_BYTES];
+static uint8_t dec_au[KBCV_FRAME_MAX];
 
 static int dec_resolve(void)
 {
@@ -161,15 +161,7 @@ static int dec_stream_alive(void)
 /* newest IDR still in the ring of the current stream, 0 = none */
 static unsigned dec_newest_idr(void)
 {
-    unsigned head = kv->write_seq, k, first = kv->gen_first_seq;
-    for (k = 0; k + 1 < KBCV_SLOTS && k < head; k++) {
-        unsigned seq = head - k;
-        struct kbcv_slot *s;
-        if (first && seq < first) break;
-        s = &kv->slot[seq % KBCV_SLOTS];
-        if (s->seq == seq && (s->flags & KBCV_FLAG_IDR)) return seq;
-    }
-    return 0;
+    return kbcv_newest_idr(kv);
 }
 
 /* no libgcc here (freestanding link): unsigned division by shift and subtract */
@@ -296,18 +288,20 @@ static void dec_run(void)
     while (dec_stream_alive() && !switched_off()) {
         unsigned head = kv->write_seq;
         kv->rd_alive_ms = now_ms() | 1u;              /* the HMI hides its own cluster map meanwhile */
-        if (head - next >= KBCV_SLOTS) { next = head - 1; cfg_sent = 0; }
+        if (head - next >= KBCV_INDEX) { next = head - 1; cfg_sent = 0; }
         if (head == next) usleep(5000);
         while (next != head) {
-            unsigned seq = ++next, size, flags;
-            struct kbcv_slot *s = &kv->slot[seq % KBCV_SLOTS];
+            unsigned seq = ++next, size = 0, flags = 0;
             unsigned long long ts;
-            if (s->seq != seq) continue;
-            size = s->size; flags = s->flags;
-            if (size > sizeof(dec_au)) continue;
-            memcpy(dec_au, s->data, size);
-            __sync_synchronize();
-            if (s->seq != seq) continue;
+            int got = kbcv_get(kv, seq, dec_au, sizeof(dec_au), &size, &flags);
+            if (got == KBCV_GONE) {
+                /* fell so far behind that the writer has overwritten it: on to the newest key
+                 * frame, rather than feed the decoder frames whose references are missing */
+                unsigned idr = dec_newest_idr();
+                if (idr && (int)(idr - seq) > 0) { next = idr - 1; kv->rd_skipped++; }
+                continue;
+            }
+            if (got != KBCV_OK) continue;
             if (!cfg_sent) {
                 unsigned cl;
                 if (!(flags & KBCV_FLAG_IDR)) continue;

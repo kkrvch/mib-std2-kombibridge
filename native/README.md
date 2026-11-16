@@ -94,5 +94,9 @@ that is a bug in the check, and `FORCE=1` is the way round it.
   end normally, strike N`. Two in a row write `video-off` (reinstall, or remove `video-off` and
   `dm-strikes`, to clear). If that line appears after an ordinary ignition-off, tell the author:
   the guard would then switch the hook off after two trips.
+- Shared memory with the libgal: since version 4 a 4 MB byte ring with an index of the last 512
+  frames (`shim/src/cluster_video_shm.h`, host test `tests/ring`). Version 3 had 24 fixed slots of
+  250 000 bytes, too small for the decode mode's key frames. libgal and libkb_dm.so of different
+  versions do not talk to each other (stock map); install them together.
 - Log: `/dev/shmem/aatokombi-dm.log` (at 64 KB it becomes `aatokombi-dm.log.1` and a new one starts). Counters (`rd_frames`, `rd_state`, ring waits) also appear in
   libgal's `/dev/shmem/aa_cluster_probe`.

@@ -35,6 +35,7 @@
  * did not end normally switch the hook off for good, see guard_*).
  */
 #include "kb_qnx.h"
+#define KBCV_COPY(d, s, n) memcpy((d), (s), (n))
 #include "cluster_video_shm.h"
 
 #define EXPORT __attribute__((visibility("default")))
@@ -79,7 +80,7 @@ static unsigned kv_last_try;
 static int kv_version_logged;
 static void *cluster_queue;
 static struct element ours;
-static uint8_t frame[KBCV_SLOT_BYTES];
+static uint8_t frame[KBCV_AU_MAX];       /* pass-through only: the AID's decoder takes no more */
 static unsigned next_seq, generation;
 static int phone, need_idr, wait_stock_idr, ring_stalled;
 /* The AID's decoder shows the first picture after the stock stream broken (purple, smeared) until
@@ -349,17 +350,10 @@ static int has_nal(const uint8_t *p, uint32_t n, unsigned type)
  */
 static unsigned resync_seq(unsigned head)
 {
-    unsigned k, first = kv->gen_first_seq;
-    for (k = 0; k + 1 < KBCV_SLOTS && k < head; k++) {
-        unsigned seq = head - k;
-        if (first && seq < first) break;               /* older stream: never start on its IDR */
-        struct kbcv_slot *s = &kv->slot[seq % KBCV_SLOTS];
-        if (s->seq == seq && (s->flags & KBCV_FLAG_IDR)) {
-            if (k) LOGV("resync on a key frame, frames back", k);
-            return seq - 1;
-        }
-    }
-    return head;
+    unsigned idr = kbcv_newest_idr(kv);
+    if (!idr) return head;
+    if (head != idr) LOGV("resync on a key frame, frames back", head - idr);
+    return idr - 1;
 }
 
 /*
@@ -370,14 +364,7 @@ static unsigned resync_seq(unsigned head)
  */
 static int ring_has_idr(void)
 {
-    unsigned head = kv->write_seq, k, first = kv->gen_first_seq;
-    for (k = 0; k + 1 < KBCV_SLOTS && k < head; k++) {
-        unsigned seq = head - k;
-        if (first && seq < first) break;               /* older stream */
-        struct kbcv_slot *s = &kv->slot[seq % KBCV_SLOTS];
-        if (s->seq == seq && (s->flags & KBCV_FLAG_IDR)) return 1;
-    }
-    return 0;
+    return kbcv_newest_idr(kv) != 0;
 }
 static int idr_wait_logged;
 static unsigned flush_ms, flush_count;
@@ -386,30 +373,26 @@ static unsigned flush_ms, flush_count;
 static uint32_t take_frame(void)
 {
     unsigned head = kv->write_seq;
-    if (kv->generation != generation || head - next_seq >= KBCV_SLOTS) {
+    if (kv->generation != generation || head - next_seq >= KBCV_INDEX) {
         if (kv->generation == generation) kv->rd_skipped++;
         generation = kv->generation;
         next_seq = resync_seq(head);
         need_idr = 1;
     }
     while (next_seq != head) {
-        unsigned seq = ++next_seq, size;
-        struct kbcv_slot *s = &kv->slot[seq % KBCV_SLOTS];
+        unsigned seq = ++next_seq, size = 0, flags = 0;
+        int got = kbcv_get(kv, seq, frame, sizeof(frame), &size, &flags);
         kv->rd_seq = seq;                                  /* taken or skipped: the libgal may ack it */
-        if (s->seq != seq) { need_idr = 1; continue; }
-        size = s->size;
-        if (size > sizeof(frame)) continue;
-        memcpy(frame, s->data, size);
-        __sync_synchronize();
-        if (s->seq != seq) { need_idr = 1; continue; }
-        if (need_idr && !(s->flags & KBCV_FLAG_IDR)) {
+        if (got == KBCV_GONE) { need_idr = 1; continue; }  /* overwritten or never complete */
+        if (got != KBCV_OK) continue;                      /* larger than the AID takes */
+        if (need_idr && !(flags & KBCV_FLAG_IDR)) {
             kv->want_idr = 1;
             if (!idr_wait_ms) { idr_wait_ms = now_ms() | 1u; LOG("waiting for a key frame"); }
             continue;
         }
         if (need_idr && idr_wait_ms) { LOGV("key frame after ms", now_ms() - idr_wait_ms); idr_wait_ms = 0; }
         need_idr = 0;
-        frame_idr = (s->flags & KBCV_FLAG_IDR) ? 1 : 0;
+        frame_idr = (flags & KBCV_FLAG_IDR) ? 1 : 0;
         kv->rd_frames++;
         return size;
     }

@@ -505,7 +505,7 @@ static void cluster_flush(){
   cl_kv(o,"insets_l=",g_cl.insets[2]); cl_kv(o,"insets_r=",g_cl.insets[3]);
   cl_kv(o,"cmd_reads=",g_cl.cmdReads); cl_kv(o,"cmd_bytes=",g_cl.cmdBytes); cl_kv(o,"cmd_lines=",g_cl.cmdLines);
   cl_kv(o,"shm=",g_kv?1:0); cl_kv(o,"shm_frames=",g_kv?g_kv->frames:0); cl_kv(o,"shm_idr_req=",g_kv?g_kv->idr_requests:0);
-  cl_kv(o,"shm_big=",g_kv?g_kv->dropped_big:0); cl_kv(o,"rd_frames=",g_kv?g_kv->rd_frames:0);
+  cl_kv(o,"shm_big=",g_kv?g_kv->dropped_big:0); cl_kv(o,"shm_max_frame=",g_kv?g_kv->max_frame:0); cl_kv(o,"rd_frames=",g_kv?g_kv->rd_frames:0);
   cl_kv(o,"rd_state=",g_kv?g_kv->rd_state:0); cl_kv(o,"rd_ring_waits=",g_kv?g_kv->rd_ring_waits:0);
   cl_kv(o,"rd_ring_lost=",g_kv?g_kv->rd_ring_lost:0);
   cl_kv(o,"ack_pending=",g_ackPending); cl_kv(o,"ack_consumed=",g_cl.ackConsumed); cl_kv(o,"ack_timeouts=",g_cl.ackTimeouts);
@@ -597,8 +597,14 @@ static int kv_map(){
   p_close(fd);
   if(!m || m==(void*)-1) return 0;
   struct kbcv* v=(struct kbcv*)m;
-  if(v->magic!=KBCV_MAGIC || v->version!=KBCV_VERSION || !v->sem_ok){
-    // New memory (RAM, every boot). A semaphore a reader may already sleep on is never re-made.
+  if(v->magic!=KBCV_MAGIC || v->version!=KBCV_VERSION){
+    // New memory (RAM, every boot), or one a libgal of another layout made: nothing in it counts.
+    v->magic=0; __sync_synchronize();
+    kbcv_ring_reset(v);
+    v->sem_ok=0;
+  }
+  if(!v->sem_ok){
+    // A semaphore a reader may already sleep on is never re-made.
     v->sem_ok = (p_sem_init && p_sem_init(&v->frame_ready,1,0)==0) ? 1u : 0u;
   }
   v->alive_ms=0;
@@ -710,16 +716,14 @@ static void cl_publish(const u8* au,u32 n){
   struct kbcv* v=g_kv; if(!v || !au || !n) return;
   u32 hasSps=0, idr=cl_nal_flags(au,n<4096?n:4096,&hasSps);
   u32 pre = (idr && !hasSps) ? g_spsPpsLen : 0;
-  if(pre+n>KBCV_AU_MAX){ v->dropped_big++; v->want_idr=1; return; }
-  u32 seq=v->write_seq+1; if(!seq) seq=1;
-  struct kbcv_slot* sl=&v->slot[seq%KBCV_SLOTS];
-  sl->seq=0; __sync_synchronize();
-  for(u32 i=0;i<pre;i++) sl->data[i]=g_spsPps[i];
+  // The limit is the decoder's: the AID's own (250 000 bytes) when its H.264 is passed through,
+  // the head unit's in decode mode, where only the ring's size counts (key frames of the 1280x720
+  // stream reach ~280 KB, car 2026-11-15: all of them used to be dropped).
+  u32 max = g_geo.decode ? KBCV_FRAME_MAX : KBCV_AU_MAX;
   // an SPS inside the AU (not seen from AA so far) goes out uncropped; the config copy wins.
-  for(u32 i=0;i<n;i++) sl->data[pre+i]=au[i];
-  sl->size=pre+n; sl->flags=idr?KBCV_FLAG_IDR:0;
-  __sync_synchronize();
-  sl->seq=seq; v->write_seq=seq; g_pubSeq=seq;
+  u32 seq=kbcv_put(v,g_spsPps,pre,au,n,idr?KBCV_FLAG_IDR:0,max);
+  if(!seq){ v->dropped_big++; v->want_idr=1; return; }
+  g_pubSeq=seq;
   v->frames++;
   if(idr){
     v->idr++; g_idrSoftT=0; g_wantSince=0;
