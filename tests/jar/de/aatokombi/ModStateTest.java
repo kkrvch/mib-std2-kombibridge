@@ -4,8 +4,8 @@ import de.adi961.miblogger.MIBLogger;
 
 /**
  * Host test of the small decisions in de.aatokombi that need no head unit: the cluster video state
- * line (ClusterVideo.parseState) and the steering-wheel key handling (WheelKeys). In this package
- * to reach the package-private members. Run by tests/jar/run.sh; never part of the shipped jar.
+ * line (ClusterVideo.parseState), the steering-wheel key handling (WheelKeys) and the IPC end line
+ * (IpcFile). In this package to reach the package-private members. Run by tests/jar/run.sh; never part of the shipped jar.
  */
 public final class ModStateTest {
     private static int failed;
@@ -104,6 +104,28 @@ public final class ModStateTest {
         }
     }
 
+    private static int body(String text) {
+        byte[] b = text.getBytes();
+        return IpcFile.body(b, b.length);
+    }
+
+    // The IPC end line: a file counts only when it ends with "end\n" on a line of its own.
+    private static void ipcEnd() {
+        ok("complete nav file", body("1 1 4 1 0 0 300 20 1 1 5 Main St\n4 1000 60\nend\n") == 43);
+        ok("complete media file", body("3 Song\tArtist\nend\n") == 14);
+        ok("end line alone", body("end\n") == 0);
+        ok("torn: no end line", body("1 1 4 1 0 0 300 20 1 1 5 Main") == -1);
+        ok("torn: end line cut", body("3 Song\nen") == -1);
+        ok("torn: no final newline", body("3 Song\nend") == -1);
+        ok("road merely ends in end", body("1 2 3 Weekend\n") == -1);
+        ok("empty", body("") == -1);
+        ok("CR LF end line rejected", body("3 Song\r\nend\r\n") == -1);
+        ok("null buffer", IpcFile.body(null, 4) == -1);
+        ok("n beyond the buffer", IpcFile.body(new byte[2], 4) == -1);
+        byte[] big = "xx\nend\nyy".getBytes();
+        ok("length counts, not the buffer end", IpcFile.body(big, 7) == 3);
+    }
+
     private static String pad(String s) {
         StringBuffer b = new StringBuffer(s);
         while (b.length() < 24) b.append(' ');
@@ -112,14 +134,16 @@ public final class ModStateTest {
 
     public static void main(String[] args) {
         MIBLogger.getInstance().setLogLevel(MIBLogger.SILENT);   // the key handling logs every key
-        String[] names = { "cluster state line", "wheel view key", "wheel mode key", "swallowed exceptions" };
+        String[] names = { "cluster state line", "wheel view key", "wheel mode key", "swallowed exceptions",
+                           "ipc end line" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
                 case 0: stateLine(); break;
                 case 1: viewKey(); break;
                 case 2: modeKey(); break;
-                default: quiet(); break;
+                case 3: quiet(); break;
+                default: ipcEnd(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));
         }

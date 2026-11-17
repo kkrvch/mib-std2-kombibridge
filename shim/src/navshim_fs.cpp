@@ -189,6 +189,11 @@ static void resolve_libc(){
 // The whole file is rewritten with O_TRUNC on every event. Line 1 is always present:
 //   seq status event side angle number dist time unit connected session road
 // The tagged lines that may follow it are described at ipc_flush().
+// Both IPC files (aa_nav, aa_media) END with the line "end\n" (IPC_END). O_TRUNC + write is not
+// atomic: a poll that lands between the two sees an empty or a cut file, and a cut line can still
+// parse (a shorter road, a smaller number). The jar takes a file only when it ends with that line.
+static const char IPC_END[] = "end\n";
+static char* ipc_end(char* o){ for(const char* s=IPC_END; *s; s++) *o++=*s; return o; }
 static const char IPC_PATH[] = "/dev/shmem/aa_nav";
 // Field map (from the device libgal parser):
 //   NextTurnEvent listener args = Road(str), TurnSide, Event, Image(str), TurnAngle, TurnNumber
@@ -374,8 +379,8 @@ static void ipc_flush(){
   // connected/session are inserted BEFORE road (road is the space-remainder field, may hold spaces).
   // Worst case ~123 numeric bytes + road[63] + '\n', plus the tagged lines below (variable lane
   // directions ~100, distance text ~20, destination ~24, next manoeuvre ~40, current road ~66) ->
-  // ~470 worst case, plus the destination address ~98, ETA ~18 and instruction ~98 -> ~690, so the
-  // buffer is 800.
+  // ~470 worst case, plus the destination address ~98, ETA ~18 and instruction ~98 and the end
+  // line 4 -> ~694, so the buffer is 800.
   char b[800]; char* o=b;
   o=u2dec(o,g_st.seq);   *o++=' ';
   o=u2dec(o,g_st.status);*o++=' ';
@@ -462,6 +467,7 @@ static void ipc_flush(){
       *o++='\n';
     }
   }
+  o=ipc_end(o);   // last: the jar ignores a file without it (torn read)
   if(ipc_unchanged(&g_ipcNavLast, b, (u32)(o-b))) return;
   write_file(IPC_PATH, b, (usize)(o-b));
   if(g_dumpState==1) dump_ipc(&g_dnav, b, (usize)(o-b));
@@ -519,7 +525,7 @@ static MediaState g_ms;
 
 static void media_flush(){
   if(!p_fopen) return;
-  // Worst case ~350 bytes (3×79 strings + 11 numeric fields) -> 420 leaves headroom.
+  // Worst case ~354 bytes (3×79 strings + 11 numeric fields + the end line) -> 420 leaves headroom.
   char b[420]; char* o=b;
   o=u2dec(o,g_ms.seq); *o++=' ';
   { const char* s=g_ms.song;   while(*s) *o++=*s++; } *o++='\t';
@@ -536,6 +542,7 @@ static void media_flush(){
   o=u2dec(o,g_ms.repeat);   *o++='\t';   // field 11: repeat (the list)
   o=u2dec(o,g_ms.repeatOne);              // field 12: repeat one (the track)
   *o++='\n';
+  o=ipc_end(o);                           // last: the jar ignores a file without it (torn read)
   if(ipc_unchanged(&g_ipcMediaLast, b, (u32)(o-b))) return;
   write_file(IPC_MEDIA, b, (usize)(o-b));
   if(g_dumpState==1) dump_ipc(&g_dmedia, b, (usize)(o-b));

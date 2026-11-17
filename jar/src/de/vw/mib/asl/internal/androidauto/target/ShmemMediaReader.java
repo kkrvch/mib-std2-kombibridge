@@ -291,6 +291,12 @@ public class ShmemMediaReader implements Runnable {
             if (n <= 0) {
                 return null;                       // the shim is rewriting it right now
             }
+            // Only a complete file: one cut by a concurrent rewrite lacks the end line. It is not
+            // remembered either, so the complete file of the next poll is parsed in full.
+            int body = de.aatokombi.IpcFile.body(rawBuf, n);
+            if (body < 0) {
+                return null;
+            }
             if (n == lastRawLen) {
                 int i = 0;
                 while (i < n && rawBuf[i] == lastRaw[i]) {
@@ -302,7 +308,7 @@ public class ShmemMediaReader implements Runnable {
             }
             System.arraycopy(rawBuf, 0, lastRaw, 0, n);
             lastRawLen = n;
-            return firstLine(new String(rawBuf, 0, n));
+            return firstLine(new String(rawBuf, 0, body));
         } catch (Exception ex) {
             return null; // file absent yet / transient -> ignore
         } finally {

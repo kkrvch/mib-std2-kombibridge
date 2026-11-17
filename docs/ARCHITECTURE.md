@@ -64,6 +64,12 @@ phone ── AA ──► libgal (shim) ──► /dev/shmem/aa_nav ──► ja
                  each callback       dist time unit road"
 ```
 
+Both files (`aa_nav`, `aa_media`) end with the line `end`. The shim rewrites a file whole on each
+event, which is not atomic, so the jar takes a file only when that last line is there. Otherwise
+it would sometimes parse a half-written one. This is why the jar and libgal must come from the same
+build: a jar with this check shows no nav or media data with an older libgal (the reverse
+combination works).
+
 `/dev/shmem` is a RAM filesystem (the SAL itself logs there), so nothing touches flash. (This is
 the non-nav path. On a nav-capable cluster the jar feeds the same shmem data into the navsd BAP
 functions instead of `CurrentStationInfo` — see [NAVIGATION_VIA_NAVSD.md](NAVIGATION_VIA_NAVSD.md).)

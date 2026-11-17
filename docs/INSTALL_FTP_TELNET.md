@@ -109,6 +109,7 @@ grep AAtoKombi /tsd/hmi/runHMI.sh    # bootclasspath row is in place
 # connect the phone via Android Auto — the patched GAL writes these while connected
 cat /dev/shmem/aa_nav      # turn-by-turn line, during route guidance
 cat /dev/shmem/aa_media    # now-playing line (song / artist / album / …)
+# both files end with the line "end"; without it the jar ignores the file (libgal older than the jar)
 ```
 
 What actually renders on the cluster depends on the `Config.java` flags you built with.

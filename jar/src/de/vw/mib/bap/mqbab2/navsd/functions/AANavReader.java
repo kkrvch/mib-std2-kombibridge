@@ -1184,6 +1184,7 @@ public final class AANavReader implements Runnable {
      * "8 " = the phone's arrival clock string,
      * "9 " = the instruction text when it differs from the road. Lane line "2v " is the current
      * variable-direction encoding; "2 " remains accepted for a jar deployed with an older shim.
+     * The file ends with the line "end" (de.aatokombi.IpcFile); without it the read is null.
      * Any element may be null.
      */
     private String[] readLines() {
@@ -1198,6 +1199,12 @@ public final class AANavReader implements Runnable {
             if (n <= 0) {
                 return null;                       // the shim is rewriting it right now
             }
+            // Only a complete file: one cut by a concurrent rewrite lacks the end line. It is not
+            // remembered either, so the complete file of the next poll is parsed in full.
+            int body = de.aatokombi.IpcFile.body(rawBuf, n);
+            if (body < 0) {
+                return null;
+            }
             if (n == lastRawLen) {
                 int i = 0;
                 while (i < n && rawBuf[i] == lastRaw[i]) {
@@ -1209,7 +1216,7 @@ public final class AANavReader implements Runnable {
             }
             System.arraycopy(rawBuf, 0, lastRaw, 0, n);
             lastRawLen = n;
-            return splitLines(new String(rawBuf, 0, n), 12);
+            return splitLines(new String(rawBuf, 0, body), 12);
         } catch (Exception ex) {
             return null; // file absent yet / transient -> ignore
         } finally {
