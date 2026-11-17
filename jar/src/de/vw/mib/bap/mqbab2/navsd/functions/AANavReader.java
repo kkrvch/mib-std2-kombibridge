@@ -579,11 +579,15 @@ public final class AANavReader implements Runnable {
         // arrow is FOLLOW_STREET or the PREPARE_* glyph it names the road the car is on (user
         // request 2026-10). AA's current road when the phone sends one; otherwise TurnToInfo asks
         // the unit's own map-matching for it (Streets.wantsCurrentPosition).
+        // A FOLLOW_STREET arrow counts as far even when AA's own step is "near": AA sends DEPART and
+        // STRAIGHT as steps of their own, and their road text ("В сторону ...", "Продолжайте
+        // движение прямо") is an instruction, not the street the car is on (trip 2026-11-17).
+        boolean turnNear = streetLineNamesTurn(mainElement, imminent);
         NavState.Maneuver mv = new NavState.Maneuver(mainElement, direction, sideStreets, 0, nextM);
         NavState.Streets st = new NavState.Streets(
-                rerouting ? "" : turnToStreet(road, currentRoad, imminent),          // -> TurnToInfo
+                rerouting ? "" : turnToStreet(road, currentRoad, turnNear),          // -> TurnToInfo
                 currentRoad, road,
-                !rerouting && !imminent && (currentRoad == null || currentRoad.length() == 0));
+                !rerouting && !turnNear && (currentRoad == null || currentRoad.length() == 0));
         NavState.Distance dn = new NavState.Distance(dist, imminent);   // raw metres, bargraph while approaching
         NavState.LaneState lanes = NavState.laneState;
         NavState.Destination dest = NavState.destination;
@@ -639,6 +643,15 @@ public final class AANavReader implements Runnable {
         if (distanceNew) de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
         if (streetsNew) de.vw.mib.bap.mqbpq.navsd.functions.TurnToInfo.poke();
         if (destinationNew) de.vw.mib.bap.mqbpq.navsd.functions.DistanceTimeToDestination.poke();   // PQ merges fn 21+22
+    }
+
+    /**
+     * Whether the street line names the road the manoeuvre turns into (true) or the road the car is
+     * on (false): only for a manoeuvre that is near AND drawn as itself. A FOLLOW_STREET arrow (far,
+     * or AA's DEPART / STRAIGHT step) always gets the current road.
+     */
+    static boolean streetLineNamesTurn(int mainElement, boolean imminent) {
+        return imminent && mainElement != MAIN_ELEMENT_FOLLOW_STREET;
     }
 
     /**

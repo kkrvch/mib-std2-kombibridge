@@ -676,6 +676,10 @@ public final class NavMappingTest {
                 AANavReader.turnToStreet(AANavReader.streetFor(true, "Next St"), "Current St", false),
                 AANavReader.streetFor(true, "Next St"));
         eq("no roads at all", AANavReader.turnToStreet(null, null, false), "");
+        yes("near turn: the road it turns into", AANavReader.streetLineNamesTurn(13, true));
+        no("far: the current road", AANavReader.streetLineNamesTurn(13, false));
+        no("near DEPART/STRAIGHT drawn as FOLLOW_STREET: the current road",
+                AANavReader.streetLineNamesTurn(AANavReader.MAIN_ELEMENT_FOLLOW_STREET, true));
     }
 
     private static void eqB(String what, boolean got, boolean want) {

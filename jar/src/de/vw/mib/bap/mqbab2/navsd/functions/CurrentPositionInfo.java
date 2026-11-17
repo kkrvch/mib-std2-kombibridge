@@ -152,7 +152,26 @@ NavigationServiceListener {
 
     public void updateNavigationData(NavigationService navigationService, int n) {
         this.process(-1);
+        // navsd-shadow delta: TurnToInfo has no listener of its own (it is driven from NavState), but
+        // while AA guides it may show this same map-matched street (Streets.wantsCurrentPosition).
+        // Re-send it as soon as the unit's street changes, not only at the next full re-send.
+        try {
+            String own = navigationService.getNavigationStatus() == 0
+                    ? navigationService.getCurrentPositionInfo() : null;
+            if (own == null) own = "";
+            if (!own.equals(lastOwnStreet)) {
+                lastOwnStreet = own;
+                if (NavState.ACTIVE && NavState.streets.wantsCurrentPosition) {
+                    TurnToInfo.poke();
+                }
+            }
+        } catch (Throwable t) {
+            de.aatokombi.Quiet.note("CurrentPositionInfo#4", t);
+        }
     }
+
+    /** The unit's map-matched street at the last navigation update (see updateNavigationData). */
+    private static String lastOwnStreet = "";
 
     static /* synthetic */ Class class$(String string) {
         try {
