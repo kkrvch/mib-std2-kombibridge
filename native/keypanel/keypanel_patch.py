@@ -7,11 +7,11 @@ The service translates the MQB multifunction-wheel key code ("Tastencode", from 
 DSI key code through a table of 29 entries of 8 bytes {u8 MQB code, u8 flag, 2 x 0, u32 DSI code}
 at file offset 0x374b0 (mapMfwMqbEvent, 0x10c2d8). A code that is not in the table is dropped
 with "MFW_MQB: mapMfwMqbEvent(): code not found in mapping table, original code: N" in the J5
-slog. View on the MQB wheel is MQB 0x23 (35) and is missing (slog 2026-11-10).
+slog. View on the development car's wheel is MQB 0x23 (35) and is missing (slog 2026-11-10).
 
 The table has no free entry; the count (29) is compiled in. Entry 28 maps MQB 0xF1 to DSI 60,
 the same DSI code as entry 27 (0xF0). This tool rewrites entry 28 to {0x23, 0, 0, 0, DSI}.
-Default DSI 59 (stock: MQB 0x22, not present on the MQB wheel); the jar must use the same code
+Default DSI 59 (stock: MQB 0x22, not present on the development car's wheel); the jar must use the same code
 (WheelKeys.KEYPANEL_VIEW_CODE).
 
 Only the unit owner's own file is patched; the result is a firmware-derived binary and must not

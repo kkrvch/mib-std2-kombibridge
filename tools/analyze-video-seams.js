@@ -91,7 +91,13 @@ function findStrings(e, re) {
   return out;
 }
 
-const root = process.argv[2] || '/path/to/unit-dump';
+// Usage: node analyze-video-seams.js <unit-dump-root> [sal-binary] [displaymanager-binary]
+// <unit-dump-root> is a local copy of the head unit's file system (with tsd/bin/...).
+const root = process.argv[2];
+if (!root) {
+  console.error('usage: node analyze-video-seams.js <unit-dump-root> [sal-binary] [displaymanager-binary]');
+  process.exit(2);
+}
 const salPath = process.argv[3] || `${root}/tsd/bin/sal/tsd.mibstd2.sal.main`;
 const dmPath = process.argv[4] || `${root}/tsd/bin/displaymanager/tsd.mibstd2.system.displaymanager`;
 const sal = elf(salPath);

@@ -3,7 +3,7 @@
  * navsd-shadow delta: Map_Presentation (fct 54) is announced as available. Stock announces it as
  * unavailable, so the cluster never reports its HMI state (large map / side menus) to the head
  * unit. With the bit set, the cluster may send Map_Presentation SetGet on view changes (on Audi it
- * does; on the MQB AID it is untested). /tsd/var/aatokombi/no-map-presentation restores stock.
+ * does; on the development car's AID it is untested). /tsd/var/aatokombi/no-map-presentation restores stock.
  * Everything else is the stock list.
  */
 package de.vw.mib.bap.mqbab2.navsd.functions;

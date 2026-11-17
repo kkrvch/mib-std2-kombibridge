@@ -5,7 +5,7 @@ package de.aatokombi;
  * updateEncoder2, called from the AslTargetSystemKeyPanelHandling shadow on the DSI thread).
  *
  * Key codes on the MQB multifunction wheel (keyboard 4 = MFW), from zakklmv/MHI2-Carplay-Maps
- * (src/vcdiag VcLayout.java, measured on a MQB MU1440 + AID 10.5; GPL-3.0, only the facts used):
+ * (src/vcdiag VcLayout.java, measured on an MHI2 MU1440 + AID 10.5; GPL-3.0, only the facts used):
  *   key 40  roller press = "OK"; states 1 pressed, 0 released, 3 / 4 / 5 held (~0.8 / ~2 / ~3 s)
  *   key 35  View on MHI2 (a short press steps the AID view, a long one opens its view menu);
  *           on MIB2 STD2 only with the patched J5 key panel, as KEYPANEL_VIEW_CODE
@@ -19,13 +19,13 @@ public final class WheelKeys {
     public static final int KEYBOARD_MFW = 4;
     public static final int KEYBOARD_MFW_3GP = 8;
     /**
-     * The press of the volume roller (Mute in the stock HMI) on THIS car (the development car, MIB2 STD2)
+     * The press of the volume roller (Mute in the stock HMI) on the development car (MIB2 STD2)
      * arrives as key 44 (car 2026-11-02, the driver's confirmation). It is not an "OK" key: the
-     * MQB MHI2 of zakklmv sends its OK (roller press) as key 40; here no key 40 arrived (40 is
+     * MHI2 of zakklmv sends its OK (roller press) as key 40; here no key 40 arrived (40 is
      * only the other roller's turn, encoder 40).
      */
     public static final int KEY_VOLUME_ROLLER = 44;
-    /** KEY_MFW_CANCEL: the MQB wheel's BACK / widget-switch key (car 2026-11-07: states 1/0,
+    /** KEY_MFW_CANCEL: the development car's wheel: BACK / widget-switch key (car 2026-11-07: states 1/0,
      *  held 3/4/5 like the roller). */
     public static final int KEY_BACK = 41;
     public static final int KEY_VIEW = 35;
@@ -42,7 +42,7 @@ public final class WheelKeys {
      * the stock key handling. Must match keypanel_patch.py --view-dsi.
      *
      * Only on a unit where that patch is installed (viewCode()): without it code 59 is the stock
-     * key MQB 0x22 - absent on the MQB wheel, but a real key on other wheels, and swallowing it
+     * key MQB 0x22 - absent on the development car's wheel, but a real key on other wheels, and swallowing it
      * there would take that key away from the driver.
      */
     private static final int KEYPANEL_VIEW_CODE = 59;
