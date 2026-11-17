@@ -42,6 +42,16 @@ public final class MediaReaderTest {
         if (!"12 Song".equals(ShmemMediaReader.firstLine("12 Song"))) { failed++; System.out.println("  FAIL line without newline"); }
         if (!"12 Song".equals(ShmemMediaReader.firstLine("12 Song\r\n"))) { failed++; System.out.println("  FAIL CR LF"); }
         if (!"".equals(ShmemMediaReader.firstLine("\nx"))) { failed++; System.out.println("  FAIL empty first line"); }
+        // where the covers go
+        String ram = AndroidAutoTarget.COVER_RAM_DIR, icab = AndroidAutoTarget.ICAB_TMP;
+        if (!ram.equals(AndroidAutoTarget.coverDirFor("/var/app/icab/tmp", true, false))) { failed++; System.out.println("  FAIL cache on the flash -> RAM"); }
+        if (!icab.equals(AndroidAutoTarget.coverDirFor("/ramdisk/var/app/icab/tmp", true, false))) { failed++; System.out.println("  FAIL cache linked into /ramdisk -> cache"); }
+        if (!icab.equals(AndroidAutoTarget.coverDirFor("/dev/shmem/icab", true, false))) { failed++; System.out.println("  FAIL cache in /dev/shmem -> cache"); }
+        if (!ram.equals(AndroidAutoTarget.coverDirFor("/ramdiskX/tmp", true, false))) { failed++; System.out.println("  FAIL prefix must be a whole directory"); }
+        if (!ram.equals(AndroidAutoTarget.coverDirFor(null, true, false))) { failed++; System.out.println("  FAIL unknown path -> RAM"); }
+        if (!ram.equals(AndroidAutoTarget.coverDirFor("/ramdisk/x", false, false))) { failed++; System.out.println("  FAIL not writable -> RAM"); }
+        if (!icab.equals(AndroidAutoTarget.coverDirFor("/var/app/icab/tmp", true, true))) { failed++; System.out.println("  FAIL cover-on-flash -> cache"); }
+        if (!ram.equals(AndroidAutoTarget.coverDirFor("/var/app/icab/tmp", false, true))) { failed++; System.out.println("  FAIL forced but not writable -> RAM"); }
         System.out.println("media session field     " + (failed == 0 ? "ok" : "FAILED"));
         System.out.println(failed == 0 ? "all tests passed" : "TESTS FAILED");
         if (failed != 0) {

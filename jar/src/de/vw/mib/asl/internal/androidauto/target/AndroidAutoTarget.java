@@ -443,20 +443,40 @@ public class AndroidAutoTarget
         }
     }
 
-    // Pick (once, cached) a directory we can write AND the picture server can read: prefer the VW HMI
-    // image cache /var/app/icab/tmp (the cluster reads from there); else fall back to /dev/shmem (RAM).
+    // Where the covers go (once, cached). A new file every track, so it must be RAM: the unit's
+    // root file system is its flash (mount, car 2026-11-17: / on hd0t177, qnx6; RAM only on
+    // /ramdisk and /dev/shmem). The VW HMI image cache /var/app/icab/tmp is used only when it
+    // really lies in RAM; else /dev/shmem. COVER_ON_FLASH_FILE brings the old choice back, should
+    // the picture server not read covers from /dev/shmem (not verified on the car yet).
+    static final String ICAB_TMP = "/var/app/icab/tmp";
+    static final String COVER_RAM_DIR = "/dev/shmem";
+    static final String COVER_ON_FLASH_FILE = "/tsd/var/aatokombi/cover-on-flash";
+
+    /** The decision itself: the image cache only if it is writable and in RAM (or forced). */
+    static String coverDirFor(String icabRealPath, boolean icabWritable, boolean forceIcab) {
+        if (!icabWritable) {
+            return COVER_RAM_DIR;
+        }
+        if (forceIcab) {
+            return ICAB_TMP;
+        }
+        String r = (icabRealPath != null) ? icabRealPath : "";
+        return (r.startsWith("/ramdisk/") || r.startsWith("/dev/shmem/") || r.equals("/dev/shmem"))
+                ? ICAB_TMP : COVER_RAM_DIR;
+    }
+
     private String coverDir() {
         if (coverDirCached != null) {
             return coverDirCached;
         }
-        String tmp = "/var/app/icab/tmp";
-        try { new java.io.File(tmp).mkdirs(); } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#5", t); }
-        coverDirCached = dirWritable(tmp) ? tmp : "/dev/shmem";
-        // INFO, once: where the covers go and what that path really is (a link into /dev/shmem
-        // shows here), so the log answers whether this is RAM.
-        String real = coverDirCached;
-        try { real = new java.io.File(coverDirCached).getCanonicalPath(); } catch (Throwable t) { real = "?"; }
-        MIBLogger.getInstance().info("cover art is staged in " + coverDirCached + " (real path " + real + ")");
+        try { new java.io.File(ICAB_TMP).mkdirs(); } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#5", t); }
+        String real = null;
+        try { real = new java.io.File(ICAB_TMP).getCanonicalPath(); } catch (Throwable t) { real = null; }
+        boolean force = false;
+        try { force = new java.io.File(COVER_ON_FLASH_FILE).exists(); } catch (Throwable t) { force = false; }
+        coverDirCached = coverDirFor(real, dirWritable(ICAB_TMP), force);
+        MIBLogger.getInstance().info("cover art is staged in " + coverDirCached + " (" + ICAB_TMP + " is "
+                + (real != null ? real : "?") + (force ? ", cover-on-flash set" : "") + ")");
         return coverDirCached;
     }
 
