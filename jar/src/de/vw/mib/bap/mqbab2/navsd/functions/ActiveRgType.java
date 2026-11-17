@@ -1,5 +1,8 @@
 /*
- * Decompiled with CFR 0.152.
+ * Decompiled with CFR 0.152 from the stock MIBHMI class. navsd-shadow deltas (marked
+ * "navsd-shadow delta"): a live re-send hook for AANavReader, the cluster is detected at runtime
+ * (ClusterCaps) instead of a static switch, and with Config.ClusterMap.MODE_CYCLE the cluster's
+ * route-guidance type requests switch the AA cluster video mode (de.aatokombi.ClusterVideo).
  */
 package de.vw.mib.bap.mqbab2.navsd.functions;
 
@@ -185,10 +188,10 @@ ConfigurationServiceListener {
     private static boolean inputParametersValid(ActiveRgType_SetGet activeRgType_SetGet) {
         boolean bl;
         switch (activeRgType_SetGet.rgtype) {
-            case 0: 
-            case 1: 
-            case 2: 
-            case 3: 
+            case 0:
+            case 1:
+            case 2:
+            case 3:
             case 255: {
                 bl = true;
                 break;

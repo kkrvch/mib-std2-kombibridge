@@ -148,8 +148,8 @@ RadioServiceListener {
         MediaService mediaService = this.getMediaService();
         boolean bl = true;
         switch (sourceState_SetGet.stateInfo_Scope) {
-            case 0: 
-            case 1: 
+            case 0:
+            case 1:
             case 4: {
                 mediaService.setRepeatMode(2);
                 break;
@@ -302,7 +302,7 @@ RadioServiceListener {
                         break;
                     }
                     switch (this.getMediaService().getCurrentAudioSource()) {
-                        case 3: 
+                        case 3:
                         case 9: {
                             bl = false;
                             break block0;
@@ -333,7 +333,7 @@ RadioServiceListener {
     private void setStateInfoForMedia(SourceState_Status sourceState_Status) {
         MediaService mediaService = this.getMediaService();
         switch (mediaService.getCurrentAudioSource()) {
-            case 3: 
+            case 3:
             case 9: {
                 sourceState_Status.stateInfo = 0;
                 break;
@@ -381,7 +381,7 @@ RadioServiceListener {
     private void setStateInfoScopeForMedia(SourceState_Status sourceState_Status) {
         MediaService mediaService = this.getMediaService();
         switch (sourceState_Status.stateInfo) {
-            case 1: 
+            case 1:
             case 2: {
                 if (mediaService.areSubfoldersIncluded()) {
                     sourceState_Status.stateInfo_Scope = 5;
@@ -390,7 +390,7 @@ RadioServiceListener {
                 sourceState_Status.stateInfo_Scope = 4;
                 break;
             }
-            case 3: 
+            case 3:
             case 4: {
                 int n = mediaService.getRepeatMode();
                 if (n == 2) {
@@ -497,13 +497,13 @@ RadioServiceListener {
         boolean bl;
         boolean bl2;
         switch (sourceState_SetGet.stateInfo) {
-            case 0: 
-            case 1: 
-            case 2: 
-            case 3: 
-            case 4: 
-            case 5: 
-            case 6: 
+            case 0:
+            case 1:
+            case 2:
+            case 3:
+            case 4:
+            case 5:
+            case 6:
             case 7: {
                 bl2 = true;
                 break;
@@ -513,14 +513,14 @@ RadioServiceListener {
             }
         }
         switch (sourceState_SetGet.stateInfo_Scope) {
-            case 0: 
-            case 1: 
-            case 2: 
-            case 3: 
-            case 4: 
-            case 5: 
-            case 6: 
-            case 7: 
+            case 0:
+            case 1:
+            case 2:
+            case 3:
+            case 4:
+            case 5:
+            case 6:
+            case 7:
             case 8: {
                 bl = true;
                 break;
@@ -567,7 +567,7 @@ RadioServiceListener {
                 this.manualModeActive = false;
                 break;
             }
-            case 3: 
+            case 3:
             case 4: {
                 if (!bl) break;
                 this.setManualTuneState(2);

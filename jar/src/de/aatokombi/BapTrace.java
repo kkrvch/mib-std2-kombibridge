@@ -28,6 +28,7 @@ public final class BapTrace {
         sb.append('}');
     }
 
+    /** Log one cluster request to a shadowed function, with the request's fields; DEBUG only. */
     public static void log(String function, String request, Object entity) {
         if (Config.Advanced.LOG_LEVEL > de.adi961.miblogger.MIBLogger.DEBUG) {
             return;

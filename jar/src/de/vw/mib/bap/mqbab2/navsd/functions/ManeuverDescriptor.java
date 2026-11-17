@@ -1,5 +1,8 @@
 /*
- * Decompiled with CFR 0.152.
+ * Decompiled with CFR 0.152 from the stock MIBHMI class. navsd-shadow deltas (marked
+ * "navsd-shadow delta"): a live re-send hook (poke) for AANavReader, and while Android Auto guides
+ * the manoeuvre arrows (main arrow, direction, junction geometry, the small second arrow) come from
+ * NavState instead of the unit's own nav engine.
  */
 package de.vw.mib.bap.mqbab2.navsd.functions;
 
@@ -82,16 +85,16 @@ NavigationServiceListener {
         maneuverDescriptor_Status$Maneuver_1.sidestreets.setContent(string);
         maneuverDescriptor_Status$Maneuver_1.zLevelGuidance = n3;
         switch (maneuverDescriptor_Status$Maneuver_1.mainElement) {
-            case 1: 
-            case 2: 
-            case 3: 
-            case 4: 
-            case 5: 
-            case 8: 
-            case 9: 
-            case 10: 
-            case 34: 
-            case 35: 
+            case 1:
+            case 2:
+            case 3:
+            case 4:
+            case 5:
+            case 8:
+            case 9:
+            case 10:
+            case 34:
+            case 35:
             case 38: {
                 maneuverDescriptor_Status$Maneuver_1.zLevelGuidance = 0;
                 maneuverDescriptor_Status$Maneuver_1.sidestreets.setEmptyString();
@@ -101,16 +104,16 @@ NavigationServiceListener {
                 maneuverDescriptor_Status$Maneuver_1.zLevelGuidance = 0;
                 break;
             }
-            case 17: 
-            case 18: 
-            case 19: 
-            case 20: 
-            case 25: 
-            case 26: 
-            case 27: 
-            case 28: 
-            case 29: 
-            case 30: 
+            case 17:
+            case 18:
+            case 19:
+            case 20:
+            case 25:
+            case 26:
+            case 27:
+            case 28:
+            case 29:
+            case 30:
             case 31: {
                 maneuverDescriptor_Status$Maneuver_1.sidestreets.setEmptyString();
                 break;

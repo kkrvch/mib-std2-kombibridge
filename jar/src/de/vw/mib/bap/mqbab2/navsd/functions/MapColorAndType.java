@@ -1,6 +1,7 @@
 /*
- * Decompiled with CFR 0.152.
- * 
+ * Decompiled with CFR 0.152 from the stock MIBHMI class. navsd-shadow delta: every request from
+ * the cluster is logged (de.aatokombi.BapTrace), behaviour otherwise stock.
+ *
  * Could not load the following classes:
  *  de.vw.mib.bap.datatypes.BAPEntity
  *  de.vw.mib.bap.functions.BAPFunction

@@ -349,7 +349,7 @@ public final class NavMappingTest {
         no ("far, no countdown",        AANavReader.maneuverImminent(5000, 0));
         yes("nothing known at all",     AANavReader.maneuverImminent(0, 0));
         yes("negative = not known",     AANavReader.maneuverImminent(-1, -1));
-	}
+    }
 
     private static String clock(String eta) {
         int[] c = AANavReader.parseEtaClock(eta);
@@ -471,7 +471,7 @@ public final class NavMappingTest {
         eq("exit right 200 -> 192",       AANavReader.renderableDirection(15, 200), 192);
         eq("follow ignores direction",    AANavReader.renderableDirection(11, 77), 77);
     }
-	
+
     // ---- multi-spoke junction schematic (this class itself has no idea what cluster it runs on --
     // the NavCapable gate lives entirely in AANavReader.publishNavsd(), which is exactly why these
     // are plain, host-testable functions of their inputs) ---------------------------------------
@@ -783,7 +783,9 @@ public final class NavMappingTest {
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
                            "directions", "roundabout angles", "imminence",
-						   "next maneuver", "current road", "playback mode", "prepare stage", "eta clock", "i18n", "ring continuity", "double turn", "junction schematic", "carriers", "file lines" };
+                           "next maneuver", "current road", "playback mode", "prepare stage",
+                           "eta clock", "i18n", "ring continuity", "double turn",
+                           "junction schematic", "carriers", "file lines" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {

@@ -1,5 +1,7 @@
 /*
- * Decompiled with CFR 0.152.
+ * Decompiled with CFR 0.152 from the stock MIBHMI class. navsd-shadow deltas (marked
+ * "navsd-shadow delta"): a live re-send hook for AANavReader, and while Android Auto guides the
+ * cluster is told that route guidance is active.
  */
 package de.vw.mib.bap.mqbab2.navsd.functions;
 

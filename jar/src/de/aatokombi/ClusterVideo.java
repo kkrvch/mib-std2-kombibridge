@@ -62,6 +62,7 @@ public final class ClusterVideo {
         syncFlag(VIDEO_OFF_FLAG, !Config.Navigation.ENABLED);
     }
 
+    /** Make the flag file at {@code path} exist ("1") or not, as {@code on} says; never throws. */
     private static void syncFlag(String path, boolean on) {
         try {
             java.io.File f = new java.io.File(path);
@@ -88,6 +89,7 @@ public final class ClusterVideo {
         return session;
     }
 
+    /** The driver's current cluster mode: MODE_AA_MAP, MODE_ARROWS or MODE_STOCK_MAP. */
     public static int mode() {
         return mode;
     }
@@ -116,10 +118,16 @@ public final class ClusterVideo {
     /** The head unit's switch as last seen (0 arrows, 3 map, -1 unknown), recorded always. */
     private static int huType = -1;
 
+    /** Record the head unit's own map/arrows switch (ActiveRgType), for the log only. */
     public static void noteHuSwitch(int rgtype) {
         huType = rgtype;
     }
 
+    /**
+     * The cluster asked for a guidance type (ActiveRgType SetGet): 0 = arrows, else a map. A map
+     * request leaves arrows for the map mode NOT used last time, so the cluster's two-state button
+     * reaches both maps. A request for the type already shown changes nothing.
+     */
     public static synchronized void switchTo(int rgtype) {
         int m;
         if (rgtype == 0) {
@@ -135,6 +143,7 @@ public final class ClusterVideo {
         log("cluster mode -> " + modeName(mode));
     }
 
+    /** The mode's name for the log. */
     public static String modeName(int m) {
         return m == MODE_AA_MAP ? "AA_MAP" : m == MODE_ARROWS ? "ARROWS" : "STOCK_MAP";
     }
@@ -170,6 +179,7 @@ public final class ClusterVideo {
         }
     }
 
+    /** The highest sequence number in the command file (0 when there is none), after an HMI restart. */
     private static int lastSeqInFile() {
         int max = 0;
         FileInputStream in = null;
@@ -199,6 +209,7 @@ public final class ClusterVideo {
         return max;
     }
 
+    /** A DEBUG line in the mod's log; never throws. */
     public static void log(String s) {
         try { MIBLogger.getInstance().debug(s); } catch (Throwable t) {}
     }
@@ -232,6 +243,11 @@ public final class ClusterVideo {
         return new String[]{ flag ? "1" : "0", tick, sess ? "1" : "0" };
     }
 
+    /**
+     * Called on every AANavReader poll: runs a pending mode-key cycle, then (at most every READ_MS)
+     * reads the libgal's cluster state file and updates alive/session and the stock map's
+     * visibility (KombiMap).
+     */
     public static void poll() {
         if (WheelKeys.takeCycleRequest()) {
             if (session) {

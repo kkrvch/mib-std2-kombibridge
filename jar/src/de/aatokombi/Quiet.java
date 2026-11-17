@@ -18,6 +18,7 @@ public final class Quiet {
 
     private Quiet() {}
 
+    /** Count a swallowed exception at {@code where} and log it as the class comment says. */
     public static void note(String where, Throwable t) {
         try {
             int n = count(where, true);

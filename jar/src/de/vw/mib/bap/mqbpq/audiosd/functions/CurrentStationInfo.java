@@ -560,10 +560,10 @@ implements TimerNotifier {
 
     private void setBapCurrentStationInfoInfoTextsForMedia(CurrentStationInfo_Status currentStationInfo_Status) {
         block0 : switch (this.getCurrentAudioSource()) {
-            case 1: 
+            case 1:
             case 4: {
                 switch (this.getCDContentType()) {
-                    case 3: 
+                    case 3:
                     case 4: {
                         int n = this.getDvdChapter();
                         int n2 = this.getDvdChapterCount();
@@ -584,7 +584,7 @@ implements TimerNotifier {
                 this.setBapCurrentStationInfoNoInformationAvailable(currentStationInfo_Status);
                 break;
             }
-            case 7: 
+            case 7:
             case 14: {
                 this.setBapCurrentStationInfoInfoTextsForExternalDevice(currentStationInfo_Status);
                 break;
@@ -596,16 +596,16 @@ implements TimerNotifier {
                 currentStationInfo_Status.infotext_2.setContent(this.getLanguageString(5));
                 break;
             }
-            case 2: 
-            case 5: 
-            case 8: 
-            case 10: 
-            case 11: 
+            case 2:
+            case 5:
+            case 8:
+            case 10:
+            case 11:
             case 13: {
                 this.setBapCurrentStationInfoInfoTextsForExternalDevice(currentStationInfo_Status);
                 break;
             }
-            case 3: 
+            case 3:
             case 9: {
                 this.setBapCurrentStationInfoNoInformationAvailable(currentStationInfo_Status);
                 break;
@@ -644,7 +644,7 @@ implements TimerNotifier {
 
     private void setBapCurrentStationInfoInfoTexts(CurrentStationInfo_Status currentStationInfo_Status) {
         switch (this.lastAudioComponent) {
-            case 2: 
+            case 2:
             case 3: {
                 this.setBapCurrentStationInfoInfoTextsForMedia(currentStationInfo_Status);
                 break;
@@ -679,9 +679,9 @@ implements TimerNotifier {
     private int getBapCurrentStationInfoHandleForRadio() {
         int n;
         switch (this.getCurrentStationInfoBand()) {
-            case 0: 
-            case 1: 
-            case 2: 
+            case 0:
+            case 1:
+            case 2:
             case 3: {
                 n = this.findBapPosIdInReceptionList();
                 break;
@@ -781,7 +781,7 @@ implements TimerNotifier {
 
     public void timerFired(int n) {
         switch (n) {
-            case 1: 
+            case 1:
             case 2: {
                 this.process(-1);
                 break;

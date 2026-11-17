@@ -1,5 +1,8 @@
 /*
- * Decompiled with CFR 0.152.
+ * Decompiled with CFR 0.152 from the stock MIBHMI class. AAtoKombi deltas (marked "AAtoKombi"):
+ * while Android Auto is connected, the media widget's info lines show the AA turn-by-turn line
+ * (set by AANavReader) or the AA now-playing track and progress (set by ShmemMediaReader) instead
+ * of the "Android Auto" label. The PQ shadow (mqbpq) reads the same static holders.
  */
 package de.vw.mib.bap.mqbab2.audiosd.functions;
 
@@ -321,10 +324,10 @@ ExboxServiceListener {
     private void setStationInfoForMedia(CurrentStationInfo_Status currentStationInfo_Status) {
         MediaService mediaService = this.getMediaService();
         block0 : switch (mediaService.getCurrentAudioSource()) {
-            case 1: 
+            case 1:
             case 4: {
                 switch (mediaService.getCDContentType()) {
-                    case 3: 
+                    case 3:
                     case 4: {
                         int n = mediaService.getDvdChapter();
                         int n2 = mediaService.getDvdChapterCount();
@@ -357,24 +360,24 @@ ExboxServiceListener {
                 this.setStationInfoNoInformationAvailable(currentStationInfo_Status);
                 break;
             }
-            case 7: 
+            case 7:
             case 14: {
                 this.setStationInfoForMediaExternalDevice(currentStationInfo_Status);
                 currentStationInfo_Status.quaternaryInformation.setContent("");
                 currentStationInfo_Status.qi_Type = 0;
                 break;
             }
-            case 2: 
-            case 5: 
-            case 6: 
-            case 8: 
-            case 10: 
-            case 11: 
+            case 2:
+            case 5:
+            case 6:
+            case 8:
+            case 10:
+            case 11:
             case 13: {
                 this.setStationInfoForMediaExternalDevice(currentStationInfo_Status);
                 break;
             }
-            case 3: 
+            case 3:
             case 9: {
                 this.setStationInfoNoInformationAvailable(currentStationInfo_Status);
                 break;
@@ -712,7 +715,7 @@ ExboxServiceListener {
                 this.lastAudioComponent = n;
             }
             switch (this.lastAudioComponent) {
-                case 2: 
+                case 2:
                 case 3: {
                     this.setStationInfoForMedia(currentStationInfo_Status);
                     break;

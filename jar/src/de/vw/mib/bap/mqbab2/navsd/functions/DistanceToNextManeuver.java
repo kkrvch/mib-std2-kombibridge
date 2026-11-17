@@ -1,5 +1,8 @@
 /*
- * Decompiled with CFR 0.152.
+ * Decompiled with CFR 0.152 from the stock MIBHMI class. navsd-shadow deltas (marked
+ * "navsd-shadow delta"): a live re-send hook for AANavReader, and while Android Auto guides the
+ * distance to the next manoeuvre comes from NavState (the metres the shim reports) instead of the
+ * unit's own nav engine.
  */
 package de.vw.mib.bap.mqbab2.navsd.functions;
 
@@ -76,27 +79,27 @@ NavigationServiceListener {
         if (iterator.hasNext()) {
             NavigationManeuverDescriptorElement navigationManeuverDescriptorElement = (NavigationManeuverDescriptorElement)iterator.next();
             switch (navigationManeuverDescriptorElement.getMainelement()) {
-                case 3: 
-                case 4: 
-                case 5: 
-                case 13: 
-                case 14: 
-                case 15: 
-                case 16: 
-                case 17: 
-                case 18: 
-                case 19: 
-                case 20: 
-                case 21: 
-                case 22: 
-                case 23: 
-                case 24: 
-                case 25: 
-                case 26: 
-                case 27: 
-                case 32: 
-                case 33: 
-                case 34: 
+                case 3:
+                case 4:
+                case 5:
+                case 13:
+                case 14:
+                case 15:
+                case 16:
+                case 17:
+                case 18:
+                case 19:
+                case 20:
+                case 21:
+                case 22:
+                case 23:
+                case 24:
+                case 25:
+                case 26:
+                case 27:
+                case 32:
+                case 33:
+                case 34:
                 case 35: {
                     n = navigationDistanceToNextManeuver.getDistanceToNextManeuverBargraphOnOff();
                     break;
@@ -118,8 +121,8 @@ NavigationServiceListener {
         if (iterator.hasNext()) {
             NavigationManeuverDescriptorElement navigationManeuverDescriptorElement = (NavigationManeuverDescriptorElement)iterator.next();
             switch (navigationManeuverDescriptorElement.getMainelement()) {
-                case 8: 
-                case 9: 
+                case 8:
+                case 9:
                 case 10: {
                     bl = false;
                     break;

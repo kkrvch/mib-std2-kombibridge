@@ -59,6 +59,7 @@ public final class KombiMap {
         }
     }
 
+    /** Fire the HMI event {@code event} on the ASL thread; never throws. */
     private static void send(final int event) {
         try {
             ASLFrameworkFactory.getASLFrameworkAPI().getServices().getASLThreadSwitch().enqueue(

@@ -203,7 +203,7 @@ class J9ROMMethod:
             args = []
             for i in range(arg_count):
                 args.append(stream.read_u8())
-                
+
             # align
             stream.set((stream.get() + 3) & ~3)
             # stream.read_u32()
@@ -226,7 +226,7 @@ class J9ROMMethod:
             caught_exceptions = []
             thrown_exceptions = []
             bytecode = stream.read_bytes(0)
-            
+
 
         else:
             bytecode_size_low = stream.read_u16()

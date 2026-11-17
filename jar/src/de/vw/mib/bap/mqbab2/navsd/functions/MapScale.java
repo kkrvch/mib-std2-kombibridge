@@ -117,7 +117,7 @@ NavigationServiceListener {
                     return;
                 }
                 switch (n3) {
-                    case 3: 
+                    case 3:
                     case 5: {
                         navigationService.setMapScaleSteps(0, n2);
                         break;

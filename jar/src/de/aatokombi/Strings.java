@@ -71,6 +71,7 @@ public final class Strings {
         return (s != null) ? s : textIn(TABLE[0], key);
     }
 
+    /** The text for {@code key} in {@code row}, or null when the row is too short or the text empty. */
     private static String textIn(String[] row, int key) {
         if (row == null || key < 0 || key + 1 >= row.length) {
             return null;
@@ -79,6 +80,7 @@ public final class Strings {
         return (s != null && s.length() > 0) ? s : null;
     }
 
+    /** The table row for a two-letter language code, or null when there is none. */
     private static String[] rowFor(String lang) {
         if (lang != null) {
             for (int i = 0; i < TABLE.length; i++) {

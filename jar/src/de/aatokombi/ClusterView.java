@@ -40,6 +40,7 @@ public final class ClusterView {
         }
     }
 
+    /** Store a new cluster view state; on a change log it and rewrite the state file. */
     private static synchronized void update(int l, int lm, int rm, int lv, int sp) {
         if (l == large && lm == left && rm == right && lv == lvds && sp == supp) return;
         large = l; left = lm; right = rm; lvds = lv; supp = sp; changes++;
@@ -54,11 +55,13 @@ public final class ClusterView {
         }
     }
 
+    /** A public field of {@code o} by reflection (the struct's class differs between builds). */
     private static Object field(Object o, String name) throws Exception {
         if (o == null) return null;
         return o.getClass().getField(name).get(o);
     }
 
+    /** A boolean field as 1 / 0, or -1 when it is missing or not a boolean. */
     private static int bool(Object o, String name) {
         try {
             Object v = field(o, name);

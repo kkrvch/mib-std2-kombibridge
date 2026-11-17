@@ -81,6 +81,7 @@ public final class WheelKeys {
     private WheelKeys() {}
 
     /** Keyboards logged: all but the touch ones (9 touchpad, 13..16 touchscreens). */
+    /** Whether key events of this keyboard are logged: all but keyboard 9 and keyboards 13..16. */
     private static boolean logged(int keyboard) {
         return keyboard != 9 && (keyboard < 13 || keyboard > 16);
     }
@@ -109,6 +110,7 @@ public final class WheelKeys {
         return true;
     }
 
+    /** Write the View key counter line to /dev/shmem/aa_view_key (diagnostics); never throws. */
     private static void writeView(String s) {
         java.io.FileOutputStream o = null;
         try {
@@ -144,6 +146,7 @@ public final class WheelKeys {
         return false;
     }
 
+    /** A wheel encoder (roller turn) event: only logged (DEBUG), for the keyboards logged() accepts. */
     public static void encoder(int keyboard, int encoder, int steps, int p4, int p5) {
         if (!logged(keyboard)) return;
         ClusterVideo.log("wheel encoder kbd " + keyboard + " enc " + encoder + " steps " + steps + " (" + p4 + "," + p5 + ")");
@@ -162,6 +165,10 @@ public final class WheelKeys {
      */
     private static final int OTHER_INSTANCES = 7;
 
+    /**
+     * Diagnostics at DEBUG only: listen to the key panel instances other than the system one too,
+     * to see on which instance a key arrives.
+     */
     public static void attachOtherInstances(de.vw.mib.asl.framework.api.dsiproxy.DSIProxy proxy, int systemInstance) {
         if (Config.Advanced.LOG_LEVEL > de.adi961.miblogger.MIBLogger.DEBUG) {
             return;

@@ -311,7 +311,7 @@ static void test_curpos(){
 // ---- an over-long distance string must be truncated, not overflow -----------------------------
 static void test_long_dist_text(){
   reset();
-  Buf d; d.v(1,100); d.s(2,"a very long distance string from the phone"); 
+  Buf d; d.v(1,100); d.s(2,"a very long distance string from the phone");
   Buf sd; sd.m(1,d);
   Buf cp; cp.m(1,sd);
   parse_curpos(cp.b,(u32)cp.n);
