@@ -182,15 +182,16 @@ The resulting `dist-probe/libext.google.gal.receiver.so` records callback counte
 The heavy one-shot forensic collector is opt-in with `VIDEO_PROBE_DEEP=1`; it is intended for a
 single controlled diagnostic run and is not the normal probe mode.
 
-Android Auto map on the Active Info Display (experimental) is opt-in with `CLUSTER_SINK=1`. The
-patched libgal advertises a second, cluster-type H.264 display to the phone and passes its stream
+Android Auto map on the Active Info Display (experimental) is switched with `ClusterMap.ENABLED` in
+`jar/src/de/aatokombi/Config.java` (read by `build.sh`; `CLUSTER_SINK=0/1` in the environment
+overrides it). With it the patched libgal advertises a second, cluster-type H.264 display to the phone and passes its stream
 to DisplayManager through shared memory; `native/libkb_dm.so`, preloaded into DisplayManager, sends
 it to the cluster in place of the stock map video. See `native/README.md` (install, off switches,
 risks) and `shim/DESIGN_VIDEO_PIPELINE.md`. If Android Auto stops connecting, put the normal libgal
 back; if the unit resets at boot, remove the hook with `native/install/uninstall_dm_hook.sh`.
 
 ```sh
-CLUSTER_SINK=1 ./build.sh /path/to/your/MIBHMI.jxe /path/to/your/libext.google.gal.receiver.so dist-cluster
+./build.sh /path/to/your/MIBHMI.jxe /path/to/your/libext.google.gal.receiver.so dist-cluster   # ClusterMap.ENABLED = true
 # -> dist-cluster/{AAtoKombi.jar, libext.google.gal.receiver.so, libkb_dm.so, install_dm_hook.sh, uninstall_dm_hook.sh}
 ```
 
@@ -261,8 +262,9 @@ The defaults just work. All build-time switches live in one file —
   Default on. `Media.SHOW_PROGRESS` adds an ASCII playback progress bar (default off);
   `Media.SHOW_COVER_ART` pushes the AA album cover to the cluster (AID / colour Virtual Cockpit
   only; inert on a monochrome cluster; default on). Both need `Media.ENABLED`.
-- `ClusterMap.*` — Android Auto's own map on the AID (needs the CLUSTER_SINK libgal and
-  `libkb_dm.so`): `START_ON_MAP`, `AA_MAP_ONLY_DURING_GUIDANCE`, `MODE_CYCLE`.
+- `ClusterMap.*` — Android Auto's own map on the AID: `ENABLED` (a build switch: the libgal with
+  the map plus `libkb_dm.so`, or the plain libgal), `START_ON_MAP`, `AA_MAP_ONLY_DURING_GUIDANCE`,
+  `MODE_CYCLE`.
 - `Advanced.SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is
   active"* cluster placeholder. Default on. `Advanced.LOG_LEVEL` — log verbosity (`TRACE` …
   `SILENT`).

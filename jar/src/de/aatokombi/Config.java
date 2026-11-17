@@ -23,8 +23,9 @@ import de.adi961.miblogger.MIBLogger;
  * Dependencies between switches ("needs X" = has no effect, or does something unmanaged, without X):
  *   Navigation.*, ManeuverStages.*   need Navigation.ENABLED
  *   Media.SHOW_PROGRESS, SHOW_COVER_ART   need Media.ENABLED
- *   ClusterMap.*                     need Navigation.ENABLED (false = no AA map at all), the
- *                                    CLUSTER_SINK libgal and libkb_dm.so
+ *   ClusterMap.*                     need ClusterMap.ENABLED (the build then makes the libgal
+ *                                    with the AA map and libkb_dm.so) and Navigation.ENABLED
+ *                                    (false = no AA map at all)
  *   Navigation.ENABLED and Media.ENABLED both false -> AAtoKombi feeds nothing to the cluster
  *   (stock label, stock navsd).
  */
@@ -179,6 +180,15 @@ public final class Config {
      */
     public static final class ClusterMap {
         private ClusterMap() {}
+
+        /**
+         * BUILD switch, read by build.sh (not by the jar): true builds the libgal that offers the
+         * phone a cluster display (the "CLUSTER_SINK" libgal) plus native/libkb_dm.so and its
+         * install scripts; false builds the plain libgal (turn-by-turn and media only) and every
+         * other ClusterMap switch is inert. Install the jar and the libgal of the same build. An
+         * explicit CLUSTER_SINK=0/1 in the environment still overrides this.
+         */
+        public static final boolean ENABLED = true;
 
         /**
          * Which cluster view an AA route guidance session STARTS in (BAP ActiveRgType, set once when

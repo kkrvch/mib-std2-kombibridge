@@ -23,7 +23,8 @@
 #
 # Usage:   ./build.sh /path/to/libext.google.gal.receiver.so
 #          VIDEO_PROBE=1 ./build.sh /path/to/libext.google.gal.receiver.so  # capture-only VideoSink probe
-#          CLUSTER_SINK=1 ./build.sh /path/to/libext.google.gal.receiver.so  # cluster video sink experiment
+#          CLUSTER_SINK=1 ./build.sh /path/to/libext.google.gal.receiver.so  # with the AA cluster map
+#          (the top-level build.sh sets CLUSTER_SINK from Config.ClusterMap.ENABLED)
 #          LIBGAL=/path/to/libgal.so ./build.sh
 #
 set -e

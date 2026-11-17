@@ -5,7 +5,13 @@
 # then runs the host tests: a failed test fails the build, so nothing is collected.
 #   JAR_ONLY=1    only the jar (no libgal given to build.sh)
 #   SKIP_TESTS=1  no tests (for a quick experiment; the result is untested)
+#   CLUSTER_SINK  1/0 overrides Config.ClusterMap.ENABLED (AA map libgal + libkb_dm.so)
 set -e
+cd /work
+. /work/tools/config-get.sh
+cluster_sink_choice
+export CLUSTER_SINK
+echo "==> AA map on the AID: CLUSTER_SINK=$CLUSTER_SINK (from $CLUSTER_SINK_FROM)"
 
 echo "==> toolchain"
 echo "    $(javac -version 2>&1 | head -1) / $(clang --version | head -1) / $(ld.lld --version | head -1) / $(python3 --version 2>&1)"
@@ -38,6 +44,7 @@ else
     echo "==> test: $1"
     if sh "$2"; then :; else FAILED="$FAILED $1"; fi
   }
+  run_test "build switches (tests/config)"  /work/tests/config/run.sh
   run_test "protocol decoders (tests/shim)" /work/tests/shim/run.sh
   run_test "cluster video ring (tests/ring)" /work/tests/ring/run.sh
   run_test "jar (tests/jar)"                 /work/tests/jar/run.sh

@@ -9,6 +9,9 @@
 # The host tests run after the build (docker/entrypoint.sh); a failed test stops it before anything
 # is collected. SKIP_TESTS=1 skips them.
 #
+# Whether the libgal gets Android Auto's map on the AID (and libkb_dm.so is built) is a switch in
+# jar/src/de/aatokombi/Config.java: ClusterMap.ENABLED. CLUSTER_SINK=0/1 overrides it.
+#
 # Inputs (from the unit, dumped via the toolbox "Dump AAKombi files" menu item):
 #   MIBHMI.jxe                          the HMI executable (dumped from /tsd/hmi/ifs/)
 #   libext.google.gal.receiver.so       the STOCK GAL library (dumped from /tsd/lib/sal/gal/)
@@ -70,11 +73,17 @@ fi
 stage(){ if [ "$1" -ef "$2" ]; then echo "    (already in place: $2)"; else cp -f "$1" "$2"; fi; }
 [ "$JAR_ONLY" = "1" ] || stage "$GAL" shim/lib/libext.google.gal.receiver.so
 
+# The AA map on the AID (CLUSTER_SINK libgal + libkb_dm.so): Config.ClusterMap.ENABLED, unless
+# CLUSTER_SINK=0/1 is given explicitly.
+. tools/config-get.sh
+cluster_sink_choice
+echo "  AA map on the AID ............... CLUSTER_SINK=$CLUSTER_SINK (from $CLUSTER_SINK_FROM)"
+
 # 3) build BOTH artifacts in the toolchain container (image cached after the first run)
 echo "==> [3/4] running build in container"
 docker run --rm -v "$PWD":/work -w /work --user "$(id -u):$(id -g)" \
   -e HOME=/tmp -e VIDEO_PROBE="${VIDEO_PROBE:-0}" -e VIDEO_PROBE_DEEP="${VIDEO_PROBE_DEEP:-0}" \
-  -e CLUSTER_SINK="${CLUSTER_SINK:-0}" -e JAR_ONLY="$JAR_ONLY" -e SKIP_TESTS="${SKIP_TESTS:-0}" \
+  -e CLUSTER_SINK="$CLUSTER_SINK" -e JAR_ONLY="$JAR_ONLY" -e SKIP_TESTS="${SKIP_TESTS:-0}" \
   -e CLUSTER_DEFINES="${CLUSTER_DEFINES:-}" \
   -e ALLOW_SHADOW_MISMATCH="${ALLOW_SHADOW_MISMATCH:-0}" \
   "$IMAGE" /work/docker/entrypoint.sh

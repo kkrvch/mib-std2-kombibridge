@@ -1,7 +1,7 @@
 # native/ — DisplayManager hook for the Android Auto cluster map
 
 `libkb_dm.so` is loaded into DisplayManager (`tsd.mibstd2.system.displaymanager`) through
-`LD_PRELOAD` in `/tsd/etc/system/cpu.conf`. While the patched libgal (built with `CLUSTER_SINK=1`)
+`LD_PRELOAD` in `/tsd/etc/system/cpu.conf`. While the patched libgal (built with `Config.ClusterMap.ENABLED = true`)
 streams Android Auto's cluster video into `/dev/shmem/aatokombi-cluster-video`
 (`shim/src/cluster_video_shm.h`), DisplayManager's cluster reader gets the phone's H.264 access
 units instead of its own encoder's. TS packing, the ring to the J5, MOST and the cluster's decoder
@@ -39,8 +39,9 @@ bitrate cap is what keeps the MOST channel from overflowing.
 
 ## Build
 
-`CLUSTER_SINK=1 ./build.sh MIBHMI.jxe libext.google.gal.receiver.so dist-cluster` builds it together
-with the jar and libgal (Docker). Stand-alone: `sh native/build.sh` (clang + ld.lld, no QNX SDK).
+`./build.sh MIBHMI.jxe libext.google.gal.receiver.so dist-cluster` builds it together with the jar
+and libgal (Docker) when `Config.ClusterMap.ENABLED` is true (or `CLUSTER_SINK=1` is set).
+Stand-alone: `sh native/build.sh` (clang + ld.lld, no QNX SDK).
 
 ## Install / remove (telnet)
 
