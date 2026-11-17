@@ -264,7 +264,7 @@ The defaults just work. All build-time switches live in one file —
   only; inert on a monochrome cluster; default on). Both need `Media.ENABLED`.
 - `ClusterMap.*` — Android Auto's own map on the AID: `ENABLED` (a build switch: the libgal with
   the map plus `libkb_dm.so`, or the plain libgal), `START_ON_MAP`, `AA_MAP_ONLY_DURING_GUIDANCE`,
-  `MODE_CYCLE`.
+  `HIDE_STREET_ON_AA_MAP` (no street plate above the AA map), `MODE_CYCLE`.
 - `Advanced.SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is
   active"* cluster placeholder. Default on. `Advanced.LOG_LEVEL` — log verbosity (`TRACE` …
   `SILENT`).

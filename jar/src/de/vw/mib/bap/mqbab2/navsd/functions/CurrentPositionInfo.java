@@ -60,7 +60,12 @@ NavigationServiceListener {
         try {
             NavState.Streets st = NavState.streets;           // one read
             String aaRoad = st.currentRoad;
-            if (ClusterCaps.isNavCapable() && NavState.ACTIVE && aaRoad.length() > 0) {
+            if (Config.ClusterMap.HIDE_STREET_ON_AA_MAP && de.aatokombi.ClusterVideo.alive()) {
+                // navsd-shadow delta: AA's own map is on the AID (it has its own street names), so
+                // the plate above it stays empty; ClusterVideo re-sends this when the map comes or
+                // goes. The turn widget's street line (TurnToInfo) is not affected.
+                currentPositionInfo_Status.positionInfo.setContent("");
+            } else if (ClusterCaps.isNavCapable() && NavState.ACTIVE && aaRoad.length() > 0) {
                 // navsd-shadow delta: the AA current road (0x8007 current_road), when the phone names
                 // it. Google Maps does not send it at all (trip dump 2026-10), so without it we fall
                 // through to the stock value below: the unit's own map-matched street, which is what

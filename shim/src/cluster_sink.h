@@ -112,7 +112,7 @@
 // /tsd/var/aatokombi/insets (pass-through) and /tsd/var/aatokombi/insets-1280 (decode).
 #define CLUSTER_PASSTHROUGH_FILE "/tsd/var/aatokombi/passthrough"
 #ifndef CLUSTER_DEC_INSET_TOP
-#define CLUSTER_DEC_INSET_TOP 180
+#define CLUSTER_DEC_INSET_TOP 170
 #endif
 #ifndef CLUSTER_DEC_INSET_BOTTOM
 #define CLUSTER_DEC_INSET_BOTTOM 250
@@ -354,7 +354,8 @@ static void cl_choose_geometry(){
     // Owner's choice 2026-11-13: window 134 110 1010 376 and insets 180 250 500 500 (top bottom
     // left right) - acceptable in every AID view; the fallback until there are per-view layouts
     // (run-time insets: /dev/shmem/aa_cluster_insets). Before: 228 242 134 136 with the window at
-    // y=100 (car 2026-11-10).
+    // y=100 (car 2026-11-10). 2026-11-17: top 170, the cluster's street plate above the AA map is
+    // now empty (Config.ClusterMap.HIDE_STREET_ON_AA_MAP).
     g_geo.ins[0]=CLUSTER_DEC_INSET_TOP;  g_geo.ins[1]=CLUSTER_DEC_INSET_BOTTOM;
     g_geo.ins[2]=CLUSTER_DEC_INSET_LEFT; g_geo.ins[3]=CLUSTER_DEC_INSET_RIGHT;
     // Layout check (diagnostics): /tsd/var/aatokombi/full-frame - no crop, libkb_dm shows the whole
