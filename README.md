@@ -201,6 +201,11 @@ generated shim artifacts and rerun the same command:
 Remove-Item shim/build/navshim.o,shim/build/navshim.so,shim/build/libext.google.gal.receiver.so -Force -ErrorAction SilentlyContinue
 ```
 
+After building, the host tests run in the same container (protocol decoders, cluster video ring,
+jar mappings, the shadow check against your `MIBHMI.jar`, the libgal layout checks); a failed test
+stops the build before anything is copied to `dist/`. `SKIP_TESTS=1 ./build.sh ...` skips them.
+`./build.sh <MIBHMI.jxe> -` builds the jar only, for when the libgal on the unit stays as it is.
+
 Everything runs in Docker: it converts the `.jxe` to a jar, builds the toolchain image (cached
 after the first run), compiles both artifacts inside the container with the repo bind-mounted, and
 drops the two deployables in `dist/`.

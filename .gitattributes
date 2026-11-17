@@ -2,3 +2,15 @@
 *.esd text eol=lf
 *.txt text eol=lf
 *.bat text eol=crlf
+# Line endings: LF in the repository and in every checkout. The shell scripts run on the unit's
+# QNX shell and in the Linux build container, where a CR breaks them.
+* text=auto eol=lf
+
+# Never touched as text
+*.jpg   binary
+*.png   binary
+*.jar   binary
+*.jxe   binary
+*.so    binary
+*.class binary
+*.bin   binary

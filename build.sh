@@ -4,6 +4,10 @@
 # pyelftools needed, just Docker.
 #
 #   ./build.sh <MIBHMI.jxe> <stock libext.google.gal.receiver.so> [outdir=dist]
+#   ./build.sh <MIBHMI.jxe> - [outdir]      jar only (keep the libgal already on the unit)
+#
+# The host tests run after the build (docker/entrypoint.sh); a failed test stops it before anything
+# is collected. SKIP_TESTS=1 skips them.
 #
 # Inputs (from the unit, dumped via the toolbox "Dump AAKombi files" menu item):
 #   MIBHMI.jxe                          the HMI executable (dumped from /tsd/hmi/ifs/)
@@ -23,13 +27,16 @@ cd "$(dirname "$0")"
 IMAGE="aatokombi-build"
 
 JXE="${1:-}"; GAL="${2:-}"; OUT="${3:-dist}"
-usage(){ echo "usage: ./build.sh <MIBHMI.jxe> <stock libext.google.gal.receiver.so> [outdir]"; exit 1; }
+usage(){ echo "usage: ./build.sh <MIBHMI.jxe> <stock libext.google.gal.receiver.so | -> [outdir]"; exit 1; }
 [ -n "$JXE" ] && [ -f "$JXE" ] || usage
-[ -n "$GAL" ] && [ -f "$GAL" ] || usage
+JAR_ONLY=0
+if [ -z "$GAL" ] || [ "$GAL" = "-" ]; then JAR_ONLY=1; else [ -f "$GAL" ] || usage; fi
 command -v docker >/dev/null || { echo "ERROR: docker is required"; exit 1; }
 
 abspath(){ ( cd "$(dirname "$1")" && printf '%s/%s\n' "$(pwd)" "$(basename "$1")"; ); }
-JXE="$(abspath "$JXE")"; GAL="$(abspath "$GAL")"
+JXE="$(abspath "$JXE")"; [ "$JAR_ONLY" = "1" ] || GAL="$(abspath "$GAL")"
+# sha256sum on Linux, shasum on macOS
+sha256(){ if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 mkdir -p "$OUT"; OUT="$(abspath "$OUT")"
 
 # 0) the toolchain image (cached after the first run) — it also runs the jxe2jar converter
@@ -42,8 +49,8 @@ docker build -t "$IMAGE" -f docker/Dockerfile .
 #    Cached, keyed on the .jxe AND the converter sources, so a converter fix re-converts once.
 #    Delete jar/lib/MIBHMI.jar to force a redo.
 mkdir -p jar/lib shim/lib
-JXE_ID="$(shasum -a256 "$JXE" | cut -d' ' -f1)"
-CONV_ID="$(cat tools/jxe2jar/*.py | shasum -a256 | cut -d' ' -f1)"
+JXE_ID="$(sha256 "$JXE" | cut -d' ' -f1)"
+CONV_ID="$(cat tools/jxe2jar/*.py | sha256 | cut -d' ' -f1)"
 STAMP="jar/lib/.MIBHMI.jxe.sha256"
 if [ -f jar/lib/MIBHMI.jar ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$JXE_ID $CONV_ID" ]; then
   echo "==> [2/4] jxe2jar: cached jar/lib/MIBHMI.jar matches this .jxe and converter — skipping"
@@ -61,13 +68,13 @@ fi
 
 # 2) stage the stock libgal into the build's drop location (skip if arg 2 already IS that file)
 stage(){ if [ "$1" -ef "$2" ]; then echo "    (already in place: $2)"; else cp -f "$1" "$2"; fi; }
-stage "$GAL" shim/lib/libext.google.gal.receiver.so
+[ "$JAR_ONLY" = "1" ] || stage "$GAL" shim/lib/libext.google.gal.receiver.so
 
 # 3) build BOTH artifacts in the toolchain container (image cached after the first run)
 echo "==> [3/4] running build in container"
 docker run --rm -v "$PWD":/work -w /work --user "$(id -u):$(id -g)" \
   -e HOME=/tmp -e VIDEO_PROBE="${VIDEO_PROBE:-0}" -e VIDEO_PROBE_DEEP="${VIDEO_PROBE_DEEP:-0}" \
-  -e CLUSTER_SINK="${CLUSTER_SINK:-0}" \
+  -e CLUSTER_SINK="${CLUSTER_SINK:-0}" -e JAR_ONLY="$JAR_ONLY" -e SKIP_TESTS="${SKIP_TESTS:-0}" \
   -e CLUSTER_DEFINES="${CLUSTER_DEFINES:-}" \
   -e ALLOW_SHADOW_MISMATCH="${ALLOW_SHADOW_MISMATCH:-0}" \
   "$IMAGE" /work/docker/entrypoint.sh
@@ -75,17 +82,32 @@ docker run --rm -v "$PWD":/work -w /work --user "$(id -u):$(id -g)" \
 # 4) collect the two deployables
 echo "==> [4/4] collect -> $OUT"
 cp -f jar/build/AAtoKombi.jar                   "$OUT/AAtoKombi.jar"
-cp -f shim/build/libext.google.gal.receiver.so  "$OUT/libext.google.gal.receiver.so"
-if [ "${CLUSTER_SINK:-0}" = "1" ] && [ -f native/build/libkb_dm.so ]; then
+if [ "$JAR_ONLY" = "1" ]; then
+  if [ -f "$OUT/libext.google.gal.receiver.so" ]; then
+    echo "  (the libext.google.gal.receiver.so already in $OUT is from an EARLIER build, not this one)"
+  fi
+else
+  cp -f shim/build/libext.google.gal.receiver.so  "$OUT/libext.google.gal.receiver.so"
+fi
+# libkb_dm.so must come from the same build as the libgal (they share the cluster video memory and
+# its version): one from an earlier CLUSTER_SINK build is taken out rather than left next to these.
+if [ "${CLUSTER_SINK:-0}" = "1" ] && [ "$JAR_ONLY" != "1" ] && [ -f native/build/libkb_dm.so ]; then
   cp -f native/build/libkb_dm.so                "$OUT/libkb_dm.so"
   cp -f native/install/install_dm_hook.sh native/install/uninstall_dm_hook.sh "$OUT/"
   echo "  + libkb_dm.so (DisplayManager hook for the AA cluster map) and its install scripts"
+else
+  for f in libkb_dm.so install_dm_hook.sh uninstall_dm_hook.sh; do
+    if [ -f "${OUT:?}/${f:?}" ]; then
+      rm -f "${OUT:?}/${f:?}"
+      echo "  - $f removed from $OUT (left from an earlier CLUSTER_SINK build)"
+    fi
+  done
 fi
 
 echo
 echo "OK. Ready in $OUT :"
 echo "  AAtoKombi.jar                  -> SD custom/java/AAtoKombi.jar"
-echo "  libext.google.gal.receiver.so  -> SD custom/sal/libext.google.gal.receiver.so"
+[ "$JAR_ONLY" = "1" ] || echo "  libext.google.gal.receiver.so  -> SD custom/sal/libext.google.gal.receiver.so"
 if [ -f "$OUT/libkb_dm.so" ] && [ "${CLUSTER_SINK:-0}" = "1" ]; then
   echo "  libkb_dm.so + install_dm_hook.sh -> FTP to /tmp, then over telnet (native/README.md)"
 fi
