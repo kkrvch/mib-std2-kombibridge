@@ -11,6 +11,9 @@ cd /work
 . /work/tools/config-get.sh
 cluster_sink_choice
 export CLUSTER_SINK
+# the AA map's insets follow Config.ClusterMap.HIDE_PLATE_ON_AA_MAP (compiled into the libgal)
+CLUSTER_DEFINES="${CLUSTER_DEFINES:-} $(cluster_plate_defines)"
+export CLUSTER_DEFINES
 echo "==> AA map on the AID: CLUSTER_SINK=$CLUSTER_SINK (from $CLUSTER_SINK_FROM)"
 
 echo "==> toolchain"

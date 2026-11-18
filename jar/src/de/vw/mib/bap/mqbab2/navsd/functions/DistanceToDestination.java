@@ -169,6 +169,12 @@ NavigationServiceListener {
     }
 
     private void setValidityInformation(DistanceToDestination_Status distanceToDestination_Status) {
+        if (de.aatokombi.Config.ClusterMap.HIDE_PLATE_ON_AA_MAP && de.aatokombi.KombiMap.aaMapShown()) {
+            // navsd-shadow delta: no distance on the plate above AA's own map (KombiMap re-sends
+            // this when the map comes or goes): reported as not valid, like with no route.
+            distanceToDestination_Status.validityInformation.distanceToDestinationValid = false;
+            return;
+        }
         // navsd-shadow delta: the stock asks the unit's OWN route guidance, which is not running
         // while AA guides — the same trap that kept the lane row empty. Gate on our own state.
         if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {

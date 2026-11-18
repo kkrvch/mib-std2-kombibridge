@@ -7,6 +7,9 @@
 #   cluster_sink_choice                       -> sets CLUSTER_SINK (1/0) and CLUSTER_SINK_FROM:
 #                                                an explicit CLUSTER_SINK in the environment
 #                                                wins, else Config.ClusterMap.ENABLED decides
+#   cluster_plate_defines                     -> prints the extra libgal define for
+#                                                Config.ClusterMap.HIDE_PLATE_ON_AA_MAP
+#                                                ("-DCLUSTER_PLATE_HIDDEN=1" or nothing)
 #
 # Relies on the one-line declaration style Config.java asks for
 # ("public static final TYPE NAME = value;", the group a class nested at 4 spaces).
@@ -32,4 +35,9 @@ cluster_sink_choice() {
     esac
     CLUSTER_SINK_FROM="Config.ClusterMap.ENABLED"
   fi
+}
+
+cluster_plate_defines() {
+  [ "$(config_get ClusterMap HIDE_PLATE_ON_AA_MAP "$@")" = "true" ] && echo "-DCLUSTER_PLATE_HIDDEN=1"
+  return 0
 }

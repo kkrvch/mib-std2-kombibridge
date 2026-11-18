@@ -86,6 +86,17 @@ SystemServiceListener {
         int n5;
         // navsd-shadow delta. isNavCapable() is not redundant with ACTIVE — it also keeps this MQB
         // function stock on a PQ unit, where AANavReader's own navCapable() answers true.
+        if (de.aatokombi.Config.ClusterMap.HIDE_PLATE_ON_AA_MAP && de.aatokombi.KombiMap.aaMapShown()) {
+            // navsd-shadow delta: no ETA line on the plate above AA's own map (KombiMap re-sends
+            // this when the map comes or goes): reported as not valid, like with no route.
+            timeToDestination_Status.timeInfo.timeInfoType = 0;
+            timeToDestination_Status.validityInformation.timeInfo_MinuteIsValid = false;
+            timeToDestination_Status.validityInformation.timeInfo_HourIsValid = false;
+            timeToDestination_Status.validityInformation.timeInfo_DayIsAvailableToBeDisplayed = false;
+            timeToDestination_Status.validityInformation.timeInfo_MonthIsAvailableToBeDisplayed = false;
+            timeToDestination_Status.validityInformation.timeInfo_YearIsAvailableToBeDisplayed = false;
+            return;
+        }
         if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
             this.setTimeInfoFromAndroidAuto(timeToDestination_Status);
             return;

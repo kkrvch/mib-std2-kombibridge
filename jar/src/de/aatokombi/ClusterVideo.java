@@ -293,12 +293,7 @@ public final class ClusterVideo {
             tickMs = now;
         }
         boolean fresh = now - tickMs < STALE_MS;
-        boolean wasAlive = alive;
         alive = flag && fresh;
-        if (alive != wasAlive && Config.ClusterMap.HIDE_STREET_ON_AA_MAP) {
-            // the street plate above the map is empty only while the AA map is shown
-            try { de.vw.mib.bap.mqbab2.navsd.functions.CurrentPositionInfo.poke(); } catch (Throwable t) { de.aatokombi.Quiet.note("ClusterVideo#2", t); }
-        }
         boolean s = sess && fresh;
         if (s != session) {
             session = s;

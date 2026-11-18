@@ -60,9 +60,9 @@ NavigationServiceListener {
         try {
             NavState.Streets st = NavState.streets;           // one read
             String aaRoad = st.currentRoad;
-            if (Config.ClusterMap.HIDE_STREET_ON_AA_MAP && de.aatokombi.ClusterVideo.alive()) {
+            if (Config.ClusterMap.HIDE_PLATE_ON_AA_MAP && de.aatokombi.KombiMap.aaMapShown()) {
                 // navsd-shadow delta: AA's own map is on the AID (it has its own street names), so
-                // the plate above it stays empty; ClusterVideo re-sends this when the map comes or
+                // the plate above it stays empty; KombiMap re-sends this when the map comes or
                 // goes. The turn widget's street line (TurnToInfo) is not affected.
                 currentPositionInfo_Status.positionInfo.setContent("");
             } else if (ClusterCaps.isNavCapable() && NavState.ACTIVE && aaRoad.length() > 0) {

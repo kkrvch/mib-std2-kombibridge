@@ -41,6 +41,26 @@ public final class KombiMap {
 
     private KombiMap() {}
 
+    /**
+     * Android Auto's map is on the AID: the stock map is hidden for it. Steadier than
+     * ClusterVideo.alive(), which drops out for a second during stream gaps: this one follows the
+     * phone's video only after SHOW_AFTER_MS without it, like the stock map itself.
+     */
+    public static boolean aaMapShown() {
+        return hidden;
+    }
+
+    /** The cluster functions that look different while the AA map is shown (the plate above it). */
+    private static void plateChanged() {
+        if (!Config.ClusterMap.HIDE_PLATE_ON_AA_MAP) {
+            return;
+        }
+        MIBLogger.getInstance().info("cluster plate (street, ETA) " + (hidden ? "hidden: AA map" : "shown"));
+        try { de.vw.mib.bap.mqbab2.navsd.functions.CurrentPositionInfo.poke(); } catch (Throwable t) { Quiet.note("KombiMap#1", t); }
+        try { de.vw.mib.bap.mqbab2.navsd.functions.DistanceToDestination.poke(); } catch (Throwable t) { Quiet.note("KombiMap#2", t); }
+        try { de.vw.mib.bap.mqbab2.navsd.functions.TimeToDestination.poke(); } catch (Throwable t) { Quiet.note("KombiMap#3", t); }
+    }
+
     /** About once a second: is Android Auto's cluster video alive. */
     public static void phoneVideo(boolean video) {
         long now = System.currentTimeMillis();
@@ -49,13 +69,16 @@ public final class KombiMap {
             if (!hidden) {
                 MIBLogger.getInstance().info("AA cluster video: stock cluster map hidden");
             }
+            boolean changed = !hidden;
             hidden = true;
             sentMs = now;
             send(SET_INVISIBLE);
+            if (changed) plateChanged();
         } else if (!video && hidden && now - videoMs >= SHOW_AFTER_MS) {
             hidden = false;
             MIBLogger.getInstance().info("AA cluster video ended: stock cluster map shown");
             send(SET_VISIBLE);
+            plateChanged();
         }
     }
 

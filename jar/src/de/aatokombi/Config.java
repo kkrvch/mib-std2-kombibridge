@@ -216,12 +216,16 @@ public final class Config {
         public static final boolean AA_MAP_ONLY_DURING_GUIDANCE = false;
 
         /**
-         * While Android Auto's map is on the AID, the cluster's street plate above the map stays
-         * empty (BAP CurrentPositionInfo): the phone draws its own street names, and the space the
-         * plate takes can go to the map. The turn widget keeps its street line (TurnToInfo). With the
-         * unit's own map (or no AA map at all) the plate is stock. false: the plate always shows.
+         * While Android Auto's map is on the AID, the cluster's plate above the map stays empty: no
+         * street (BAP CurrentPositionInfo) and no ETA line (DistanceToDestination /
+         * TimeToDestination). The phone draws its own, and the map gets the plate's space: the
+         * phone is given the content insets 160 260 480 480 (top bottom left right) instead of
+         * 180 260 500 500. The turn widget keeps its street line (TurnToInfo). In the arrows mode
+         * and with the unit's own map the plate and the ETA are stock. Also a BUILD switch: the
+         * insets are compiled into the libgal (build.sh reads this), so install the jar and the
+         * libgal of the same build. false: the plate always shows.
          */
-        public static final boolean HIDE_STREET_ON_AA_MAP = true;
+        public static final boolean HIDE_PLATE_ON_AA_MAP = true;
 
         /**
          * EXPERIMENTAL. The driver's three cluster modes while Android Auto is connected with the
