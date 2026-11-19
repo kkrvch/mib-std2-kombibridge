@@ -188,7 +188,7 @@ static void parse_next_step(PB s){
 // laneDirection field that can carry only one primary arrow.
 static void parse_lane(PB s){
   if(g_nLane>=MAX_LANES) return;
-  u32 f,w; u8 dirs[MAX_LANE_DIRECTIONS]; int n=0,primary=0,hi=0;
+  u32 f,w; u8 dirs[MAX_LANE_DIRECTIONS]; int n=0,hi=0;
   while(pb_tag(&s,&f,&w)){
     if(f==1&&w==2){
       PB d; if(!pb_sub(&s,&d)) break;
