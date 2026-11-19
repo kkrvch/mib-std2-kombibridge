@@ -56,9 +56,10 @@ public final class KombiMap {
             return;
         }
         MIBLogger.getInstance().info("cluster plate (street, ETA) " + (hidden ? "hidden: AA map" : "shown"));
-        try { de.vw.mib.bap.mqbab2.navsd.functions.CurrentPositionInfo.poke(); } catch (Throwable t) { Quiet.note("KombiMap#1", t); }
-        try { de.vw.mib.bap.mqbab2.navsd.functions.DistanceToDestination.poke(); } catch (Throwable t) { Quiet.note("KombiMap#2", t); }
-        try { de.vw.mib.bap.mqbab2.navsd.functions.TimeToDestination.poke(); } catch (Throwable t) { Quiet.note("KombiMap#3", t); }
+        try { de.vw.mib.bap.mqbab2.navsd.functions.TurnToInfo.poke(); } catch (Throwable t) { Quiet.note("KombiMap#1", t); }
+        try { de.vw.mib.bap.mqbab2.navsd.functions.CurrentPositionInfo.poke(); } catch (Throwable t) { Quiet.note("KombiMap#2", t); }
+        try { de.vw.mib.bap.mqbab2.navsd.functions.DistanceToDestination.poke(); } catch (Throwable t) { Quiet.note("KombiMap#3", t); }
+        try { de.vw.mib.bap.mqbab2.navsd.functions.TimeToDestination.poke(); } catch (Throwable t) { Quiet.note("KombiMap#4", t); }
     }
 
     /** About once a second: is Android Auto's cluster video alive. */

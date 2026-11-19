@@ -60,11 +60,13 @@ NavigationServiceListener {
         try {
             NavState.Streets st = NavState.streets;           // one read
             String aaRoad = st.currentRoad;
-            if (Config.ClusterMap.HIDE_PLATE_ON_AA_MAP && de.aatokombi.KombiMap.aaMapShown()) {
-                // navsd-shadow delta: AA's own map is on the AID (it has its own street names), so
-                // the plate above it stays empty; KombiMap re-sends this when the map comes or
-                // goes. The turn widget's street line (TurnToInfo) is not affected.
-                currentPositionInfo_Status.positionInfo.setContent("");
+            if (Config.ClusterMap.HIDE_PLATE_ON_AA_MAP && de.aatokombi.KombiMap.aaMapShown()
+                    && ClusterCaps.isNavCapable() && NavState.ACTIVE) {
+                // navsd-shadow delta: AA's own map is on the AID, so TurnToInfo (the plate above the
+                // map) stays empty and the turn widget's street comes from here instead - what the
+                // unit's own guidance does on a straight stretch. KombiMap re-sends this when the
+                // map comes or goes.
+                currentPositionInfo_Status.positionInfo.setContent(TurnToInfo.aaStreetLine(this.getNavigationService()));
             } else if (ClusterCaps.isNavCapable() && NavState.ACTIVE && aaRoad.length() > 0) {
                 // navsd-shadow delta: the AA current road (0x8007 current_road), when the phone names
                 // it. Google Maps does not send it at all (trip dump 2026-10), so without it we fall

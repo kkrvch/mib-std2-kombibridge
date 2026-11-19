@@ -74,24 +74,14 @@ NavigationServiceListener {
         // cluster, when AA is inactive, the unit's own next-turn street + signpost instead.
         try {
             if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
-                NavState.Streets st = NavState.streets;       // one read: the line and what to do without it
-                String street = st.street;
-                if (st.wantsCurrentPosition) {
-                    // Not near yet and AA named no current road: the unit's own map-matched street
-                    // (the same value CurrentPositionInfo falls back to), else the next-turn road.
-                    String own = null;
-                    try {
-                        NavigationService ns = this.getNavigationService();
-                        if (ns.getNavigationStatus() == 0) {
-                            own = ns.getCurrentPositionInfo();
-                        }
-                    } catch (Throwable t2) {
-                        own = null;
-                    }
-                    street = (own != null && own.length() > 0) ? own
-                            : st.nextRoad;
-                }
-                turnToInfo_Status.turnToInfo.setContent(street);
+                // navsd-shadow delta: with AA's own map on the AID this line stays empty - it is the
+                // plate above the map (trip 2026-11-19: on a straight stretch the unit's own guidance
+                // sends no turn-to street, and the plate is then gone while the turn widget still
+                // shows the street). The street moves to CurrentPositionInfo, which the widget shows
+                // in its place. KombiMap re-sends both when the AA map comes or goes.
+                boolean plateOff = de.aatokombi.Config.ClusterMap.HIDE_PLATE_ON_AA_MAP
+                        && de.aatokombi.KombiMap.aaMapShown();
+                turnToInfo_Status.turnToInfo.setContent(plateOff ? "" : aaStreetLine(this.getNavigationService()));
                 turnToInfo_Status.signPost.setContent("");
             } else if (ClusterCaps.isNavCapable()) {
                 // the stock path, through the stock method: a subclass may override it
@@ -104,6 +94,27 @@ NavigationServiceListener {
             // leave empty on any failure; never crash navsd
         }
         return turnToInfo_Status;
+    }
+
+    /**
+     * The street line while AA guides (navsd-shadow delta): NavState's street; when that asks for
+     * the current position (manoeuvre not near yet, AA named no current road) the unit's own
+     * map-matched street (the value CurrentPositionInfo falls back to), else the next-turn road.
+     */
+    static String aaStreetLine(NavigationService ns) {
+        NavState.Streets st = NavState.streets;       // one read: the line and what to do without it
+        if (!st.wantsCurrentPosition) {
+            return st.street;
+        }
+        String own = null;
+        try {
+            if (ns != null && ns.getNavigationStatus() == 0) {
+                own = ns.getCurrentPositionInfo();
+            }
+        } catch (Throwable t) {
+            own = null;
+        }
+        return (own != null && own.length() > 0) ? own : st.nextRoad;
     }
 
     public void getProperty(BAPEntity bAPEntity, PropertyListener propertyListener) {
