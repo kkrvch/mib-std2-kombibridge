@@ -133,7 +133,24 @@ ConfigurationServiceListener {
     private static int lastMapSwitchState = -1;
 
     private static boolean aaCycle() {
-        return Config.ClusterMap.MODE_CYCLE && ClusterCaps.isNavCapable() && ClusterVideo.session();
+        return Config.ClusterMap.MODE_CYCLE && ClusterCaps.isNavCapable() && ClusterVideo.session()
+                && !unitGuides();
+    }
+
+    /**
+     * The unit's OWN route guidance runs (navsd-shadow delta): then ActiveRgType is stock, also with
+     * an AA session open. Trip 2026-11-19: starting the unit's guidance with AA connected froze
+     * the stock cluster map until the map/arrows button was pressed (cause not proven; the mode
+     * cycle overriding the stock rgtype is the suspect).
+     */
+    private static boolean unitGuides() {
+        ActiveRgType i = INSTANCE;
+        if (i == null) return false;
+        try {
+            return i.getNavigationService().getRouteGuidanceState() == 1;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     public void setGetProperty(BAPEntity bAPEntity, PropertyListener propertyListener) {
