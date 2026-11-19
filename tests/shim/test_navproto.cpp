@@ -461,6 +461,19 @@ static void test_long_road(){
         std::strlen(g_st.road), sizeof(g_st.road)-1);
 }
 
+// str_fit (also the media strings' copy, rd_str_to): a cut never leaves half a UTF-8 letter.
+static void test_utf8_fit(){
+  char d[8];
+  str_fit(d, sizeof d, "abc");                     CHECK(std::strcmp(d,"abc")==0, "short: '%s'", d);
+  str_fit(d, sizeof d, "abcdefghij");              CHECK(std::strcmp(d,"abcdefg")==0, "ascii cut: '%s'", d);
+  str_fit(d, sizeof d, "\xd0\x90\xd0\x91\xd0\x92\xd0\x93");   // 4 Cyrillic letters, 8 bytes
+  CHECK(std::strcmp(d,"\xd0\x90\xd0\x91\xd0\x92")==0, "2-byte letters cut whole: len %zu", std::strlen(d));
+  str_fit(d, sizeof d, "abcd\xe2\x80\xa6x");      // "abcd" + 3-byte ellipsis + x: 7 bytes fit exactly
+  CHECK(std::strcmp(d,"abcd\xe2\x80\xa6")==0, "3-byte letter that fits: len %zu", std::strlen(d));
+  str_fit(d, sizeof d, "abcde\xe2\x80\xa6");      // the ellipsis would need byte 8
+  CHECK(std::strcmp(d,"abcde")==0, "3-byte letter cut whole: '%s'", d);
+}
+
 // ---- every truncation of a valid frame must be survivable (ASan catches over-reads) ------------
 static void test_truncations(){
   Buf mv; mv.v(1,8); mv.v(2,2); mv.v(3,270);
@@ -619,6 +632,7 @@ int main(){
     {"snapshot clears stale fields",  test_snapshot_clears},
     {"road sanitising",               test_road_sanitising},
     {"long road truncation",          test_long_road},
+    {"UTF-8 safe cut",                test_utf8_fit},
     {"truncated frames",              test_truncations},
     {"fuzz",                          test_fuzz},
     {"SDP: skip phone Bluetooth",     test_sdp_skip_bluetooth},

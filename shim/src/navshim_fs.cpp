@@ -474,10 +474,12 @@ static void ipc_flush(){
 }
 
 // Copy a CoW std::string's data (data = *(char**)strObj) into a fixed buffer.
+// Cut at a whole UTF-8 character (str_fit): a long Cyrillic title cut mid-letter reached the
+// jar as a broken last character.
 static void rd_str_to(void* strObj, char* dst, int cap){
   const char* r = strObj? *(const char**)strObj : 0;
-  int n=0; if(r){ while(r[n] && n<cap-1){ dst[n]=r[n]; ++n; } }
-  dst[n]=0;
+  if(!r){ dst[0]=0; return; }
+  str_fit(dst, cap, r);
 }
 
 // ===== listener: vtable as libgal expects (+4 dtor, +8 status, +0xc nextturn, +0x10 dist) =====
