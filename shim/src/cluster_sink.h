@@ -111,15 +111,15 @@
 // used while /tsd/var/aatokombi/passthrough exists (read at each connection). Insets of each mode:
 // /tsd/var/aatokombi/insets (pass-through) and /tsd/var/aatokombi/insets-1280 (decode).
 #define CLUSTER_PASSTHROUGH_FILE "/tsd/var/aatokombi/passthrough"
-// Decode-mode content insets (top bottom left right), owner's choice 2026-11-18: 180 260 500 500
-// while the cluster's plate (street, ETA) is drawn above the map, 160 260 480 480 when the jar
+// Decode-mode content insets (top bottom left right), owner's choice 2026-11-18 (hidden: 2026-11-20): 180 260 500 500
+// while the cluster's plate (street, ETA) is drawn above the map, 150 260 470 470 when the jar
 // leaves it empty (Config.ClusterMap.HIDE_PLATE_ON_AA_MAP; build.sh passes -DCLUSTER_PLATE_HIDDEN=1).
 #ifndef CLUSTER_PLATE_HIDDEN
 #define CLUSTER_PLATE_HIDDEN 0
 #endif
 #if CLUSTER_PLATE_HIDDEN
-#define CLUSTER_DEC_INSET_TOP_DEF 160
-#define CLUSTER_DEC_INSET_SIDE_DEF 480
+#define CLUSTER_DEC_INSET_TOP_DEF 150
+#define CLUSTER_DEC_INSET_SIDE_DEF 470
 #else
 #define CLUSTER_DEC_INSET_TOP_DEF 180
 #define CLUSTER_DEC_INSET_SIDE_DEF 500

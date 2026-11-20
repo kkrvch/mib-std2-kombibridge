@@ -221,7 +221,7 @@ public final class Config {
          * CurrentPositionInfo under FOLLOW_STREET and, as an experiment, from TurnToInfo's sign-post
          * field (at most 31 bytes) for the other manoeuvres) and no ETA line
          * (DistanceToDestination / TimeToDestination). The phone draws its own, and the map gets the plate's space: the
-         * phone is given the content insets 160 260 480 480 (top bottom left right) instead of
+         * phone is given the content insets 150 260 470 470 (top bottom left right) instead of
          * 180 260 500 500. The turn widget keeps its street line. In the arrows mode
          * and with the unit's own map the plate and the ETA are stock. Also a BUILD switch: the
          * insets are compiled into the libgal (build.sh reads this), so install the jar and the
