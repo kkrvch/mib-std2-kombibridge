@@ -43,7 +43,17 @@ bitrate cap is what keeps the MOST channel from overflowing.
 and libgal (Docker) when `Config.ClusterMap.ENABLED` is true (or `CLUSTER_SINK=1` is set).
 Stand-alone: `sh native/build.sh` (clang + ld.lld, no QNX SDK).
 
-## Install / remove (telnet)
+## Install / remove
+
+With the toolbox: put `libkb_dm.so` next to the patched libgal (SD `custom/sal/`) and run
+**Enable AAtoKombi**; **Disable AAtoKombi** removes it. The toolbox runs the same checks as the
+telnet installer below (including the self check) and installs the rest without the hook when the
+check fails. The toolbox's **Dump files** item also copies `cpu.conf`, the DisplayManager binary,
+`libOpenMAXAL.so.1`, `libtsd.common.so` and `libmmrndclient.so.1` - the files this hook is tied to
+(see the next section).
+
+By hand over telnet (the build no longer puts these scripts into `dist/`; take them from
+`native/install/`; `FORCE=1` is only available here):
 
 ```sh
 # FTP libkb_dm.so and install_dm_hook.sh / uninstall_dm_hook.sh to /tmp first

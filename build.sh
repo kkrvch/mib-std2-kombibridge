@@ -19,6 +19,7 @@
 # Outputs (copy straight onto the SD):
 #   <outdir>/AAtoKombi.jar                  -> custom/java/AAtoKombi.jar
 #   <outdir>/libext.google.gal.receiver.so  -> custom/sal/libext.google.gal.receiver.so  (patched)
+#   <outdir>/libkb_dm.so                    -> custom/sal/libkb_dm.so  (only with the AA map on the AID)
 #
 # Pipeline:
 #   MIBHMI.jxe --(tools/jxe2jar, in Docker)--> MIBHMI.jar --+
@@ -100,12 +101,19 @@ else
 fi
 # libkb_dm.so must come from the same build as the libgal (they share the cluster video memory and
 # its version): one from an earlier CLUSTER_SINK build is taken out rather than left next to these.
+# The toolbox's Enable AAtoKombi installs it when it lies next to the libgal (custom/sal/ on the SD);
+# the telnet scripts in native/install/ are not copied any more (an old copy in $OUT is removed).
+for f in install_dm_hook.sh uninstall_dm_hook.sh; do
+  if [ -f "${OUT:?}/${f:?}" ]; then
+    rm -f "${OUT:?}/${f:?}"
+    echo "  - $f removed from $OUT (the toolbox installs libkb_dm.so now)"
+  fi
+done
 if [ "${CLUSTER_SINK:-0}" = "1" ] && [ "$JAR_ONLY" != "1" ] && [ -f native/build/libkb_dm.so ]; then
   cp -f native/build/libkb_dm.so                "$OUT/libkb_dm.so"
-  cp -f native/install/install_dm_hook.sh native/install/uninstall_dm_hook.sh "$OUT/"
-  echo "  + libkb_dm.so (DisplayManager hook for the AA cluster map) and its install scripts"
+  echo "  + libkb_dm.so (DisplayManager hook for the AA cluster map)"
 else
-  for f in libkb_dm.so install_dm_hook.sh uninstall_dm_hook.sh; do
+  for f in libkb_dm.so; do
     if [ -f "${OUT:?}/${f:?}" ]; then
       rm -f "${OUT:?}/${f:?}"
       echo "  - $f removed from $OUT (left from an earlier CLUSTER_SINK build)"
@@ -118,7 +126,7 @@ echo "OK. Ready in $OUT :"
 echo "  AAtoKombi.jar                  -> SD custom/java/AAtoKombi.jar"
 [ "$JAR_ONLY" = "1" ] || echo "  libext.google.gal.receiver.so  -> SD custom/sal/libext.google.gal.receiver.so"
 if [ -f "$OUT/libkb_dm.so" ] && [ "${CLUSTER_SINK:-0}" = "1" ]; then
-  echo "  libkb_dm.so + install_dm_hook.sh -> FTP to /tmp, then over telnet (native/README.md)"
+  echo "  libkb_dm.so                    -> SD custom/sal/libkb_dm.so  (next to the libgal)"
 fi
 echo "Then on the unit: Toolbox -> Customisation -> Navi -> Enable AAtoKombi -> reboot."
 

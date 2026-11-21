@@ -188,11 +188,12 @@ overrides it). With it the patched libgal advertises a second, cluster-type H.26
 to DisplayManager through shared memory; `native/libkb_dm.so`, preloaded into DisplayManager, sends
 it to the cluster in place of the stock map video. See `native/README.md` (install, off switches,
 risks) and `shim/DESIGN_VIDEO_PIPELINE.md`. If Android Auto stops connecting, put the normal libgal
-back; if the unit resets at boot, remove the hook with `native/install/uninstall_dm_hook.sh`.
+back; if the unit resets at boot, the toolbox's Disable AAtoKombi (or its `reset` file on the SD)
+takes the hook out again; over telnet `native/install/uninstall_dm_hook.sh` does the same.
 
 ```sh
 ./build.sh /path/to/your/MIBHMI.jxe /path/to/your/libext.google.gal.receiver.so dist-cluster   # ClusterMap.ENABLED = true
-# -> dist-cluster/{AAtoKombi.jar, libext.google.gal.receiver.so, libkb_dm.so, install_dm_hook.sh, uninstall_dm_hook.sh}
+# -> dist-cluster/{AAtoKombi.jar, libext.google.gal.receiver.so, libkb_dm.so}
 ```
 
 If Docker reports `Operation not permitted` while writing `shim/build/navshim.o`, remove only the
@@ -225,10 +226,14 @@ resolves its per-build addresses from the file you pass, and the jar is rebuilt 
 ### 3. Deploy both artifacts back to the unit (with the toolbox)
 Put the two `dist/` outputs onto the toolbox SD card, then run the toolbox's Enable step:
 - copy `dist/AAtoKombi.jar` to the SD `custom/java/` folder,
-- copy `dist/libext.google.gal.receiver.so` to the SD `custom/sal/...gal/` folder.
+- copy `dist/libext.google.gal.receiver.so` to the SD `custom/sal/` folder,
+- only for the Android Auto map on the cluster: copy `dist/libkb_dm.so` next to it, to `custom/sal/`.
 
 The Enable step then installs the jar onto the HMI `-Xbootclasspath/p` (in `runHMI.sh`) and swaps in
-the patched libgal (keeping a backup of the original).
+the patched libgal (keeping a backup of the original). With `libkb_dm.so` next to the libgal it also
+preloads the DisplayManager hook (after checking it on the unit; if the check fails, the rest is
+installed without it). Without it on the SD, a hook left from an earlier install is removed: it has
+to come from the same build as the libgal.
 
 It's **fully reversible** — the toolbox's Disable removes the jar from the bootclasspath and
 restores the original libgal. Nothing is written to flash by the mod itself (the captured data
