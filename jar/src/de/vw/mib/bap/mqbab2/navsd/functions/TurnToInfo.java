@@ -74,19 +74,15 @@ NavigationServiceListener {
         // cluster, when AA is inactive, the unit's own next-turn street + signpost instead.
         try {
             if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
-                // navsd-shadow delta: with AA's own map on the AID the turnToInfo field stays empty -
-                // it is the plate above the map (trip 2026-11-19: on a straight stretch the unit's own
-                // guidance sends no turn-to street, and the plate is gone while the turn widget still
-                // shows the street; trip 2026-11-20: with it empty the plate is gone). The widget
-                // shows CurrentPositionInfo under FOLLOW_STREET only, so for the other manoeuvres the
-                // street goes into the signPost field (EXPERIMENT 2026-11-20: whether the widget shows
-                // the sign post and the plate does not). KombiMap re-sends this when the map comes or
-                // goes.
+                // navsd-shadow delta: with AA's own map on the AID this line stays empty - it is the
+                // plate above the map (trip 2026-11-19: on a straight stretch the unit's own guidance
+                // sends no turn-to street, and the plate is then gone while the turn widget still
+                // shows the street). The street moves to CurrentPositionInfo, which the widget shows
+                // in its place. KombiMap re-sends both when the AA map comes or goes.
                 boolean plateOff = de.aatokombi.Config.ClusterMap.HIDE_PLATE_ON_AA_MAP
                         && de.aatokombi.KombiMap.aaMapShown();
-                String street = aaStreetLine(this.getNavigationService());
-                turnToInfo_Status.turnToInfo.setContent(plateOff ? "" : street);
-                turnToInfo_Status.signPost.setContent(plateOff ? street : "");
+                turnToInfo_Status.turnToInfo.setContent(plateOff ? "" : aaStreetLine(this.getNavigationService()));
+                turnToInfo_Status.signPost.setContent("");
             } else if (ClusterCaps.isNavCapable()) {
                 // the stock path, through the stock method: a subclass may override it
                 this.setTurnToInfoStatusData(turnToInfo_Status);
