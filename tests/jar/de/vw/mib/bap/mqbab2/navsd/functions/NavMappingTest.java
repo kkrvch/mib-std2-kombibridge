@@ -462,7 +462,11 @@ public final class NavMappingTest {
         eq("prepare sharp left -> 64",    AANavReader.prepareDirection(28, 96), 64);
         eq("prepare sharp right -> 192",  AANavReader.prepareDirection(28, 160), 192);
         eq("prepare straight stays 0",    AANavReader.prepareDirection(28, 0), 0);
-        eq("prepare ring untouched",      AANavReader.prepareDirection(29, 224), 224);
+        eq("prepare ring slight right -> 192", AANavReader.prepareDirection(29, 224), 192);
+        eq("prepare ring straight stays 0",    AANavReader.prepareDirection(29, 0), 0);
+        eq("prepare ring back -> 0",           AANavReader.prepareDirection(29, 128), 0);
+        eq("prepare square left -> 64",        AANavReader.prepareDirection(30, 32), 64);
+        eq("prepare ring renderable set",      AANavReader.renderableDirection(29, 200), 192);
         eq("prepare u-turn 192",          AANavReader.prepareDirection(31, 192), 192);
         eq("ring 14 -> 16",               AANavReader.renderableDirection(21, 14), 16);
         eq("ring 250 -> 0",               AANavReader.renderableDirection(21, 250), 0);

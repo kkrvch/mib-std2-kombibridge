@@ -376,7 +376,11 @@ public final class AANavReader implements Runnable {
      * Guidance.doPrepareTurn / doPrepareUTurn) knows PREPARE_TURN only at 0 / 64 / 192 and
      * PREPARE_UTURN only at 64 / 192 -- anything else draws NOTHING, which the AID did for every
      * slight (224/32) and sharp (96/160) turn in the prepare stage (2026-10). So the turn's own
-     * direction is folded onto its side; PREPARE_ROUNDABOUT / PREPARE_SQUARE ignore it anyway.
+     * direction is folded onto its side.
+     * PREPARE_ROUNDABOUT / PREPARE_SQUARE: the HMI renderer ignores their direction, but the AID
+     * drew no PREPARE_ROUNDABOUT at 224 (trip 2026-11-21, 51 times); the owner remembers it drawn
+     * before. The AID's own rule is unknown; they are folded like PREPARE_TURN (0 / 64 / 192), the
+     * directions of the usual roundabout exits (assumption, to be checked on the car).
      */
     // Directions each glyph has an image for, from the stock renderer (MIBHMI de.vw.mib.widgets.Guidance
     // do<Glyph>()); any other direction draws nothing at all. null = the glyph ignores direction.
@@ -393,7 +397,7 @@ public final class AANavReader implements Runnable {
             case 21: case 22: case 23: case 24: return DIRS_RING;         // ROUNDABOUT_TRS_*, SQUARE_TRS_*
             case 12: case 19: case 25: case 31:
             case 34: case 35:                   return DIRS_SIDES;        // CHANGE_LANE, FORK_2, UTURN, PREPARE_UTURN, MICHIGAN, DOUBLE
-            case 20: case 28:                   return DIRS_SIDES_AHEAD;  // FORK_3, PREPARE_TURN
+            case 20: case 28: case 29: case 30: return DIRS_SIDES_AHEAD;  // FORK_3, PREPARE_TURN/ROUNDABOUT/SQUARE
             case 15: case 32:                   return DIRS_EXIT_RIGHT;   // EXIT_RIGHT(_RAMP)
             case 16: case 33:                   return DIRS_EXIT_LEFT;    // EXIT_LEFT(_RAMP)
             default:                            return null;
@@ -423,12 +427,14 @@ public final class AANavReader implements Runnable {
     }
 
     static int prepareDirection(int prepareElement, int direction) {
-        if (prepareElement != MAIN_ELEMENT_PREPARE_TURN && prepareElement != MAIN_ELEMENT_PREPARE_UTURN) {
+        if (prepareElement != MAIN_ELEMENT_PREPARE_TURN && prepareElement != MAIN_ELEMENT_PREPARE_UTURN
+                && prepareElement != MAIN_ELEMENT_PREPARE_ROUNDABOUT
+                && prepareElement != MAIN_ELEMENT_PREPARE_SQUARE) {
             return direction;
         }
         int d = direction & 0xFF;
         if (d == 0 || d == 128) {
-            return (prepareElement == MAIN_ELEMENT_PREPARE_TURN) ? 0 : 64;
+            return (prepareElement == MAIN_ELEMENT_PREPARE_UTURN) ? 64 : 0;
         }
         return (d < 128) ? 64 : 192;
     }
