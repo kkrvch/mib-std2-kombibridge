@@ -217,14 +217,16 @@ public final class Config {
 
         /**
          * While Android Auto's map is on the AID, the cluster's plate above the map stays empty: no
-         * street (BAP TurnToInfo; the turn widget then takes the street from CurrentPositionInfo,
-         * as with the unit's own guidance on a straight stretch) and no ETA line
-         * (DistanceToDestination / TimeToDestination). The phone draws its own, and the map gets the plate's space: the
-         * phone is given the content insets 150 260 470 470 (top bottom left right) instead of
-         * 180 260 500 500. The turn widget keeps its street line. In the arrows mode
-         * and with the unit's own map the plate and the ETA are stock. Also a BUILD switch: the
-         * insets are compiled into the libgal (build.sh reads this), so install the jar and the
-         * libgal of the same build. false: the plate always shows.
+         * street (BAP TurnToInfo) and no ETA line (DistanceToDestination / TimeToDestination). The
+         * phone draws its own, and the map gets the plate's space: the phone is given the content
+         * insets 150 260 470 470 (top bottom left right) instead of 180 260 500 500.
+         * Trade-off: the turn widget shows the street only under the FOLLOW_STREET arrow (it then
+         * reads CurrentPositionInfo, which carries the street); at a manoeuvre it reads TurnToInfo,
+         * the same as the plate, so it has no street there (trips 2026-11-20/21: every TurnToInfo
+         * field shows on the plate). In the arrows mode and with the unit's own map the plate and
+         * the ETA are stock. Also a BUILD switch: the insets are compiled into the libgal
+         * (build.sh reads this), so install the jar and the libgal of the same build.
+         * false: the plate always shows.
          */
         public static final boolean HIDE_PLATE_ON_AA_MAP = true;
 
