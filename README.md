@@ -244,7 +244,7 @@ goes through `/dev/shmem`, a RAM filesystem).
   maneuver + street; play music with no active route → it shows the real Title/Artist/Album.
 - On MQB non-nav clusters, turn the wheel in the Audio menu during guidance to select music
   (NEXT) or navigation (PREVIOUS). Repeated turns in the same direction keep the chosen view;
-  a new route starts with navigation. This works when `SHOW_NAV` and `SHOW_MEDIA` are enabled.
+  a new route starts with navigation. This works when `Navigation.ENABLED` and `Media.ENABLED` are on.
   Nav-capable clusters and separate steering-wheel track buttons retain their normal behavior.
   Wheel view selection is not implemented for the PQ input path.
 - If something's off, check that `/dev/shmem/aa_nav` and `/dev/shmem/aa_media` exist and advance
