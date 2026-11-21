@@ -290,6 +290,6 @@ public final class Config {
          * log is then also mirrored to /dev/shmem/aatokombi.log (the newest 1..2 MB are kept, see
          * MIBLogger). All of this is RAM of the head unit: a build for everyday use is INFO.
          */
-        public static final int LOG_LEVEL = MIBLogger.DEBUG;
+        public static final int LOG_LEVEL = MIBLogger.INFO;
     }
 }
