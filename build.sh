@@ -80,6 +80,21 @@ stage(){ if [ "$1" -ef "$2" ]; then echo "    (already in place: $2)"; else cp -
 cluster_sink_choice
 echo "  AA map on the AID ............... CLUSTER_SINK=$CLUSTER_SINK (from $CLUSTER_SINK_FROM)"
 
+# Build outputs another user left behind (build.ps1 runs its container as root, there is no
+# --user on Windows) cannot be replaced by the build below, which runs as this user. They are only
+# build output, so they are removed - as root, in the same image - and rebuilt.
+STALE=""
+for d in jar/build shim/build native/build; do
+  [ -e "$d" ] || continue
+  if [ -n "$(find "$d" \( ! -user "$(id -u)" -o -type d ! -writable \) -print -quit 2>/dev/null)" ]; then
+    STALE="$STALE $d"
+  fi
+done
+if [ -n "$STALE" ]; then
+  echo "    removing build output left by another user:$STALE"
+  docker run --rm -v "$PWD":/work -w /work "$IMAGE" rm -rf $STALE
+fi
+
 # 3) build BOTH artifacts in the toolchain container (image cached after the first run)
 echo "==> [3/4] running build in container"
 docker run --rm -v "$PWD":/work -w /work --user "$(id -u):$(id -g)" \
