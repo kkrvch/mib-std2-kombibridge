@@ -271,8 +271,9 @@ The defaults just work. All build-time switches live in one file —
   the map plus `libkb_dm.so`, or the plain libgal), `START_ON_MAP`, `AA_MAP_ONLY_DURING_GUIDANCE`,
   `HIDE_PLATE_ON_AA_MAP` (no street / ETA plate above the AA map, which then gets more room), `MODE_CYCLE`.
 - `Advanced.SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is
-  active"* cluster placeholder. Default on. `Advanced.LOG_LEVEL` — log verbosity (`TRACE` …
-  `SILENT`).
+  active"* cluster placeholder. Default on. `Advanced.DESKTOP_HEAD_UNIT` — present the head unit
+  as Google's Desktop Head Unit, so Android Auto runs sideloaded apps (only with `ClusterMap.ENABLED`;
+  default off). `Advanced.LOG_LEVEL` — log verbosity (`TRACE` … `SILENT`).
 
 Deeper build notes: [`docs/`](docs/) and [`shim/README.md`](shim/README.md).
 

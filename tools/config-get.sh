@@ -10,6 +10,9 @@
 #   cluster_plate_defines                     -> prints the extra libgal define for
 #                                                Config.ClusterMap.HIDE_PLATE_ON_AA_MAP
 #                                                ("-DCLUSTER_PLATE_HIDDEN=1" or nothing)
+#   cluster_dhu_defines                       -> prints the extra libgal define for
+#                                                Config.Advanced.DESKTOP_HEAD_UNIT
+#                                                ("-DCLUSTER_DHU=1" or nothing)
 #
 # Relies on the one-line declaration style Config.java asks for
 # ("public static final TYPE NAME = value;", the group a class nested at 4 spaces).
@@ -39,5 +42,10 @@ cluster_sink_choice() {
 
 cluster_plate_defines() {
   [ "$(config_get ClusterMap HIDE_PLATE_ON_AA_MAP "$@")" = "true" ] && echo "-DCLUSTER_PLATE_HIDDEN=1"
+  return 0
+}
+
+cluster_dhu_defines() {
+  [ "$(config_get Advanced DESKTOP_HEAD_UNIT "$@")" = "true" ] && echo "-DCLUSTER_DHU=1"
   return 0
 }

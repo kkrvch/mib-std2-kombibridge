@@ -280,6 +280,16 @@ public final class Config {
         public static final boolean SUPPRESS_NAV_ACTIVE_PLACEHOLDER = true;
 
         /**
+         * Present the head unit to the phone as Google's Desktop Head Unit (make / model "Google" /
+         * "Desktop Head Unit", the values the MIB2 Toolbox "Android Auto custom apps patch" uses on
+         * MIB2 High): with it Android Auto lets third-party (sideloaded) apps run. Compiled into
+         * the libgal, and only into the one with the AA map on the AID (ClusterMap.ENABLED), which
+         * is the one that rewrites the ServiceDiscoveryResponse. The phone will probably see a new
+         * car. Not verified that current Android Auto versions still honour it.
+         */
+        public static final boolean DESKTOP_HEAD_UNIT = false;
+
+        /**
          * Log verbosity, compiled into the jar: MIBLogger.TRACE | DEBUG | INFO | ERROR | SILENT.
          * This is the sole source of the level.
          *

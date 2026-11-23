@@ -402,17 +402,15 @@ static void cl_load_insets(u32* in4){
 }
 // Head unit identity as Google's Desktop Head Unit (plan item 7), the same values MIB2 Toolbox's
 // "Android Auto custom apps patch" writes into MIB2 High's gal.json: with them the phone lets
-// third-party (sideloaded) apps run on Android Auto. Only while /tsd/var/aatokombi/dhu exists,
-// read at each connection. ServiceDiscoveryResponse fields of this libgal: 2 make, 3 model,
+// third-party (sideloaded) apps run on Android Auto. Only with Config.Advanced.DESKTOP_HEAD_UNIT
+// (build.sh passes -DCLUSTER_DHU=1). ServiceDiscoveryResponse fields of this libgal: 2 make, 3 model,
 // 4 year, 5 vehicle_id, 7 head_unit_make, 8 head_unit_model, 9 sw build, 10 sw version.
 // Not verified that current Android Auto versions still honour it; the phone will probably see
 // a new car.
-#define CLUSTER_DHU_FILE "/tsd/var/aatokombi/dhu"
-static u32 cl_dhu_on(){
-  if(!p_fopen || !p_fclose) return 0;
-  void* f=p_fopen(CLUSTER_DHU_FILE,"r"); if(!f) return 0;
-  p_fclose(f); return 1;
-}
+#ifndef CLUSTER_DHU
+#define CLUSTER_DHU 0
+#endif
+static u32 cl_dhu_on(){ return CLUSTER_DHU ? 1 : 0; }
 static u32 cl_slen(const char* t){ u32 n=0; while(t[n]) n++; return n; }
 static u8* cl_field_str(u8* o,u8* end,u32 field,const char* t){
   u32 n=cl_slen(t); if(o+n+6>end) return 0;

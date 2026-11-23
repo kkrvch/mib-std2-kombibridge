@@ -11,8 +11,9 @@ cd /work
 . /work/tools/config-get.sh
 cluster_sink_choice
 export CLUSTER_SINK
-# the AA map's insets follow Config.ClusterMap.HIDE_PLATE_ON_AA_MAP (compiled into the libgal)
-CLUSTER_DEFINES="${CLUSTER_DEFINES:-} $(cluster_plate_defines)"
+# compiled into the libgal: the AA map's insets follow Config.ClusterMap.HIDE_PLATE_ON_AA_MAP, the
+# head unit identity Config.Advanced.DESKTOP_HEAD_UNIT
+CLUSTER_DEFINES="${CLUSTER_DEFINES:-} $(cluster_plate_defines) $(cluster_dhu_defines)"
 export CLUSTER_DEFINES
 echo "==> AA map on the AID: CLUSTER_SINK=$CLUSTER_SINK (from $CLUSTER_SINK_FROM)"
 

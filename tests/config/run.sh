@@ -40,6 +40,12 @@ check "plate hidden -> CLUSTER_PLATE_HIDDEN=1"  "$(cluster_plate_defines "$T.3")
 sed 's/= true/= false/' "$T.3" > "$T.4"
 check "plate shown -> no define"                "$(cluster_plate_defines "$T.4")" ""
 check "the real Config.java has the plate switch" "$(config_get ClusterMap HIDE_PLATE_ON_AA_MAP | grep -cE '^(true|false)$')" "1"
-rm -f "$T" "$T.2" "$T.3" "$T.4"
+printf '    public static final class Advanced {\n        public static final boolean DESKTOP_HEAD_UNIT = true;\n    }\n' > "$T.5"
+check "DHU on -> CLUSTER_DHU=1"                 "$(cluster_dhu_defines "$T.5")" "-DCLUSTER_DHU=1"
+sed 's/= true/= false/' "$T.5" > "$T.6"
+check "DHU off -> no define"                    "$(cluster_dhu_defines "$T.6")" ""
+check "the plate switch is not the DHU switch"  "$(cluster_dhu_defines "$T.3")" ""
+check "the real Config.java has the DHU switch" "$(config_get Advanced DESKTOP_HEAD_UNIT | grep -cE '^(true|false)$')" "1"
+rm -f "$T" "$T.2" "$T.3" "$T.4" "$T.5" "$T.6"
 [ "$failed" = 0 ] && echo "all tests passed"
 exit $failed
