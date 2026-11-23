@@ -25,19 +25,20 @@ public final class MediaViewRoutingTest {
         caps.setAccessible(true);
         Method navCapable = method("navCapable", new Class[0]);
         Method media = method("publishMedia", new Class[]{Integer.TYPE, Integer.TYPE, Integer.TYPE,
-                String.class, Integer.TYPE, String.class});
+                String.class, Integer.TYPE, String.class, String.class});
         Method nav = method("publishNavsd", new Class[]{Integer.TYPE, Integer.TYPE, Integer.TYPE,
-                Integer.TYPE, String.class, Integer.TYPE, Integer.TYPE});
+                Integer.TYPE, String.class, Integer.TYPE, Integer.TYPE, int[].class, String.class,
+                Boolean.TYPE});
         Method clear = method("clearActive", new Class[0]);
         Field cleared = AANavReader.class.getDeclaredField("cleared");
         cleared.setAccessible(true);
 
         caps.setInt(null, 2); // NON_NAV
         check(!((Boolean)navCapable.invoke(reader, new Object[0])).booleanValue(), "non-nav routing");
-        media.invoke(reader, new Object[]{2, 1, 0, "First Street", 100, "100 m"});
+        media.invoke(reader, new Object[]{2, 1, 0, "First Street", 100, "100 m", null});
         check(MediaViewMode.showNavigation(), "new route defaults to navigation");
         check(MediaViewMode.select(1, 0, 1), "non-nav wheel selects music");
-        media.invoke(reader, new Object[]{2, 1, 0, "Second Street", 80, "80 m"});
+        media.invoke(reader, new Object[]{2, 1, 0, "Second Street", 80, "80 m", null});
         check(!MediaViewMode.showNavigation(), "updates preserve selected music");
         check("Second Street".equals(CurrentStationInfo.navSecondary), "hidden navigation keeps updating");
         cleared.setBoolean(reader, false);
@@ -45,12 +46,12 @@ public final class MediaViewRoutingTest {
         check(CurrentStationInfo.navPrimary == null, "route end clears media navigation");
         check(!MediaViewMode.select(1, 0, 1), "route end disables interception");
 
-        media.invoke(reader, new Object[]{2, 1, 0, "Third Street", 60, "60 m"});
+        media.invoke(reader, new Object[]{2, 1, 0, "Third Street", 60, "60 m", null});
         MediaViewMode.select(1, 0, 1);
         caps.setInt(null, 1); // NAV: retain the normal navigation menu.
         check(((Boolean)navCapable.invoke(reader, new Object[0])).booleanValue(), "nav-capable routing unchanged");
-        nav.invoke(reader, new Object[]{2, 1, 0, 0, "Nav Street", 50, 10});
-        check(NavState.ACTIVE && "Nav Street".equals(NavState.street), "native nav output remains active");
+        nav.invoke(reader, new Object[]{2, 1, 0, 0, "Nav Street", 50, 10, null, "", Boolean.FALSE});
+        check(NavState.ACTIVE && "Nav Street".equals(NavState.streets.street), "native nav output remains active");
         check(!MediaViewMode.select(1, 0, 1), "navsd publisher disables wheel view selection");
         check(MediaViewMode.showNavigation(), "navsd resets stale view choice");
         System.out.println("MediaViewRoutingTest PASS");

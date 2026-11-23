@@ -26,6 +26,20 @@ public final class NavMappingTest {
         }
     }
 
+    private static void eqNull(String what, Object got) {
+        if (got != null) {
+            failed++;
+            System.out.println("  FAIL " + what + ": got '" + got + "', want null");
+        }
+    }
+
+    private static void notNull(String what, Object got) {
+        if (got == null) {
+            failed++;
+            System.out.println("  FAIL " + what + ": got null, want non-null");
+        }
+    }
+
     // ---- lane shape -> VW arrow angle ---------------------------------------------------------
     private static void laneShapes() {
         eq("shape UNKNOWN",      AANavReader.laneShapeToDirection(0), 0);
@@ -87,6 +101,21 @@ public final class NavMappingTest {
         eq("no lane line -> row cleared",
                 AANavReader.packLanes(AANavReader.taggedLine(
                         new String[]{ file[0], "3 90 m", null }, '2'))[0], 0);
+
+        // Current shim encoding: each physical lane carries every direction the phone supplied.
+        // The primary remains the highlighted one so the established media cell stays one glyph.
+        NavState.LaneState combined = AANavReader.packLaneState("v 2 2 2 9 1 7");
+        eq("v2 lane count", combined.lanes[0], 2);
+        eq("v2 combined primary", combined.lanes[1], 64);       // NORMAL_LEFT, highlighted
+        eq("v2 combined guidance", combined.lanes[2], 2);
+        eq("v2 combined directions", combined.directions[0].length, 2);
+        eq("v2 combined second direction", combined.directions[0][1], 64); // NORMAL_LEFT
+        eq("v2 plain primary", combined.lanes[3], 224);          // SLIGHT_RIGHT
+        eq("v2 primary compatibility", AANavReader.packLanes("v 2 2 2 9 1 7")[0], 2);
+
+        String[] v2file = { file[0], "2v 2 2 2 9 1 7", null };
+        eq("v2 lane payload off a whole file", AANavReader.packLaneState(
+                AANavReader.taggedLine(v2file, '2')).directions[0].length, 2);
     }
 
     // ---- packed lanes -> the media widget's text lane row ---------------------------------------
@@ -153,7 +182,7 @@ public final class NavMappingTest {
     // ---- destination -> the row that fills the slot when there are no lanes ---------------------
     private static void destinationRow() {
         eq("the DHU capture",  AANavReader.destinationRow(11460, 2170), "36 min / 11 km");
-        eq("under 10 km keeps the decimal", AANavReader.destinationRow(9430, 600), "10 min / 9,4 km");
+        eq("under 10 km keeps the decimal", AANavReader.destinationRow(9430, 600), "10 min / 9.4 km");
         eq("nearly there",     AANavReader.destinationRow(850, 90), "2 min / 850 m");
         eq("over an hour",     AANavReader.destinationRow(32000, 5100), "1 h 25 min / 32 km");
 
@@ -167,7 +196,9 @@ public final class NavMappingTest {
         eq("trip distance rounds to whole km", AANavReader.formatTripDistance(32499), "32 km");
         eq("trip distance rounds up",          AANavReader.formatTripDistance(32500), "33 km");
         eq("10 km is the switch",              AANavReader.formatTripDistance(10000), "10 km");
-        eq("just under it",                    AANavReader.formatTripDistance(9999), "9,9 km");
+        eq("just under it rounds up to it",    AANavReader.formatTripDistance(9999), "10 km");
+        eq("9949 m keeps the decimal",         AANavReader.formatTripDistance(9949), "9.9 km");
+        eq("9950 m is 10 km, not 10.0",        AANavReader.formatTripDistance(9950), "10 km");
     }
 
     // ---- destination line -> distance / remaining travel time ----------------------------------
@@ -255,6 +286,8 @@ public final class NavMappingTest {
         eq("depart",          AANavReader.mapDirection(1, 3, 0), 0);
         eq("straight",        AANavReader.mapDirection(14, 3, 0), 0);
         eq("arrival",         AANavReader.mapDirection(17, 3, 0), 0);
+        eq("arrival on the left",  AANavReader.mapDirection(17, 1, 0), 64);
+        eq("arrival on the right", AANavReader.mapDirection(17, 2, 0), 192);
 
         eq("slight left",     AANavReader.mapDirection(3, 1, 0), 32);
         eq("slight right",    AANavReader.mapDirection(3, 2, 0), 224);
@@ -302,8 +335,8 @@ public final class NavMappingTest {
     // ---- when the manoeuvre replaces "follow the street" ---------------------------------------
     // 0 means "not said" on both fields; read as "zero away" it would show the manoeuvre all route.
     private static void imminence() {
-        int m = de.aatokombi.Config.MANEUVER_NEAR_METERS;
-        int s = de.aatokombi.Config.MANEUVER_NEAR_SECONDS;
+        int m = de.aatokombi.Config.ManeuverStages.NEAR_METERS;
+        int s = de.aatokombi.Config.ManeuverStages.NEAR_SECONDS;
 
         yes("at the metre gate",        AANavReader.maneuverImminent(m, 0));
         yes("inside the metre gate",    AANavReader.maneuverImminent(m - 1, 0));
@@ -318,6 +351,271 @@ public final class NavMappingTest {
         yes("negative = not known",     AANavReader.maneuverImminent(-1, -1));
     }
 
+    private static String clock(String eta) {
+        int[] c = AANavReader.parseEtaClock(eta);
+        return c == null ? "null" : (c[0] + ":" + c[1]);
+    }
+
+    private static void etaClock() {
+        eq("24 h",              clock("17:42"), "17:42");
+        eq("one-digit hour",    clock("7:51"), "7:51");
+        eq("padded",            clock(" 07:05 "), "7:5");
+        eq("dot separator",     clock("17.42"), "17:42");
+        eq("PM",                clock("5:42 PM"), "17:42");
+        eq("p.m.",              clock("5:42 p.m."), "17:42");
+        eq("12 AM = 0",         clock("12:05 am"), "0:5");
+        eq("12 PM = 12",        clock("12:30 PM"), "12:30");
+        eq("hour out of range", clock("25:00"), "null");
+        eq("13 PM",             clock("13:00 PM"), "null");
+        eq("minutes missing",   clock("17:"), "null");
+        eq("not a time",        clock("tomorrow"), "null");
+        eq("day suffix",        clock("17:42 +1"), "null");
+        eq("empty",             clock(""), "null");
+        eq("null",              clock(null), "null");
+    }
+
+    private static void i18n() {
+        de.aatokombi.Strings.overrideLanguage = "ru";
+        eq("ru turn left",      AANavReader.wordFor(4, 1), "Налево");
+        eq("ru arrive",         AANavReader.wordFor(17, 3), "Финиш");
+        eq("ru rerouting",      AANavReader.streetFor(true, "x"), "Перестроение...");
+        eq("ru row",            AANavReader.destinationRow(32000, 5100), "1 ч 25 мин / 32 км");
+        eq("ru short distance", AANavReader.formatDistance(300), "300 м");
+        de.aatokombi.Strings.overrideLanguage = "en";
+        eq("994 m rounds down to 990 m", AANavReader.formatDistance(994), "990 m");
+        eq("995 m is one kilometre, not 1000 m", AANavReader.formatDistance(995), "1.0 km");
+        eq("999 m", AANavReader.formatDistance(999), "1.0 km");
+        eq("1000 m", AANavReader.formatDistance(1000), "1.0 km");
+        eq("1949 m rounds down", AANavReader.formatDistance(1949), "1.9 km");
+        eq("1950 m rounds up (it used to be cut to 1.9)", AANavReader.formatDistance(1950), "2.0 km");
+        eq("12345 m", AANavReader.formatDistance(12345), "12.3 km");
+        de.aatokombi.Strings.overrideLanguage = "ru";
+        eq("ru: decimal comma", AANavReader.formatDistance(1234), "1,2 км");
+        de.aatokombi.Strings.overrideLanguage = "de";
+        eq("a language without a row: English words and separator", AANavReader.formatDistance(1234), "1.2 km");
+        de.aatokombi.Strings.overrideLanguage = "en";
+        eq("under 10 m stays exact", AANavReader.formatDistance(7), "7 m");
+        eq("ferry boat draws follow-street", AANavReader.mapMainElement(15, 3), 11);
+        eq("ferry train draws follow-street", AANavReader.mapMainElement(16, 1), 11);
+        eq("ferry: no direction", AANavReader.mapDirection(16, 1, 0), 0);
+        de.aatokombi.Strings.overrideLanguage = "ru";
+        de.aatokombi.Strings.overrideLanguage = "de";       // no row yet -> English
+        eq("unknown -> en",     AANavReader.wordFor(4, 2), "Turn right");
+        de.aatokombi.Strings.overrideLanguage = "en";
+        eq("en turn left",      AANavReader.wordFor(4, 1), "Turn left");
+        eq("en unknown event",  AANavReader.wordFor(99, 1), "");
+    }
+
+    private static String ringOut(AANavReader.RingMemory r, int ev, int a, int n) {
+        int[] o = r.apply(ev, 2, a, n);
+        return o[0] + "/" + o[1] + (o[2] == 1 ? " exit-only" : "");
+    }
+
+    private static void ringContinuity() {
+        AANavReader.RingMemory r = new AANavReader.RingMemory();
+        eq("approach: ring step as sent",   ringOut(r, 13, 225, 3), "225/3");
+        eq("on the ring: bare exit keeps it", ringOut(r, 12, 0, 0), "225/3");
+        eq("still on the ring",              ringOut(r, 12, 0, 0), "225/3");
+        eq("next turn untouched",            ringOut(r, 4, 0, 0), "0/0");
+        eq("bare exit after a turn",         ringOut(r, 12, 0, 0), "0/0 exit-only");
+        AANavReader.RingMemory r2 = new AANavReader.RingMemory();
+        eq("exit step with its own data",    ringOut(r2, 12, 90, 1), "90/1");
+        eq("first ever step a bare exit",    ringOut(new AANavReader.RingMemory(), 12, 0, 0), "0/0 exit-only");
+        AANavReader.RingMemory r3 = new AANavReader.RingMemory();
+        ringOut(r3, 11, 270, 2);
+        r3.reset();
+        eq("reset forgets the ring",         ringOut(r3, 12, 0, 0), "0/0 exit-only");
+        // 2GIS: CCW ring (side 2), then its exit step as the CW variant (side 1) with its own data.
+        AANavReader.RingMemory r4 = new AANavReader.RingMemory();
+        r4.apply(13, 2, 225, 1);
+        eq("2GIS exit keeps the ring side",  r4.apply(12, 1, 225, 1)[3], 2);
+        eq("exit after a turn keeps its own", new AANavReader.RingMemory().apply(12, 1, 225, 1)[3], 1);
+    }
+
+    private static void doubleTurn() {
+        eq("left then right",   AANavReader.doubleTurnDirection(13, 1, new int[]{4, 2, 0, 0}), 64);
+        eq("right then left",   AANavReader.doubleTurnDirection(13, 2, new int[]{4, 1, 0, 0}), 192);
+        eq("same side: no",     AANavReader.doubleTurnDirection(13, 2, new int[]{4, 2, 0, 0}), -1);
+        eq("no next step",      AANavReader.doubleTurnDirection(13, 2, null), -1);
+        eq("next is a ring",    AANavReader.doubleTurnDirection(13, 2, new int[]{13, 1, 90, 1}), -1);
+        eq("first is a u-turn", AANavReader.doubleTurnDirection(25, 2, new int[]{4, 1, 0, 0}), -1);
+        eq("slight then sharp", AANavReader.doubleTurnDirection(13, 1, new int[]{5, 2, 0, 0}), 64);
+    }
+
+    private static void prepareStage() {
+        int m = de.aatokombi.Config.ManeuverStages.PREPARE_METERS;
+        int s = de.aatokombi.Config.ManeuverStages.PREPARE_SECONDS;
+        yes("at the prepare metre gate", AANavReader.maneuverPreparing(m, 0));
+        no ("beyond both prepare gates", AANavReader.maneuverPreparing(m + 1, s + 1));
+        yes("prepare time gate",         AANavReader.maneuverPreparing(5000, s));
+        no ("nothing known",             AANavReader.maneuverPreparing(0, 0));
+        eq("turn -> PREPARE_TURN",       AANavReader.prepareElementFor(13), 28);
+        eq("main road -> PREPARE_TURN",  AANavReader.prepareElementFor(14), 28);
+        eq("ring R -> PREPARE_RNDBT",    AANavReader.prepareElementFor(21), 29);
+        eq("ring L -> PREPARE_RNDBT",    AANavReader.prepareElementFor(22), 29);
+        eq("u-turn -> PREPARE_UTURN",    AANavReader.prepareElementFor(25), 31);
+        eq("exit: no prepare glyph",     AANavReader.prepareElementFor(15), -1);
+        eq("arrival: no prepare glyph",  AANavReader.prepareElementFor(3), -1);
+        eq("follow: no prepare glyph",   AANavReader.prepareElementFor(11), -1);
+        eq("prepare slight right -> 192", AANavReader.prepareDirection(28, 224), 192);
+        eq("prepare slight left -> 64",   AANavReader.prepareDirection(28, 32), 64);
+        eq("prepare sharp left -> 64",    AANavReader.prepareDirection(28, 96), 64);
+        eq("prepare sharp right -> 192",  AANavReader.prepareDirection(28, 160), 192);
+        eq("prepare straight stays 0",    AANavReader.prepareDirection(28, 0), 0);
+        eq("prepare ring slight right -> 192", AANavReader.prepareDirection(29, 224), 192);
+        eq("prepare ring straight stays 0",    AANavReader.prepareDirection(29, 0), 0);
+        eq("prepare ring back -> 0",           AANavReader.prepareDirection(29, 128), 0);
+        eq("prepare square left -> 64",        AANavReader.prepareDirection(30, 32), 64);
+        eq("prepare ring renderable set",      AANavReader.renderableDirection(29, 200), 192);
+        eq("prepare u-turn 192",          AANavReader.prepareDirection(31, 192), 192);
+        eq("ring 14 -> 16",               AANavReader.renderableDirection(21, 14), 16);
+        eq("ring 250 -> 0",               AANavReader.renderableDirection(21, 250), 0);
+        eq("turn 224 kept",               AANavReader.renderableDirection(13, 224), 224);
+        eq("fork unspecified 0 -> 64",    AANavReader.renderableDirection(19, 0), 64);
+        eq("exit right 200 -> 192",       AANavReader.renderableDirection(15, 200), 192);
+        eq("follow ignores direction",    AANavReader.renderableDirection(11, 77), 77);
+    }
+
+    // ---- multi-spoke junction schematic (this class itself has no idea what cluster it runs on --
+    // the NavCapable gate lives entirely in AANavReader.publishNavsd(), which is exactly why these
+    // are plain, host-testable functions of their inputs) ---------------------------------------
+    //
+    // JunctionSchematic.snapToNearest()/circularDistance() take an explicit table argument and are
+    // tested here directly against hand-picked tables. buildRoundabout() and buildOrdinary() are
+    // tested against the tables JunctionSchematic actually uses: the fine 22.5-deg roundabout grid
+    // (ROUNDABOUT_ANGLES, every multiple of 16 except 128), the 45-deg TURN grid (TURN_ANGLES) and
+    // the six oblique FOLLOW_STREET positions (FOLLOW_ANGLES: 48, 64, 80, 176, 192, 208).
+    private static void junctionSchematic() {
+        // -- snapToNearest / circularDistance: the shared angle-quantization primitive ------------
+        int[] a45 = { 0, 32, 64, 96, 160, 192, 224 };
+        int[] a22 = { 0, 16, 32, 48, 64, 80, 96, 112, 144, 160, 176, 192, 208, 224, 240 };
+
+        eq("snap exact 0",   JunctionSchematic.snapToNearest(0, a45), 0);
+        eq("snap exact 64",  JunctionSchematic.snapToNearest(64, a45), 64);
+        eq("snap near 100 -> 96 (not 160)", JunctionSchematic.snapToNearest(100, a45), 96);
+        // A tie between two equidistant table entries must resolve deterministically (lower one),
+        // not flap between builds/JIT states.
+        eq("snap tie 16 -> lower neighbour (0)",  JunctionSchematic.snapToNearest(16, a45), 0);
+        eq("snap 128 on the coarse grid",         JunctionSchematic.snapToNearest(128, a45), 96);
+        eq("snap 128 on the fine grid",           JunctionSchematic.snapToNearest(128, a22), 112);
+        // Wraparound across the 0/256 seam.
+        eq("snap wraparound 250 -> 0",            JunctionSchematic.snapToNearest(250, a45), 0);
+        // The result is always one of the table's own entries -- the primitive must not invent a
+        // value that isn't in the table it was given.
+        for (int v = 0; v < 256; v++) {
+            int s = JunctionSchematic.snapToNearest(v, a45);
+            boolean inTable = false;
+            for (int i = 0; i < a45.length; i++) {
+                if (a45[i] == s) { inTable = true; break; }
+            }
+            if (!inTable) {
+                failed++;
+                System.out.println("  FAIL snapToNearest(" + v + ", a45) = " + s + " is not one of a45's own entries");
+            }
+        }
+        eq("circularDistance same",     JunctionSchematic.circularDistance(0, 0), 0);
+        eq("circularDistance opposite", JunctionSchematic.circularDistance(0, 128), 128);
+        eq("circularDistance wraps",    JunctionSchematic.circularDistance(10, 250), 16);
+
+        // -- buildRoundabout (fine 22.5-deg grid, ROUNDABOUT_ANGLES) ---------------------------------
+        // First exit taken (nothing passed): exactly one spoke, at the taken exit's own bearing.
+        String r1 = JunctionSchematic.buildRoundabout(180, 1, true);
+        eq("roundabout exit1 spoke count", r1.length(), 1);
+        eq("roundabout exit1 spoke value", (int) r1.charAt(0), 0);
+
+        // Third exit taken (the 2026-09 field-test case: Google Maps roundabout, effAngle=270 exit=3):
+        // the two passed exits are spread along the shorter arc from the entry (raw 107, 86) and,
+        // on the fine grid, each keeps its own slot -> three distinct spokes {0x70,0x50,0x40}.
+        // The taken exit's own snapped bearing is always last.
+        String r3 = JunctionSchematic.buildRoundabout(270, 3, true);
+        // Right-hand traffic: the two exits passed are on the right and straight ahead.
+        eq("roundabout exit3 (fine grid)", r3, charStr(192, 0, 64));
+        eq("roundabout exit3 taken spoke is last", (int) r3.charAt(r3.length() - 1), 64);
+
+        // The OTHER 2026-09 field-test case (Yandex roundabout, effAngle synthesised from exit=2):
+        // both spokes sit exactly on grid positions, so this is byte-for-byte what was actually
+        // logged on the car ({0xc0,0x00}).
+        String r2 = JunctionSchematic.buildRoundabout(180, 2, true);
+        eq("roundabout exit2 (matches the field log)", r2, charStr(192, 0));
+
+        // No usable bearing at all (angle out of AA's 1..360 range, e.g. AND no exit number to
+        // synthesize one from) -> base-only schematic, i.e. an empty spoke string, never a throw.
+        // 2026-10 field case: Maps exit 3 at 225 deg (front-left), right-hand traffic.
+        eq("roundabout 225/3 ccw", JunctionSchematic.buildRoundabout(225, 3, true), charStr(176, 240, 32));
+        // Left-hand traffic mirrors it: exit 3 on the right, the passed ones left and ahead.
+        eq("roundabout 90/3 cw",   JunctionSchematic.buildRoundabout(90, 3, false), charStr(64, 0, 192));
+        eq("roundabout no angle (0)",   JunctionSchematic.buildRoundabout(0, 3, true), "");
+        eq("roundabout no angle (361)", JunctionSchematic.buildRoundabout(361, 3, true), "");
+
+        // A huge / garbled exit number must still terminate (MAX_PASSED_EXITS clamp) and produce a
+        // string within the BAPString(17) capacity, never an exception or a runaway loop.
+        String huge = JunctionSchematic.buildRoundabout(270, 999, true);
+        if (huge.length() > 17) {
+            failed++;
+            System.out.println("  FAIL roundabout huge exit number overflowed BAPString(17): len=" + huge.length());
+        }
+        eqNoThrowRoundabout(-5, -3);   // negative inputs must not throw either
+
+        // -- buildOrdinary --------------------------------------------------------------------------
+        // Fewer than two known roads -> not worth a schematic -> null, and mainElement must be left
+        // completely alone by the caller (buildOrdinary never reports one back -- there is nothing
+        // to report; it only ever attaches spokes to the mainElement it was given).
+        eqNull("ordinary: no lanes at all",
+                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, null));
+        eqNull("ordinary: one lane only",
+                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, new int[]{ 1, 64, 2 }));
+        eqNull("ordinary: malformed count",
+                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, new int[]{ 5, 64, 0 }));
+
+        // A mainElement this class does not attach spokes to (e.g. SQUARE_TRS_LEFT, which this mod
+        // does not produce, or an arbitrary other value) -> null regardless of how much lane data
+        // there is. This is the point-2 fix: no mainElement is ever chosen or overridden in here.
+        eqNull("ordinary: unsupported mainElement (23, SQUARE_TRS_RIGHT)",
+                JunctionSchematic.buildOrdinary(23, new int[]{ 2, 64, 0, 192, 2 }));
+        eqNull("ordinary: unsupported mainElement (21, ROUNDABOUT_TRS_RIGHT)",
+                JunctionSchematic.buildOrdinary(21, new int[]{ 2, 64, 0, 192, 2 }));
+
+        // Two lanes so close together they snap onto the SAME spoke collapse to one char, which is
+        // just as "not worth it" as only ever having seen one direction.
+        eqNull("ordinary/TURN: lanes collapse to one spoke",
+                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, new int[]{ 2, 0, 2, 16, 0 }));
+
+        // TURN: two genuinely distinct roads -> a 2-spoke schematic, mainElement untouched (there is
+        // no output parameter to touch any more).
+        String turn2 = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, new int[]{ 2, 64, 0, 192, 2 });
+        eq("ordinary/TURN: two distinct lanes", turn2, charStr(64, 192));
+
+        // TURN: three distinct roads, including one that continues straight across (0 is a legal
+        // TURN position too).
+        String turn3 = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN, new int[]{ 3, 0, 2, 32, 0, 96, 0 });
+        eq("ordinary/TURN: three distinct lanes", turn3, charStr(0, 32, 96));
+
+        // One physical lane may legally carry several directions. The selected/highlighted direction
+        // remains its BAP primary arrow, but the complete list must reach the junction geometry.
+        NavState.LaneState combined = AANavReader.packLaneState("v 1 2 2 9");
+        eq("combined lane primary", combined.lanes[1], 64);
+        eq("combined lane BAP alternative", AANavReader.laneSideStreets(combined, 0), charStr(0));
+        eq("ordinary/TURN: one combined lane supplies two roads",
+                JunctionSchematic.buildOrdinaryFromLaneState(AANavReader.MAIN_ELEMENT_TURN, combined),
+                charStr(0, 64));
+
+        // TURN_ON_MAINROAD shares TURN's exact table.
+        String mainroad = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_TURN_ON_MAINROAD, new int[]{ 2, 64, 0, 192, 2 });
+        eq("ordinary/TURN_ON_MAINROAD: same table as TURN", mainroad, charStr(64, 192));
+
+        // FOLLOW_STREET has six legal oblique positions (48, 64, 80 on the left, 176, 192, 208 on the
+        // right), so two lanes 16 apart on the same side stay two distinct spokes...
+        String followSameSide = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_FOLLOW_STREET, new int[]{ 2, 48, 0, 64, 2 });
+        eq("ordinary/FOLLOW: two lanes, same side", followSameSide, charStr(48, 64));
+        // ...a lane on each side of the road keeps its own exact oblique...
+        String follow2 = JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_FOLLOW_STREET, new int[]{ 2, 80, 0, 176, 2 });
+        eq("ordinary/FOLLOW: obliques on both sides", follow2, charStr(80, 176));
+        // ...and lanes that snap onto one FOLLOW position (straight ahead 0 and 32 both land on 48)
+        // are still "not worth a schematic".
+        eqNull("ordinary/FOLLOW: lanes collapse to one spoke",
+                JunctionSchematic.buildOrdinary(AANavReader.MAIN_ELEMENT_FOLLOW_STREET, new int[]{ 2, 0, 0, 32, 2 }));
+    }
+
     private static void yes(String what, boolean got) {
         if (!got) { failed++; System.out.println("  FAIL " + what + ": expected the manoeuvre"); }
     }
@@ -326,10 +624,176 @@ public final class NavMappingTest {
         if (got) { failed++; System.out.println("  FAIL " + what + ": expected follow-street"); }
     }
 
+    // char values as a String, matching what JunctionSchematic itself builds (a plain StringBuffer
+    // of raw char codes -- no printable text, so this beats writing hand-escaped literals at every
+    // call site above).
+    private static String charStr(int a) {
+        return String.valueOf((char) a);
+    }
+    private static String charStr(int a, int b) {
+        return charStr(a) + charStr(b);
+    }
+    private static String charStr(int a, int b, int c) {
+        return charStr(a) + charStr(b) + charStr(c);
+    }
+
+    private static void nextManeuver() {
+        // IPC line 5 payload
+        int[] n = AANavReader.packNextManeuver("4 1 0 0");
+        eq("line 5 event", n == null ? -1 : n[0], 4);
+        eq("line 5 side",  n == null ? -1 : n[1], 1);
+        eqNull("line 5 absent",    AANavReader.packNextManeuver(null));
+        eqNull("line 5 empty",     AANavReader.packNextManeuver(""));
+        eqNull("line 5 malformed", AANavReader.packNextManeuver("4 x"));
+        eqNull("line 5 truncated", AANavReader.packNextManeuver("4 1 0"));
+        eqNull("line 5 no event",  AANavReader.packNextManeuver("0 3 0 0"));
+
+        int follow = AANavReader.MAIN_ELEMENT_FOLLOW_STREET;
+        // far: maneuver_2 previews the current manoeuvre itself, whatever steps[1] says
+        NavState.NextManeuver f = AANavReader.nextManeuverFor(false, 13, 192, "", new int[]{ 4, 1, 0, 0 });
+        eq("far: previews the current main element", f == null ? -1 : f.mainElement, 13);
+        eq("far: previews the current direction",    f == null ? -1 : f.direction, 192);
+        eqNull("far: no preview of a follow-street",
+                AANavReader.nextManeuverFor(false, follow, 0, "", new int[]{ 4, 1, 0, 0 }));
+        // near: maneuver_2 = steps[1]
+        NavState.NextManeuver x = AANavReader.nextManeuverFor(true, 13, 192, "", new int[]{ 4, 1, 0, 0 });
+        eq("near: steps[1] main element", x == null ? -1 : x.mainElement, 13);
+        eq("near: steps[1] direction (left)", x == null ? -1 : x.direction, AANavReader.mapDirection(4, 1, 0));
+        eqNull("near: no steps[1]", AANavReader.nextManeuverFor(true, 13, 192, "", null));
+        eqNull("near: steps[1] is just straight on",
+                AANavReader.nextManeuverFor(true, 13, 192, "", new int[]{ 14, 3, 0, 0 }));
+        NavState.NextManeuver r = AANavReader.nextManeuverFor(true, 13, 192, "", new int[]{ 13, 2, 270, 2 });
+        eq("near: roundabout as steps[1]", r == null ? -1 : r.mainElement, AANavReader.mapMainElement(13, 2));
+        eq("near: roundabout keeps its exit spoke", r == null ? -1 : r.sideStreets.length(), 1);
+    }
+
+    private static void currentRoad() {
+        eq("far: the current road captions FOLLOW_STREET",
+                AANavReader.turnToStreet("Next St", "Current St", false), "Current St");
+        eq("near: the road we turn into",
+                AANavReader.turnToStreet("Next St", "Current St", true), "Next St");
+        eq("far, current unknown: next road as before",
+                AANavReader.turnToStreet("Next St", "", false), "Next St");
+        eq("far, current null: next road as before",
+                AANavReader.turnToStreet("Next St", null, false), "Next St");
+        eq("rerouting notice wins even while far",
+                AANavReader.turnToStreet(AANavReader.streetFor(true, "Next St"), "Current St", false),
+                AANavReader.streetFor(true, "Next St"));
+        eq("no roads at all", AANavReader.turnToStreet(null, null, false), "");
+        yes("near turn: the road it turns into", AANavReader.streetLineNamesTurn(13, true));
+        no("far: the current road", AANavReader.streetLineNamesTurn(13, false));
+        no("near DEPART/STRAIGHT drawn as FOLLOW_STREET: the current road",
+                AANavReader.streetLineNamesTurn(AANavReader.MAIN_ELEMENT_FOLLOW_STREET, true));
+    }
+
+    private static void eqB(String what, boolean got, boolean want) {
+        eq(what, got ? 1 : 0, want ? 1 : 0);
+    }
+
+    /** The carriers the shadows read, and the question "has this function anything new to send". */
+    private static void carriers() {
+        NavState.Maneuver m = new NavState.Maneuver(13, 64, "\u0026", 0, null);
+        eqB("maneuver: equal values are the same", m.same(new NavState.Maneuver(13, 64, "\u0026", 0, null)), true);
+        eqB("maneuver: other arrow", m.same(new NavState.Maneuver(14, 64, "\u0026", 0, null)), false);
+        eqB("maneuver: other direction", m.same(new NavState.Maneuver(13, 192, "\u0026", 0, null)), false);
+        eqB("maneuver: other geometry", m.same(new NavState.Maneuver(13, 64, "", 0, null)), false);
+        eqB("maneuver: null geometry is empty", new NavState.Maneuver(13, 64, null, 0, null).same(new NavState.Maneuver(13, 64, "", 0, null)), true);
+        NavState.NextManeuver n = new NavState.NextManeuver(21, 32, "x");
+        eqB("maneuver: second arrow appears", m.same(new NavState.Maneuver(13, 64, "\u0026", 0, n)), false);
+        eqB("maneuver: same second arrow", new NavState.Maneuver(13, 64, "\u0026", 0, n)
+                .same(new NavState.Maneuver(13, 64, "\u0026", 0, new NavState.NextManeuver(21, 32, "x"))), true);
+        eqB("maneuver: other second arrow", new NavState.Maneuver(13, 64, "\u0026", 0, n)
+                .same(new NavState.Maneuver(13, 64, "\u0026", 0, new NavState.NextManeuver(21, 48, "x"))), false);
+        eqB("maneuver: nothing before", m.same(null), false);
+
+        NavState.Streets s = new NavState.Streets("Next St", "Current St", "Next St", false);
+        eqB("streets: equal", s.same(new NavState.Streets("Next St", "Current St", "Next St", false)), true);
+        eqB("streets: other line", s.same(new NavState.Streets("Other", "Current St", "Next St", false)), false);
+        eqB("streets: other current road", s.same(new NavState.Streets("Next St", "", "Next St", false)), false);
+        eqB("streets: flag", s.same(new NavState.Streets("Next St", "Current St", "Next St", true)), false);
+        eq("streets: null is empty", new NavState.Streets(null, null, null, false).street, "");
+
+        eqB("distance: equal", new NavState.Distance(300, true).same(new NavState.Distance(300, true)), true);
+        eqB("distance: a metre less", new NavState.Distance(300, true).same(new NavState.Distance(299, true)), false);
+        eqB("distance: approach flag", new NavState.Distance(300, true).same(new NavState.Distance(300, false)), false);
+
+        NavState.Destination d = AANavReader.destinationOf("11460 2170", "17:42");
+        eq("destination: metres", d.meters, 11460);
+        eq("destination: seconds", d.seconds, 2170);
+        eq("destination: eta", d.eta, "17:42");
+        eqB("destination: equal", d.same(AANavReader.destinationOf("11460 2170", "17:42")), true);
+        eqB("destination: clock moved", d.same(AANavReader.destinationOf("11460 2170", "17:43")), false);
+        eqB("destination: nothing said is the empty one", AANavReader.destinationOf(null, null).same(NavState.NO_DESTINATION), true);
+        eqB("destination: malformed is the empty one", AANavReader.destinationOf("x y", null).same(NavState.NO_DESTINATION), true);
+
+        NavState.LaneState l = AANavReader.packLaneState("v 2 2 2 9 1 7");
+        eqB("lanes: equal content, other object", l.same(AANavReader.packLaneState("v 2 2 2 9 1 7")), true);
+        eqB("lanes: highlight moved", l.same(AANavReader.packLaneState("v 2 2 3 8 1 7")), false);
+        eqB("lanes: none vs none", NavState.NO_LANES.same(AANavReader.packLaneState(null)), true);
+        eqB("lanes: some vs none", l.same(NavState.NO_LANES), false);
+        eqB("lanes: nothing before", l.same(null), false);
+    }
+
+    /** The file's text into lines: what BufferedReader.readLine used to give. */
+    private static void fileLines() {
+        String[] a = AANavReader.splitLines("1 1 4 1 0 0 300 20 1 1 5 Main St\n2v 1 1 3\n4 1000 60\n", 12);
+        eq("line 1", a[0], "1 1 4 1 0 0 300 20 1 1 5 Main St");
+        eq("line 2", a[1], "2v 1 1 3");
+        eq("line 3", a[2], "4 1000 60");
+        eqNull("no line 4 after the final newline", a[3]);
+        eq("lanes found by marker", AANavReader.taggedLine(a, '2'), "v 1 1 3");
+        eq("destination found by marker", AANavReader.taggedLine(a, '4'), "1000 60");
+        String[] b = AANavReader.splitLines("only line, no newline", 12);
+        eq("a last line without newline counts", b[0], "only line, no newline");
+        eqNull("and nothing after it", b[1]);
+        String[] c = AANavReader.splitLines("a\r\nb\r\n", 12);
+        eq("CR LF: first", c[0], "a");
+        eq("CR LF: second", c[1], "b");
+        String[] e = AANavReader.splitLines("a\n\nc\n", 12);
+        eq("an empty line in the middle stays a line", e[1], "");
+        eq("and the one after it", e[2], "c");
+        String[] f = AANavReader.splitLines("1\n2\n3\n4\n", 2);
+        eq("more lines than asked for: the first ones", f[1], "2");
+        eq("array is as long as asked", f.length, 2);
+        eqNull("empty text", AANavReader.splitLines("", 12)[0]);
+    }
+
+    private static void playbackMode() {
+        // bit0 shuffle, bit1 repeat, bit2 repeat-one -> {stateInfo, stateInfo_Scope}
+        int[][] cases = {
+            { 0, 0, 0 },   // nothing
+            { 1, 2, 4 },   // shuffle            -> mix, the list
+            { 2, 3, 4 },   // repeat             -> repeat, the list
+            { 4, 3, 1 },   // repeat one         -> repeat, the track
+            { 3, 4, 4 },   // shuffle + repeat   -> repeat + mix, the list
+            { 5, 4, 1 },   // shuffle + one      -> repeat + mix, the track
+            { 6, 3, 1 },   // repeat + one       -> one wins (the narrower scope)
+        };
+        for (int i = 0; i < cases.length; i++) {
+            int[] r = de.vw.mib.bap.mqbab2.audiosd.functions.AAPlaybackMode.stateInfo(cases[i][0]);
+            eq("mode " + cases[i][0] + " stateInfo", r[0], cases[i][1]);
+            eq("mode " + cases[i][0] + " scope",     r[1], cases[i][2]);
+        }
+    }
+
+    private static void eqNoThrowRoundabout(int effAngle, int exitNumber) {
+        try {
+            JunctionSchematic.buildRoundabout(effAngle, exitNumber, true);
+            JunctionSchematic.buildRoundabout(effAngle, exitNumber, false);
+        } catch (Throwable t) {
+            failed++;
+            System.out.println("  FAIL buildRoundabout(" + effAngle + "," + exitNumber + ") threw: " + t);
+        }
+    }
+
     public static void main(String[] args) {
+        de.aatokombi.Strings.overrideLanguage = "en";   // the expectations below are the English texts
         String[] names = { "lane shapes", "lane packing", "lane row", "destination",
                            "destination row", "rerouting", "main elements",
-                           "directions", "roundabout angles", "imminence" };
+                           "directions", "roundabout angles", "imminence",
+                           "next maneuver", "current road", "playback mode", "prepare stage",
+                           "eta clock", "i18n", "ring continuity", "double turn",
+                           "junction schematic", "carriers", "file lines" };
         for (int i = 0; i < names.length; i++) {
             int before = failed;
             switch (i) {
@@ -342,7 +806,18 @@ public final class NavMappingTest {
                 case 6: mainElements(); break;
                 case 7: directions(); break;
                 case 8: angles(); break;
-                default: imminence(); break;
+                case 9: imminence(); break;
+                case 10: nextManeuver(); break;
+                case 11: currentRoad(); break;
+                case 12: playbackMode(); break;
+                case 13: prepareStage(); break;
+                case 14: etaClock(); break;
+                case 15: i18n(); break;
+                case 16: ringContinuity(); break;
+                case 17: doubleTurn(); break;
+                case 18: junctionSchematic(); break;
+                case 19: carriers(); break;
+                default: fileLines(); break;
             }
             System.out.println(pad(names[i]) + (failed == before ? "ok" : "FAILED"));
         }

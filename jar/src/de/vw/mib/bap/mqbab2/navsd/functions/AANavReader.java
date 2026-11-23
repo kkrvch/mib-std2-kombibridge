@@ -1,6 +1,7 @@
 package de.vw.mib.bap.mqbab2.navsd.functions;
 
 import de.aatokombi.Config;
+import de.aatokombi.Strings;
 import de.adi961.miblogger.MIBLogger;
 import de.vw.mib.asl.framework.internal.framework.ServiceManager;
 import de.vw.mib.asl.internal.androidauto.target.NavigationHandler;
@@ -8,8 +9,7 @@ import de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo;
 import de.vw.mib.timer.Timer;
 import org.dsi.ifc.androidauto2.Constants;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
+import java.io.FileInputStream;
 import java.util.StringTokenizer;
 
 /**
@@ -35,16 +35,25 @@ import java.util.StringTokenizer;
  * event = AA NextTurnEnum; side = AA TurnSide (1=LEFT, 2=RIGHT, 3=UNSPECIFIED); AA proto enums ==
  * DSI Constants 1:1. The tagged lines after it: see readLines().
  *
+ * On a nav-capable cluster, publishNavsd() additionally builds a multi-spoke junction schematic
+ * (JunctionSchematic.buildRoundabout / buildOrdinary) instead of the single-glyph roundabout spoke
+ * -- see the `schematic` gate at the top of that method: Config.Navigation.SHOW_JUNCTION_SCHEMATIC &&
+ * ClusterCaps.isNavCapable() (see Config.Navigation.SHOW_JUNCTION_SCHEMATIC's own doc).
+ * Every time the schematic path actually fires it hex-dumps the resulting mainElement/sidestreets
+ * bytes via logSchematic(), at DEBUG (Config.Advanced.LOG_LEVEL) -- the fastest way to check what a unit was
+ * actually sent, against what it renders, without a BAP sniffer.
+ *
  * Java 1.4 (cf48): no generics, no autoboxing, no enhanced-for. Must never throw into the HMI.
  */
 public final class AANavReader implements Runnable {
 
     private static final String PATH = "/dev/shmem/aa_nav";
     private static final long POLL_MS = 300L;
-    private static final int[] NO_LANES = new int[]{ 0 };
-    // English, like the manoeuvre words on the media path: the firmware's own strings are not
-    // reachable from here, and a mixed-language line would read worse than a consistent one.
-    private static final String REROUTING_TEXT = "Rerouting...";
+    // The rerouting notice of the MEDIA path (the nav-capable path uses the stock RECALC_ROUTE glyph
+    // instead), in the cluster's language like the manoeuvre words (de.aatokombi.Strings).
+    private static String reroutingText() {
+        return Strings.get(Strings.REROUTING);
+    }
 
     private static volatile boolean started = false;
     private static AANavReader instance = null;
@@ -58,6 +67,80 @@ public final class AANavReader implements Runnable {
     private long lastSession = -1L;   // AA session epoch from the shim; change => phone reconnected
     private boolean cleared = true;
     private boolean lastImminent = true;   // log only the edges (see publishNavsd)
+    // A function is re-sent when what it shows changed; all of them at the start of a guidance
+    // session and every FULL_POKE_MS, so a status the cluster missed does not stay missed.
+    private static final long FULL_POKE_MS = 5000L;
+    private long lastFullPokeMs = 0L;
+    private NavState.LaneState pokedLanes = null;
+    private NavState.Destination pokedDestination = null;
+    // The file as last read: an unchanged file is not parsed again (three polls a second).
+    private final byte[] rawBuf = new byte[1536];
+    private final byte[] lastRaw = new byte[1536];
+    private int lastRawLen = -1;
+    private static final String[] UNCHANGED = new String[0];
+    private final RingMemory ring = new RingMemory();   // roundabout exit-step continuity (see RingMemory)
+
+    /**
+     * Google Maps splits a roundabout in two steps: "enter and leave at exit N, bearing A" while
+     * approaching, then -- once the car is on the ring -- a separate ROUNDABOUT_EXIT step with NO
+     * exit number and NO bearing (seen 2026-10: type 35 exit 3 / 225 deg, then type 46 alone for the
+     * last ~200 m). Drawn as is, the cluster's roundabout lost its exit mid-roundabout. This keeps
+     * the geometry of the ring step for the exit step that directly follows it; an exit step with no
+     * ring step before it (route joined on the ring, after a recalculation) is flagged instead, and
+     * the caller draws the stock EXIT_ROUNDABOUT glyph. Host-testable, one instance per reader.
+     */
+    static final class RingMemory {
+        private int lastEvent = 0;        // event of the current step
+        private int prevStepEvent = 0;    // event of the step before it
+        private boolean valid = false;    // angle/number/side below belong to the current ring
+        private int angle = 0;
+        private int number = 0;
+        private int side = 0;
+
+        /**
+         * @return {angle, number, exitOnly(0/1), side} to use for this frame. The exit step that
+         * follows a ring step also keeps the RING's side: 2GIS sends its "leave the roundabout" step
+         * as the clockwise variant even on a counter-clockwise ring (2026-10), which flipped the
+         * glyph to ROUNDABOUT_TRS_LEFT halfway round.
+         */
+        int[] apply(int event, int sideIn, int angleIn, int numberIn) {
+            if (event != lastEvent) {
+                prevStepEvent = lastEvent;
+                lastEvent = event;
+            }
+            boolean ringStep = (event == 11 || event == 13);
+            if (ringStep) {
+                if (angleIn > 0 || numberIn > 0) {
+                    valid = true;
+                    angle = angleIn;
+                    number = numberIn;
+                    side = sideIn;
+                }
+                return new int[]{ angleIn, numberIn, 0, sideIn };
+            }
+            if (event == 12) {
+                boolean sameRing = valid && (prevStepEvent == 11 || prevStepEvent == 13);
+                if (angleIn > 0 || numberIn > 0) {
+                    return new int[]{ angleIn, numberIn, 0, sameRing ? side : sideIn };  // its own geometry
+                }
+                if (sameRing) {
+                    return new int[]{ angle, number, 0, side };        // same ring, keep its picture
+                }
+                return new int[]{ 0, 0, 1, sideIn };                   // nothing to draw it from
+            }
+            valid = false;                                             // left the ring
+            return new int[]{ angleIn, numberIn, 0, sideIn };
+        }
+
+        void reset() {
+            lastEvent = 0;
+            prevStepEvent = 0;
+            valid = false;
+        }
+    }
+
+    static final int MAIN_ELEMENT_EXIT_ROUNDABOUT_TRS_RIGHT = 26;
+    static final int MAIN_ELEMENT_EXIT_ROUNDABOUT_TRS_LEFT = 27;
 
     private AANavReader(NavigationHandler handler) {
         this.handler = handler;
@@ -74,7 +157,8 @@ public final class AANavReader implements Runnable {
             instance.timer = ServiceManager.timerManager.createTimer(
                     "AATOKOMBI_NAV_POLL", POLL_MS, true, instance, Timer.TIMER_THREAD_INVOKER);
             instance.timer.start();
-            MIBLogger.getInstance().info("AANavReader started, polling " + PATH);
+            MIBLogger.getInstance().info("AANavReader started, polling " + PATH
+                    + ", cluster language '" + Strings.language() + "'");
         } catch (Throwable t) {
             // If the framework timer isn't available yet, leave started=false so a later call retries.
             started = false;
@@ -85,6 +169,11 @@ public final class AANavReader implements Runnable {
     /** Called by the framework timer every POLL_MS. Must never throw. */
     public void run() {
         try {
+            de.aatokombi.ClusterVideo.poll();
+        } catch (Throwable t) {
+            // AA cluster video state (CLUSTER_SINK libgal): never disturbs the nav poll
+        }
+        try {
             processOnce();
         } catch (Throwable t) {
             // never let the poll disturb the HMI
@@ -93,6 +182,11 @@ public final class AANavReader implements Runnable {
 
     private void processOnce() {
         String[] lines = readLines();
+        if (lines == UNCHANGED) {
+            // Byte for byte what the last poll handled: same sequence, same session, same flags.
+            maybeClearStale();
+            return;
+        }
         String line = (lines != null) ? lines[0] : null;
         if (line == null || line.length() == 0) {
             maybeClearStale();
@@ -139,7 +233,7 @@ public final class AANavReader implements Runnable {
         // seq), so this must be checked BEFORE the frozen-seq branch.
         if (connected == 0) {
             if (lastStatus == 1 && handler != null) {
-                try { handler.navigationFocus(Constants.NAVFOCUS_NATIVE); } catch (Throwable t) {}
+                try { handler.navigationFocus(Constants.NAVFOCUS_NATIVE); } catch (Throwable t) { de.aatokombi.Quiet.note("AANavReader#1", t); }
             }
             lastStatus = -1;   // non-active sentinel: forces a PROJECTED re-grab when guidance resumes
             lastSeq = seq;
@@ -156,13 +250,16 @@ public final class AANavReader implements Runnable {
         lastSeq = seq;
         lastSeqChangeMs = System.currentTimeMillis();
 
-        // Verbosity is driven solely by Config.LOG_LEVEL (no private DEBUG flag). Compile-time constant
+        // Verbosity is driven solely by Config.Advanced.LOG_LEVEL (no private DEBUG flag). Compile-time constant
         // -> the per-poll string is not even built unless the jar is compiled at DEBUG/TRACE.
-        if (Config.LOG_LEVEL <= MIBLogger.DEBUG) {
+        if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) {
             MIBLogger.getInstance().debug("aa_nav seq=" + seq + " st=" + status + " conn=" + connected
                     + " sess=" + session + " event=" + event + " side=" + side + " angle=" + angle
                     + " number=" + number + " dist=" + dist + " time=" + time + " unit=" + unit
                     + " dest=" + taggedLine(lines, '4')   // raw line: this runs before it is applied
+                    + " lanes=" + taggedLine(lines, '2')  // raw shim payload: "<count> <lane0> <lane1> ..."
+                    + " next=" + taggedLine(lines, '5')   // raw shim payload: "<event> <side> <angle> <number>"
+                    + " cur='" + taggedLine(lines, '6') + "'"  // the road the car is on now
                     + " q4='" + quaternaryFor(event, number) + "' road=" + road);
         }
 
@@ -177,7 +274,7 @@ public final class AANavReader implements Runnable {
         int norm = guiding ? 1 : status;
         if (!guiding) {
             if (norm != lastStatus && handler != null) {
-                try { handler.navigationFocus(Constants.NAVFOCUS_NATIVE); } catch (Throwable t) {}
+                try { handler.navigationFocus(Constants.NAVFOCUS_NATIVE); } catch (Throwable t) { de.aatokombi.Quiet.note("AANavReader#2", t); }
             }
             lastStatus = norm;
             clearActive();
@@ -187,18 +284,29 @@ public final class AANavReader implements Runnable {
         boolean statusEdge = (norm != lastStatus);
         lastStatus = norm;
         cleared = false;
-        NavState.lanes = packLanes(taggedLine(lines, '2'));   // only for a frame we are about to publish
+        NavState.laneState = packLaneState(taggedLine(lines, '2')); // only for a frame we are about to publish
         String distText = taggedLine(lines, '3');  // phone-rendered distance, 1.7 only; null on 1.3
-        applyDestination(taggedLine(lines, '4'));  // distance/time to destination, 1.7 only
+        // distance/time to the destination (line 4) and the phone's arrival clock (line 8), 1.7 only
+        NavState.destination = destinationOf(taggedLine(lines, '4'), taggedLine(lines, '8'));
 
         // Router: one parse, exactly one output, chosen by the runtime cluster type.
         if (navCapable()) {
-            publishNavsd(event, side, angle, number, streetFor(rerouting, road), dist, time);
+            if (statusEdge) {
+                // Must run BEFORE publishNavsd() below, so the very first ActiveRgType.poke() of
+                // this guidance session already reports the right rgtype instead of whatever was
+                // left over from a previous session.
+                ActiveRgType.primeForAAStart(Config.ClusterMap.START_ON_MAP);
+            }
+            // No rerouting TEXT here: the cluster gets the stock RECALC_ROUTE glyph instead and
+            // renders its own, locale-dependent caption for it (see publishNavsd).
+            publishNavsd(event, side, angle, number, road, dist, time,
+                    packNextManeuver(taggedLine(lines, '5')), taggedLine(lines, '6'), rerouting);
         } else {
             if (statusEdge && handler != null) {
-                try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) {}
+                try { handler.navigationFocus(Constants.NAVFOCUS_PROJECTED); } catch (Throwable t) { de.aatokombi.Quiet.note("AANavReader#3", t); }
             }
-            publishMedia(event, side, number, streetFor(rerouting, road), dist, distText);
+            publishMedia(event, side, number, streetFor(rerouting, road), dist, distText,
+                    taggedLine(lines, '9'));
         }
     }
 
@@ -218,12 +326,135 @@ public final class AANavReader implements Runnable {
      */
     static String streetFor(boolean rerouting, String road) {
         if (rerouting) {
-            return REROUTING_TEXT;
+            return reroutingText();
         }
         return road;
     }
 
+    static final int MAIN_ELEMENT_RECALC_ROUTE = 10;   // ASL MAIN_ELEMENT C10
     static final int MAIN_ELEMENT_FOLLOW_STREET = 11;
+    static final int MAIN_ELEMENT_TURN = 13;
+    static final int MAIN_ELEMENT_TURN_ON_MAINROAD = 14;
+    // The stock "get ready" glyphs (ASL MAIN_ELEMENT C28..C31, confirmed by name in the generated
+    // ASLNavigationBapPropertyManager constants).
+    static final int MAIN_ELEMENT_DOUBLE_TURN = 35;    // ASL C35 / BAP 0x23, drawn only at 64 / 192
+    static final int MAIN_ELEMENT_PREPARE_TURN = 28;
+
+    /**
+     * DOUBLE_TURN direction for a near manoeuvre, or -1: only a left/right TURN followed by a next
+     * step (AA steps[1]) that is a turn to the OTHER side. 64 = "left, then right", 192 = "right,
+     * then left" (AID-verified; the PQ shim in MIBHMI decomposes it the same way).
+     */
+    static int doubleTurnDirection(int mainElement, int side, int[] next) {
+        if (mainElement != MAIN_ELEMENT_TURN || next == null || (side != 1 && side != 2)) {
+            return -1;
+        }
+        int nextSide = next[1];
+        if (mapMainElement(next[0], nextSide) != MAIN_ELEMENT_TURN || nextSide == side
+                || (nextSide != 1 && nextSide != 2)) {
+            return -1;
+        }
+        return (side == 1) ? 64 : 192;
+    }
+    static final int MAIN_ELEMENT_PREPARE_ROUNDABOUT = 29;
+    static final int MAIN_ELEMENT_PREPARE_SQUARE = 30;
+    static final int MAIN_ELEMENT_PREPARE_UTURN = 31;
+
+    /**
+     * Middle stage (Config.ManeuverStages.PREPARE_*): not near yet, but inside either prepare gate.
+     * Only meaningful when maneuverImminent() is false; 0 on a field = "the phone has not said".
+     */
+    static boolean maneuverPreparing(int dist, int time) {
+        if (time > 0 && time <= Config.ManeuverStages.PREPARE_SECONDS) {
+            return true;
+        }
+        return dist > 0 && dist <= Config.ManeuverStages.PREPARE_METERS;
+    }
+
+    /**
+     * The direction a PREPARE_* glyph can actually be drawn with. The stock renderer (MIBHMI
+     * Guidance.doPrepareTurn / doPrepareUTurn) knows PREPARE_TURN only at 0 / 64 / 192 and
+     * PREPARE_UTURN only at 64 / 192 -- anything else draws NOTHING, which the AID did for every
+     * slight (224/32) and sharp (96/160) turn in the prepare stage (2026-10). So the turn's own
+     * direction is folded onto its side.
+     * PREPARE_ROUNDABOUT / PREPARE_SQUARE: the HMI renderer ignores their direction, but the AID
+     * drew no PREPARE_ROUNDABOUT at 224 (trip 2026-11-21, 51 times); the owner remembers it drawn
+     * before. The AID's own rule is unknown; they are folded like PREPARE_TURN (0 / 64 / 192), the
+     * directions of the usual roundabout exits (assumption, to be checked on the car).
+     */
+    // Directions each glyph has an image for, from the stock renderer (MIBHMI de.vw.mib.widgets.Guidance
+    // do<Glyph>()); any other direction draws nothing at all. null = the glyph ignores direction.
+    private static final int[] DIRS_TURN = { 0, 32, 64, 96, 160, 192, 224 };
+    private static final int[] DIRS_RING = { 0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240 };
+    private static final int[] DIRS_SIDES = { 64, 192 };
+    private static final int[] DIRS_SIDES_AHEAD = { 0, 64, 192 };
+    private static final int[] DIRS_EXIT_RIGHT = { 0, 192, 224 };
+    private static final int[] DIRS_EXIT_LEFT = { 0, 32, 64 };
+
+    static int[] renderableDirections(int mainElement) {
+        switch (mainElement) {
+            case 13: case 14:                   return DIRS_TURN;         // TURN, TURN_ON_MAINROAD
+            case 21: case 22: case 23: case 24: return DIRS_RING;         // ROUNDABOUT_TRS_*, SQUARE_TRS_*
+            case 12: case 19: case 25: case 31:
+            case 34: case 35:                   return DIRS_SIDES;        // CHANGE_LANE, FORK_2, UTURN, PREPARE_UTURN, MICHIGAN, DOUBLE
+            case 20: case 28: case 29: case 30: return DIRS_SIDES_AHEAD;  // FORK_3, PREPARE_TURN/ROUNDABOUT/SQUARE
+            case 15: case 32:                   return DIRS_EXIT_RIGHT;   // EXIT_RIGHT(_RAMP)
+            case 16: case 33:                   return DIRS_EXIT_LEFT;    // EXIT_LEFT(_RAMP)
+            default:                            return null;
+        }
+    }
+
+    /** The nearest direction (on the 0..255 circle) the glyph can draw; unchanged if it ignores it. */
+    static int renderableDirection(int mainElement, int direction) {
+        int[] set = renderableDirections(mainElement);
+        if (set == null) {
+            return direction;
+        }
+        int d = direction & 0xFF;
+        int best = set[0];
+        int bestDist = 256;
+        for (int i = 0; i < set.length; i++) {
+            int diff = Math.abs(set[i] - d);
+            if (diff > 128) {
+                diff = 256 - diff;
+            }
+            if (diff < bestDist) {
+                bestDist = diff;
+                best = set[i];
+            }
+        }
+        return best;
+    }
+
+    static int prepareDirection(int prepareElement, int direction) {
+        if (prepareElement != MAIN_ELEMENT_PREPARE_TURN && prepareElement != MAIN_ELEMENT_PREPARE_UTURN
+                && prepareElement != MAIN_ELEMENT_PREPARE_ROUNDABOUT
+                && prepareElement != MAIN_ELEMENT_PREPARE_SQUARE) {
+            return direction;
+        }
+        int d = direction & 0xFF;
+        if (d == 0 || d == 128) {
+            return (prepareElement == MAIN_ELEMENT_PREPARE_UTURN) ? 64 : 0;
+        }
+        return (d < 128) ? 64 : 192;
+    }
+
+    /**
+     * The prepare glyph for a manoeuvre glyph, or -1 when the cluster has none for it (exit, fork,
+     * merge, arrival...): those stay FOLLOW_STREET until they are near.
+     */
+    static int prepareElementFor(int mainElement) {
+        switch (mainElement) {
+            case 13:                               // TURN
+            case 14: return MAIN_ELEMENT_PREPARE_TURN;        // TURN_ON_MAINROAD
+            case 21:                               // ROUNDABOUT_TRS_RIGHT
+            case 22: return MAIN_ELEMENT_PREPARE_ROUNDABOUT;  // ROUNDABOUT_TRS_LEFT
+            case 23:                               // SQUARE_TRS_RIGHT
+            case 24: return MAIN_ELEMENT_PREPARE_SQUARE;      // SQUARE_TRS_LEFT
+            case 25: return MAIN_ELEMENT_PREPARE_UTURN;       // UTURN
+            default: return -1;
+        }
+    }
 
     /**
      * Whether the manoeuvre is close enough to draw; further out the cluster gets FOLLOW_STREET,
@@ -231,52 +462,275 @@ public final class AANavReader implements Runnable {
      * 0 on either field means "the phone has not said"; neither known -> show it, as before.
      */
     static boolean maneuverImminent(int dist, int time) {
-        if (time > 0 && time <= Config.MANEUVER_NEAR_SECONDS) {
+        if (time > 0 && time <= Config.ManeuverStages.NEAR_SECONDS) {
             return true;
         }
-        if (dist > 0 && dist <= Config.MANEUVER_NEAR_METERS) {
+        if (dist > 0 && dist <= Config.ManeuverStages.NEAR_METERS) {
             return true;
         }
         return dist <= 0 && time <= 0;
     }
 
     // ===== nav-capable path: NavState + navsd shadows ==========================================
-    private void publishNavsd(int event, int side, int angle, int number, String road, int dist, int time) {
+    private void publishNavsd(int event, int side, int angle, int number, String road, int dist, int time,
+                              int[] next, String currentRoad, boolean rerouting) {
         de.aatokombi.MediaViewMode.guidance(false);
         // Only the glyph waits: street, countdown and destination keep running meanwhile.
-        boolean imminent = maneuverImminent(dist, time);
+        // With both pre-stages off there is nothing to wait for: the manoeuvre is drawn at any distance.
+        boolean imminent = maneuverImminent(dist, time)
+                || (!Config.ManeuverStages.FOLLOW_STREET && !Config.ManeuverStages.PREPARE);
         if (imminent != lastImminent) {
             // Whether the phone sends a countdown at all cannot be read off the cluster.
             lastImminent = imminent;
             MIBLogger.getInstance().info("nav maneuver " + (imminent ? "shown" : "deferred (follow street)")
                     + ": dist=" + dist + "m time=" + time + "s");
         }
+
+        int[] ringFix = ring.apply(event, side, angle, number);
+        angle = ringFix[0];
+        number = ringFix[1];
+        side = ringFix[3];
+        boolean exitOnlyStep = ringFix[2] == 1;
         int effAngle = effectiveAngle(event, angle, number);    // real bearing (Maps) or synth from exit number (Yandex)
-        NavState.mainElement    = imminent ? mapMainElement(event, side) : MAIN_ELEMENT_FOLLOW_STREET;
-        NavState.direction      = imminent ? mapDirection(event, side, effAngle) : 0;
-        NavState.street         = (road != null) ? road : "";   // next-turn road -> TurnToInfo
-        // Exit-road spoke on a roundabout, "" otherwise; also "" while far, or the junction geometry
-        // would draw around a plain follow-street arrow.
-        NavState.sideStreets    = imminent ? buildRingSideStreets(event, effAngle) : "";
-        NavState.approaching    = imminent;
-        NavState.distanceMeters = dist;                          // raw metres (stock formatter in the shadow)
-        NavState.zLevelGuidance = 0;
-        NavState.ACTIVE         = true;
-        // MQB navsd shadows (no-op on PQ):
-        ActiveRgType.poke();
-        RGStatus.poke();
-        ManeuverDescriptor.poke();
-        DistanceToNextManeuver.poke();
-        TurnToInfo.poke();
-        LaneGuidance.poke();                 // fn 24
-        DistanceToDestination.poke();        // fn 21
-        TimeToDestination.poke();            // fn 22
-        // PQ navsd shadows (no-op on MQB; PQ has no ActiveRgType/RGStatus):
-        de.vw.mib.bap.mqbpq.navsd.functions.RouteGuidanceStatus.poke();
-        de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.poke();
-        de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
-        de.vw.mib.bap.mqbpq.navsd.functions.TurnToInfo.poke();
-        de.vw.mib.bap.mqbpq.navsd.functions.DistanceTimeToDestination.poke();   // PQ merges fn 21+22
+        // The manoeuvre's own glyph. It is what maneuver_1 shows once the manoeuvre is near; while it
+        // is still far, maneuver_1 shows FOLLOW_STREET and this glyph can only appear as the preview
+        // in maneuver_2 (Config.Navigation.SHOW_NEXT_MANEUVER) -- so it is only worth building in those cases.
+        int mainElement = mapMainElement(event, side);
+        int direction = mapDirection(event, side, effAngle);
+        if (exitOnlyStep) {
+            // A bare "leave the roundabout" with no ring geometry to keep: the stock exit glyph.
+            mainElement = (side == 1) ? MAIN_ELEMENT_EXIT_ROUNDABOUT_TRS_LEFT : MAIN_ELEMENT_EXIT_ROUNDABOUT_TRS_RIGHT;
+            direction = 0;
+        }
+        // Exit-road spoke on a roundabout, "" otherwise.
+        String sideStreets = buildRingSideStreets(event, effAngle);
+
+        if (imminent || Config.Navigation.SHOW_NEXT_MANEUVER || !Config.ManeuverStages.FOLLOW_STREET) {
+            // Multi-spoke junction schematic (JunctionSchematic) -- STRICTLY gated on top of the
+            // compile-time switch: only on a cluster that is nav-capable (navsd is actually driving
+            // this cluster at all).
+            boolean schematic = Config.Navigation.SHOW_JUNCTION_SCHEMATIC
+                    && ClusterCaps.isNavCapable();
+
+            if (schematic && !exitOnlyStep && (event == 11 || event == 12 || event == 13)) {
+                // Roundabout: always meaningful here, since AA gives an exit number on every roundabout
+                // maneuver regardless of whether lane data is also available.
+                sideStreets = JunctionSchematic.buildRoundabout(effAngle, number,
+                        mainElement != 22);                // 22 = ROUNDABOUT_TRS_LEFT (clockwise ring)
+                logSchematic("roundabout", mainElement, direction, sideStreets);
+            } else if (schematic && (mainElement == MAIN_ELEMENT_FOLLOW_STREET
+                    || mainElement == MAIN_ELEMENT_TURN || mainElement == MAIN_ELEMENT_TURN_ON_MAINROAD)) {
+                // Ordinary follow/turn: attach side streets to the SAME mainElement mapMainElement()
+                // already picked -- deliberately NOT SQUARE_TRS_LEFT/RIGHT (VW's glyph for a large
+                // plaza/square-shaped junction, not an ordinary road crossing; see
+                // JunctionSchematic.buildOrdinary()). Only worth it once there are at least two distinct
+                // lane directions to draw (buildOrdinary returns null otherwise); until the phone starts
+                // sending lanes for this junction this falls through to the plain arrow, exactly as
+                // before -- mainElement itself is never touched either way.
+                String ordinary = JunctionSchematic.buildOrdinaryFromLaneState(mainElement, NavState.laneState);
+                if (ordinary != null) {
+                    sideStreets = ordinary;
+                    logSchematic("ordinary", mainElement, direction, sideStreets);
+                }
+            }
+        }
+
+        // Second, smaller arrow (maneuver_2): the manoeuvre after this one, or this one as a preview.
+        // In the prepare stage maneuver_1 already shows this manoeuvre, so maneuver_2 behaves as near.
+        if (!imminent && !Config.ManeuverStages.FOLLOW_STREET && prepareElementFor(mainElement) < 0) {
+            imminent = true;        // no FOLLOW_STREET stage and no prepare glyph: the manoeuvre itself
+        }
+        // Without the FOLLOW_STREET stage the prepare glyph covers the whole far range.
+        boolean preparing = !imminent && Config.ManeuverStages.PREPARE
+                && (maneuverPreparing(dist, time) || !Config.ManeuverStages.FOLLOW_STREET)
+                && prepareElementFor(mainElement) >= 0;
+        boolean shown = imminent || preparing;     // maneuver_1 names the manoeuvre itself
+        NavState.NextManeuver nextM = Config.Navigation.SHOW_NEXT_MANEUVER
+                ? nextManeuverFor(shown, mainElement, direction, sideStreets, next) : null;
+        int doubleDir = (Config.Navigation.SHOW_DOUBLE_TURN && imminent && !rerouting)
+                ? doubleTurnDirection(mainElement, side, next) : -1;
+        if (doubleDir >= 0) {
+            mainElement = MAIN_ELEMENT_DOUBLE_TURN;
+            direction = doubleDir;
+            sideStreets = "";
+        }
+        if (preparing) {
+            // Middle stage: the stock "get ready" glyph turned the manoeuvre's way, no junction
+            // geometry yet (the stock validator clears sidestreets for these glyphs anyway).
+            mainElement = prepareElementFor(mainElement);
+            direction = prepareDirection(mainElement, direction);
+            sideStreets = "";
+        } else if (!imminent) {
+            // Far: maneuver_1 is a plain "follow the street", with no junction geometry around it.
+            mainElement = MAIN_ELEMENT_FOLLOW_STREET;
+            direction = 0;
+            sideStreets = "";
+        }
+        if (rerouting) {
+            // The phone is recalculating (status 3): the stock "recalculating route" glyph, as the
+            // unit's own navigation shows it, with nothing of the route being replaced around it --
+            // no second arrow, no street (the cluster captions RECALC_ROUTE itself, in its own
+            // language), no countdown, no lanes. Shown exactly as long as the phone says so.
+            mainElement = MAIN_ELEMENT_RECALC_ROUTE;
+            direction = 0;
+            sideStreets = "";
+            nextM = null;
+            dist = 0;
+            imminent = false;
+            shown = false;
+            NavState.laneState = NavState.NO_LANES;
+        }
+        direction = renderableDirection(mainElement, direction);   // never a direction the glyph lacks
+        // The street line names the road the manoeuvre turns into only once it is near; while the
+        // arrow is FOLLOW_STREET or the PREPARE_* glyph it names the road the car is on (user
+        // request 2026-10). AA's current road when the phone sends one; otherwise TurnToInfo asks
+        // the unit's own map-matching for it (Streets.wantsCurrentPosition).
+        // A FOLLOW_STREET arrow counts as far even when AA's own step is "near": AA sends DEPART and
+        // STRAIGHT as steps of their own, and their road text ("В сторону ...", "Продолжайте
+        // движение прямо") is an instruction, not the street the car is on (trip 2026-11-17).
+        boolean turnNear = streetLineNamesTurn(mainElement, imminent);
+        NavState.Maneuver mv = new NavState.Maneuver(mainElement, direction, sideStreets, 0, nextM);
+        NavState.Streets st = new NavState.Streets(
+                rerouting ? "" : turnToStreet(road, currentRoad, turnNear),          // -> TurnToInfo
+                currentRoad, road,
+                !rerouting && !turnNear && (currentRoad == null || currentRoad.length() == 0));
+        NavState.Distance dn = new NavState.Distance(dist, imminent);   // raw metres, bargraph while approaching
+        NavState.LaneState lanes = NavState.laneState;
+        NavState.Destination dest = NavState.destination;
+
+        // Who has something new to say. Everybody at the start of guidance and every FULL_POKE_MS.
+        long now = System.currentTimeMillis();
+        boolean all = !NavState.ACTIVE || now - lastFullPokeMs >= FULL_POKE_MS || now < lastFullPokeMs;
+        boolean maneuverNew = all || !mv.same(NavState.maneuver);
+        boolean streetsNew = all || !st.same(NavState.streets);
+        boolean distanceNew = all || !dn.same(NavState.distance);
+        boolean lanesNew = all || !lanes.same(pokedLanes);
+        boolean destinationNew = all || !dest.same(pokedDestination);
+
+        // Each carrier in one write; ACTIVE last, so a reader that sees it also sees this frame.
+        NavState.maneuver = mv;
+        NavState.streets = st;
+        NavState.distance = dn;
+        NavState.ACTIVE = true;
+        if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) {
+            // What actually goes out on BAP this frame -- the other half of the shim's trip dump.
+            MIBLogger.getInstance().debug("navsd out: imminent=" + imminent + " prep=" + preparing
+                    + (rerouting ? " REROUTE" : "")
+                    + " m1=" + mainElement + "/" + direction + " ss=" + sideStreets.length()
+                    + " m2=" + (nextM == null ? "-" : (nextM.mainElement + "/" + nextM.direction))
+                    + " street='" + st.street + "' pos='" + st.currentRoad + "'"
+                    + " send=" + (all ? "all" : ((maneuverNew ? "M" : "") + (distanceNew ? "D" : "")
+                            + (streetsNew ? "S" : "") + (lanesNew ? "L" : "") + (destinationNew ? "T" : ""))));
+        }
+        // MQB navsd shadows (no-op on PQ), then the PQ ones (no-op on MQB; PQ has no
+        // ActiveRgType/RGStatus). Same order as before, only the unchanged ones left out.
+        if (all) {
+            lastFullPokeMs = now;
+            ActiveRgType.poke();
+            RGStatus.poke();
+        }
+        if (maneuverNew) ManeuverDescriptor.poke();
+        if (distanceNew) DistanceToNextManeuver.poke();
+        if (streetsNew) {
+            TurnToInfo.poke();
+            CurrentPositionInfo.poke();          // fn 19
+        }
+        if (lanesNew) {
+            pokedLanes = lanes;
+            LaneGuidance.poke();                 // fn 24
+        }
+        if (destinationNew) {
+            pokedDestination = dest;
+            DistanceToDestination.poke();        // fn 21
+            TimeToDestination.poke();            // fn 22
+        }
+        if (all) de.vw.mib.bap.mqbpq.navsd.functions.RouteGuidanceStatus.poke();
+        if (maneuverNew) de.vw.mib.bap.mqbpq.navsd.functions.ManeuverDescriptor.poke();
+        if (distanceNew) de.vw.mib.bap.mqbpq.navsd.functions.DistanceToNextManeuver.poke();
+        if (streetsNew) de.vw.mib.bap.mqbpq.navsd.functions.TurnToInfo.poke();
+        if (destinationNew) de.vw.mib.bap.mqbpq.navsd.functions.DistanceTimeToDestination.poke();   // PQ merges fn 21+22
+    }
+
+    /**
+     * Whether the street line names the road the manoeuvre turns into (true) or the road the car is
+     * on (false): only for a manoeuvre that is near AND drawn as itself. A FOLLOW_STREET arrow (far,
+     * or AA's DEPART / STRAIGHT step) always gets the current road.
+     */
+    static boolean streetLineNamesTurn(int mainElement, boolean imminent) {
+        return imminent && mainElement != MAIN_ELEMENT_FOLLOW_STREET;
+    }
+
+    /**
+     * The TurnToInfo line. While the manoeuvre is still far the cluster shows FOLLOW_STREET, and the
+     * road you are following is the natural caption for it -- so the CURRENT road (IPC line 6) goes
+     * there, and only once the manoeuvre is near does the line switch to the road it turns into.
+     * The rerouting notice always wins (it arrives here in place of the road, see streetFor), and with
+     * no current road known the next-turn road stays, as before.
+     */
+    static String turnToStreet(String nextRoad, String currentRoad, boolean imminent) {
+        String next = (nextRoad != null) ? nextRoad : "";
+        if (imminent || reroutingText().equals(next)) {
+            return next;
+        }
+        if (currentRoad != null && currentRoad.length() > 0) {
+            return currentRoad;
+        }
+        return next;
+    }
+
+    /**
+     * What the small second arrow (ManeuverDescriptor.maneuver_2) shows, or null for none.
+     *   far  -> the current manoeuvre itself (cur*), previewing what the FOLLOW_STREET arrow leads to;
+     *   near -> the manoeuvre after it (IPC line 5, i.e. AA steps[1]), as the stock "then" arrow.
+     * Another "follow the street" is never worth a second arrow, so that case is null too.
+     */
+    static NavState.NextManeuver nextManeuverFor(boolean imminent, int curMain, int curDir,
+                                                 String curSideStreets, int[] next) {
+        if (!imminent) {
+            if (curMain == MAIN_ELEMENT_FOLLOW_STREET) {
+                return null;
+            }
+            return new NavState.NextManeuver(curMain, curDir, curSideStreets);
+        }
+        if (next == null) {
+            return null;
+        }
+        int event = next[0];
+        int side = next[1];
+        int effAngle = effectiveAngle(event, next[2], next[3]);
+        int main = mapMainElement(event, side);
+        if (main == MAIN_ELEMENT_FOLLOW_STREET) {
+            return null;
+        }
+        return new NavState.NextManeuver(main, mapDirection(event, side, effAngle),
+                buildRingSideStreets(event, effAngle));
+    }
+
+    // Debug-only: logs the raw bytes that go into ManeuverDescriptor.sidestreets (plus mainElement
+    // and the arrow's own direction, which nothing else currently logs) whenever the schematic path
+    // actually fires (i.e. the `schematic` gate in publishNavsd() was true AND there was enough data
+    // to build one), so a first run on a new/untested unit shows exactly what was sent in
+    // aatokombi.log -- without needing a BAP sniffer -- to check against what actually renders on the
+    // cluster. Gated on Config.Advanced.LOG_LEVEL like every other debug line in this class: the hex-dump is
+    // not built at all unless it will be printed, so this costs nothing on a normal (INFO) build.
+    private static void logSchematic(String kind, int mainElement, int direction, String sideStreets) {
+        if (Config.Advanced.LOG_LEVEL > MIBLogger.DEBUG) {
+            return;
+        }
+        StringBuffer hex = new StringBuffer(3 * sideStreets.length());
+        for (int i = 0; i < sideStreets.length(); i++) {
+            if (i > 0) {
+                hex.append(' ');
+            }
+            int v = sideStreets.charAt(i) & 0xFF;
+            if (v < 16) {
+                hex.append('0');
+            }
+            hex.append(Integer.toHexString(v));
+        }
+        MIBLogger.getInstance().debug("junction schematic (" + kind + "): mainElement=" + mainElement
+                + " direction=" + direction
+                + " sidestreets[" + sideStreets.length() + "]={" + hex + "}");
     }
 
     // GAL (AA) NextTurnEnum + TurnSide -> VW navsd MAIN_ELEMENT (ASLNavSDConstants values). [FW-TUNE]
@@ -296,6 +750,10 @@ public final class AANavReader implements Runnable {
             case 12:
             case 13: return (side == 1) ? 22 : 21; // ROUNDABOUT  -> TRS_LEFT/RIGHT
             case 14: return 11;                    // STRAIGHT    -> FOLLOW_STREET
+            case 15:
+            case 16: return 11;                    // FERRY_BOAT / FERRY_TRAIN -> FOLLOW_STREET: the
+                                                   // cluster has no ferry glyph, and "turn" (the
+                                                   // default) is the wrong thing to draw for one
             case 17:
             case 18:
             case 19: return 3;                     // DESTINATION / dest-left / dest-right -> ARRIVED
@@ -314,9 +772,17 @@ public final class AANavReader implements Runnable {
         if (event == 6) {
             return (side == 2) ? 192 : 64;
         }
-        if (event == 1 || event == 2 || event == 14
-                || event == 17 || event == 18 || event == 19) {
-            return 0;                              // depart / name-change / straight / arrival
+        if (event == 17 || event == 18 || event == 19) {
+            // Arrival (ARRIVED glyph): the shim folds DESTINATION_LEFT/RIGHT onto 17 + side, so the
+            // side is the only place "the destination is on your left/right" survives. Turned the way
+            // a turn would be; straight/unspecified stays 0. [HW-TUNE: whether the AID rotates the
+            // ARRIVED glyph at all is unverified]
+            if (side == 1) return 64;
+            if (side == 2) return 192;
+            return 0;
+        }
+        if (event == 1 || event == 2 || event == 14 || event == 15 || event == 16) {
+            return 0;                              // depart / name-change / straight / ferry
         }
         if (event == 11 || event == 12 || event == 13) {    // roundabout: true exit bearing when sent
             if (angle >= 1 && angle <= 360) {
@@ -351,7 +817,10 @@ public final class AANavReader implements Runnable {
         return angle;
     }
 
-    // Roundabout exit-road geometry for the maneuver glyph (col3 sidestreets). One SIDE_STREET_*_EXIT
+    // Roundabout exit-road geometry for the maneuver glyph (col3 sidestreets), used when the
+    // JunctionSchematic path is off (Config.Navigation.SHOW_JUNCTION_SCHEMATIC=false, or the `schematic` gate
+    // at the top of publishNavsd() is false) -- see JunctionSchematic.buildRoundabout() for the
+    // richer multi-spoke string this class normally builds instead. One SIDE_STREET_*
     // glyph at the taken-exit bearing; the cluster draws the entry leg itself, giving an entry+exit
     // ring. Non-roundabouts -> "" (no junction geometry). Glyph table = GuidanceModel.SIDE_STREET_*
     // exit codes per 22.5-deg compass position (entry at BASE/180): only the 45-deg slots carry an EXIT
@@ -371,13 +840,16 @@ public final class AANavReader implements Runnable {
     }
 
     // ===== non-nav path: media now-playing widget =============================================
-    private void publishMedia(int event, int side, int number, String road, int dist, String distText) {
+    private void publishMedia(int event, int side, int number, String road, int dist, String distText,
+                              String cue) {
         de.aatokombi.MediaViewMode.guidance(true);
         // Cluster layout (top->bottom): secondary, tertiary, PRIMARY(big), quaternary.
         //   secondary = street, or the lane row while there is one; tertiary = maneuver word
         //   (+ roundabout exit); PRIMARY = arrow + distance ("> 300 m"); quaternary = destination.
         String arrow = arrowForManeuver(event, side);
-        String word = wordFor(event, side);
+        // The manoeuvre line: the navigator's own instruction text when it says more than the street
+        // (IPC line 9 -- the shim only writes it then), otherwise our word in the cluster's language.
+        String word = (cue != null && cue.length() > 0 && !cue.equals(road)) ? cue : wordFor(event, side);
         String street = (road != null && road.length() > 0) ? road : "";
         // Prefer the phone's own string: it is already rounded the way the driver sees it on the
         // phone and, unlike ours, follows the phone's units (miles/yards). We only format the raw
@@ -391,9 +863,12 @@ public final class AANavReader implements Runnable {
         // can already see the junction and needs to know which lane far more than what it is called.
         // Exception: the rerouting notice keeps the row, because this is the one line that carries
         // it, and lanes held over from the route being recalculated are stale anyway.
-        String lanes = laneRow(NavState.lanes);
+        // The media widget deliberately stays one glyph per cell. Combined-lane alternatives are
+        // preserved for navsd geometry/BAP, but rendering several glyphs here makes the already
+        // tight six-cell row illegible.
+        String lanes = laneRow(NavState.laneState.lanes);
         CurrentStationInfo.navSecondary =
-                (lanes.length() > 0 && !REROUTING_TEXT.equals(street)) ? lanes : street;
+                (lanes.length() > 0 && !reroutingText().equals(street)) ? lanes : street;
         // The roundabout exit number rides with the manoeuvre word: "Roundabout exit 3" reads as one
         // phrase, and the exit is not worth a line of its own. (The PQ widget has always
         // concatenated the two into its third line, so this only makes MQB agree with it.)
@@ -402,8 +877,8 @@ public final class AANavReader implements Runnable {
                 : (word.length() > 0 ? (word + " " + exit) : exit);
         // How far the whole trip still has to go -- already parsed for this frame (processOnce), on
         // this path as much as on the nav-capable one; until now nothing read it here.
-        CurrentStationInfo.navQuaternary =
-                destinationRow(NavState.destinationMeters, NavState.destinationSeconds);
+        NavState.Destination dest = NavState.destination;
+        CurrentStationInfo.navQuaternary = destinationRow(dest.meters, dest.seconds);
         CurrentStationInfo.pokeNav();
     }
 
@@ -429,32 +904,32 @@ public final class AANavReader implements Runnable {
         }
     }
 
-    private String wordFor(int event, int side) {
+    static String wordFor(int event, int side) {
         switch (event) {
-            case 1:  return "Start";
-            case 2:  return "Continue";
-            case 3:  return side == 1 ? "Bear left" : side == 2 ? "Bear right" : "Continue";
-            case 4:  return side == 1 ? "Turn left" : side == 2 ? "Turn right" : "Turn";
-            case 5:  return side == 1 ? "Sharp left" : side == 2 ? "Sharp right" : "Turn";
-            case 6:  return "U-turn";
-            case 7:  return "On-ramp";
-            case 8:  return "Exit";
-            case 9:  return "Fork";
-            case 10: return "Merge";
+            case 1:  return Strings.get(Strings.START);
+            case 2:  return Strings.get(Strings.CONTINUE);
+            case 3:  return side == 1 ? Strings.get(Strings.BEAR_LEFT) : side == 2 ? Strings.get(Strings.BEAR_RIGHT) : Strings.get(Strings.CONTINUE);
+            case 4:  return side == 1 ? Strings.get(Strings.TURN_LEFT) : side == 2 ? Strings.get(Strings.TURN_RIGHT) : Strings.get(Strings.TURN);
+            case 5:  return side == 1 ? Strings.get(Strings.SHARP_LEFT) : side == 2 ? Strings.get(Strings.SHARP_RIGHT) : Strings.get(Strings.TURN);
+            case 6:  return Strings.get(Strings.U_TURN);
+            case 7:  return Strings.get(Strings.ON_RAMP);
+            case 8:  return Strings.get(Strings.EXIT);
+            case 9:  return Strings.get(Strings.FORK);
+            case 10: return Strings.get(Strings.MERGE);
             case 11:
             case 12:
-            case 13: return "Roundabout";
-            case 14: return "Straight";
+            case 13: return Strings.get(Strings.ROUNDABOUT);
+            case 14: return Strings.get(Strings.STRAIGHT);
             case 15:
-            case 16: return "Ferry";
-            case 17: return "Arrive";
+            case 16: return Strings.get(Strings.FERRY);
+            case 17: return Strings.get(Strings.ARRIVE);
             default: return "";
         }
     }
 
     private String quaternaryFor(int event, int number) {
         if ((event == 11 || event == 12 || event == 13) && number > 0) {
-            return "exit " + number;
+            return Strings.get(Strings.RING_EXIT) + " " + number;
         }
         return "";
     }
@@ -533,6 +1008,37 @@ public final class AANavReader implements Runnable {
         }
     }
 
+    /** All raw VW-angle directions for one lane, with a safe primary-only fallback. */
+    static int[] laneDirections(NavState.LaneState state, int laneIndex) {
+        if (state != null && state.directions != null && laneIndex >= 0
+                && laneIndex < state.directions.length && state.directions[laneIndex] != null
+                && state.directions[laneIndex].length > 0) {
+            return state.directions[laneIndex];
+        }
+        if (state != null && state.lanes != null && laneIndex >= 0
+                && 1 + 2 * laneIndex < state.lanes.length) {
+            return new int[]{ state.lanes[1 + 2 * laneIndex] };
+        }
+        return new int[0];
+    }
+
+    /** BAP laneSidestreets encoding for every alternative beyond laneDirection. */
+    static String laneSideStreets(NavState.LaneState state, int laneIndex) {
+        int[] directions = laneDirections(state, laneIndex);
+        if (directions.length < 2) {
+            return "";
+        }
+        int primary = (state != null && state.lanes != null && 1 + 2 * laneIndex < state.lanes.length)
+                ? state.lanes[1 + 2 * laneIndex] : directions[0];
+        StringBuffer out = new StringBuffer(directions.length - 1);
+        for (int i = 0; i < directions.length; i++) {
+            if (directions[i] != primary && out.toString().indexOf((char) directions[i]) < 0) {
+                out.append((char) directions[i]);
+            }
+        }
+        return out.toString();
+    }
+
     /**
      * The whole trip rather than the next manoeuvre — "36 min / 32 km" — for the media widget's
      * fourth slot whenever there are no lanes to put there. Plain ASCII separator on purpose: only
@@ -557,13 +1063,13 @@ public final class AANavReader implements Runnable {
     }
 
     /**
-     * How far the whole trip still has to go: "850 m" / "9,4 km" / "32 km". The tenth of a kilometre
+     * How far the whole trip still has to go: "850 m" / "9.4 km" / "32 km". The tenth of a kilometre
      * that {@link #formatDistance} keeps is right for a manoeuvre a few hundred metres ahead and
      * noise on a number this size, so it is dropped past 10 km.
      */
     static String formatTripDistance(int meters) {
-        if (meters >= 10000) {
-            return ((meters + 500) / 1000) + " km";
+        if (meters >= 9950) {                      // from where one decimal would read "10.0"
+            return ((meters + 500) / 1000) + " " + Strings.get(Strings.UNIT_KM);
         }
         return formatDistance(meters);
     }
@@ -575,23 +1081,28 @@ public final class AANavReader implements Runnable {
         }
         int[] hm = remainingHoursMinutes(seconds);
         if (hm[0] > 0) {
-            return hm[0] + " h " + hm[1] + " min";
+            return hm[0] + " " + Strings.get(Strings.UNIT_H) + " " + hm[1] + " " + Strings.get(Strings.UNIT_MIN);
         }
-        return hm[1] + " min";
+        return hm[1] + " " + Strings.get(Strings.UNIT_MIN);
     }
 
-    /** "300 m" / "1,2 km" / "" when unknown. */
+    /** "300 m" / "1.2 km" (the separator is the language's, Strings.DECIMAL) / "" when unknown. */
     static String formatDistance(int dist) {
         if (dist <= 0) {
             return "";
         }
         if (dist < 1000) {
             if (dist < 10) {
-                return dist + " m";           // very short: show the exact metres
+                return dist + " " + Strings.get(Strings.UNIT_M);   // very short: show the exact metres
             }
-            return (((dist + 5) / 10) * 10) + " m";   // else round to nearest 10 m, like Google
+            int rounded = ((dist + 5) / 10) * 10;                  // else round to nearest 10 m, like Google
+            if (rounded < 1000) {
+                return rounded + " " + Strings.get(Strings.UNIT_M);
+            }
+            dist = 1000;                                           // 995..999 m: one kilometre, not "1000 m"
         }
-        return (dist / 1000) + "," + ((dist % 1000) / 100) + " km";
+        int tenths = (dist + 50) / 100;                            // nearest 100 m (it used to be cut off)
+        return (tenths / 10) + Strings.get(Strings.DECIMAL) + (tenths % 10) + " " + Strings.get(Strings.UNIT_KM);
     }
 
     // ===== shared lifecycle ====================================================================
@@ -601,7 +1112,7 @@ public final class AANavReader implements Runnable {
         if (cleared) {
             return;
         }
-        if (System.currentTimeMillis() - lastSeqChangeMs > Config.AA_STALE_BACKSTOP_MS) {
+        if (System.currentTimeMillis() - lastSeqChangeMs > de.vw.mib.asl.internal.androidauto.target.ShmemMediaReader.AA_STALE_BACKSTOP_MS) {
             clearActive();
         }
     }
@@ -613,25 +1124,30 @@ public final class AANavReader implements Runnable {
             return;
         }
         cleared = true;
+        ring.reset();
         // Mirror the router (processOnce): clear ONLY the active path. Crucially, on a non-nav
         // cluster we must not poke the navsd shadows -- poke()->process() emits navsd BAP regardless
         // of isNavCapable(), and the shadows ARE constructed on a non-nav EU unit (factory "All"), so
         // an un-gated poke here would push navsd traffic onto a non-nav cluster (Blocker 2).
         if (navCapable()) {
             try {
+                // Everything back to empty BEFORE anybody is poked: a stale destination outliving
+                // its route would otherwise be the one number on the cluster nobody can tell is stale.
                 NavState.ACTIVE = false;
-                NavState.approaching = false;
+                NavState.maneuver = NavState.NO_MANEUVER;
+                NavState.streets = NavState.NO_STREETS;
+                NavState.distance = NavState.NO_DISTANCE;
+                NavState.laneState = NavState.NO_LANES;
+                NavState.destination = NavState.NO_DESTINATION;
+                pokedLanes = null;
+                pokedDestination = null;
                 ActiveRgType.poke();
                 RGStatus.poke();
                 ManeuverDescriptor.poke();
                 DistanceToNextManeuver.poke();
                 TurnToInfo.poke();
-                NavState.lanes = NO_LANES;
+                CurrentPositionInfo.poke();
                 LaneGuidance.poke();
-                // Zero before poking: a stale destination outliving its route would otherwise be the
-                // one number on the cluster nobody can tell is stale.
-                NavState.destinationMeters = 0;
-                NavState.destinationSeconds = 0;
                 DistanceToDestination.poke();
                 TimeToDestination.poke();
                 de.vw.mib.bap.mqbpq.navsd.functions.RouteGuidanceStatus.poke();
@@ -651,9 +1167,8 @@ public final class AANavReader implements Runnable {
                 // The fourth slot is fed from NavState now, so clear that too -- for the same
                 // reason the nav-capable branch does: a destination that outlives its route is the
                 // one number on the cluster nobody can tell is stale.
-                NavState.lanes = NO_LANES;
-                NavState.destinationMeters = 0;
-                NavState.destinationSeconds = 0;
+                NavState.laneState = NavState.NO_LANES;
+                NavState.destination = NavState.NO_DESTINATION;
                 NavigationHandler.aaRouteGuidanceActive = false;
                 CurrentStationInfo.pokeNav();
             } catch (Throwable t) {
@@ -682,63 +1197,142 @@ public final class AANavReader implements Runnable {
      * Line 1 is the manoeuvre (the shim normalises both protocol generations into it). The lines
      * after it are 1.7 extras, each tagged with its own marker and written only when it has content,
      * so they are matched by marker rather than by position: "2 " = lane guidance, "3 " = the phone's
-     * own distance string, "4 " = distance/time to the destination. Any element may be null.
+     * own distance string, "4 " = distance/time to the destination, "5 " = the manoeuvre after the
+     * current one, "6 " = the road the car is on now, "7 " = the destination address (not used by
+     * the jar since DestinationInfo was rolled back),
+     * "8 " = the phone's arrival clock string,
+     * "9 " = the instruction text when it differs from the road. Lane line "2v " is the current
+     * variable-direction encoding; "2 " remains accepted for a jar deployed with an older shim.
+     * The file ends with the line "end" (de.aatokombi.IpcFile); without it the read is null.
+     * Any element may be null.
      */
     private String[] readLines() {
-        BufferedReader br = null;
+        FileInputStream in = null;
         try {
-            br = new BufferedReader(new FileReader(PATH));
-            String[] out = new String[4];
-            for (int i = 0; i < out.length; i++) {
-                out[i] = br.readLine();
+            in = new FileInputStream(PATH);
+            int n = 0;
+            int r;
+            while (n < rawBuf.length && (r = in.read(rawBuf, n, rawBuf.length - n)) > 0) {
+                n += r;
             }
-            return out;
+            if (n <= 0) {
+                return null;                       // the shim is rewriting it right now
+            }
+            // Only a complete file: one cut by a concurrent rewrite lacks the end line. It is not
+            // remembered either, so the complete file of the next poll is parsed in full.
+            int body = de.aatokombi.IpcFile.body(rawBuf, n);
+            if (body < 0) {
+                return null;
+            }
+            if (n == lastRawLen) {
+                int i = 0;
+                while (i < n && rawBuf[i] == lastRaw[i]) {
+                    i++;
+                }
+                if (i == n) {
+                    return UNCHANGED;
+                }
+            }
+            System.arraycopy(rawBuf, 0, lastRaw, 0, n);
+            lastRawLen = n;
+            return splitLines(new String(rawBuf, 0, body), 12);
         } catch (Exception ex) {
             return null; // file absent yet / transient -> ignore
         } finally {
-            if (br != null) {
-                try { br.close(); } catch (Exception ex) {}
+            if (in != null) {
+                try { in.close(); } catch (Exception ex) {}
             }
         }
+    }
+
+    /**
+     * The first `max` lines of the file's text, null for every line that is not there. Line 1 plus
+     * every tagged line the shim may write (2v, 3, 4, 5, ...), with headroom: a marker that does not
+     * fit would silently never be seen. A line still without its newline counts (the last one).
+     */
+    static String[] splitLines(String text, int max) {
+        String[] out = new String[max];
+        int start = 0;
+        int len = text.length();
+        for (int i = 0; i < max && start < len; i++) {
+            int nl = text.indexOf('\n', start);
+            int end = (nl < 0) ? len : nl;
+            int cut = (end > start && text.charAt(end - 1) == '\r') ? end - 1 : end;
+            out[i] = text.substring(start, cut);
+            start = (nl < 0) ? len : nl + 1;
+        }
+        return out;
     }
 
     /** The extra line tagged with `marker`, without its 2-char prefix, or null if it isn't there. */
     static String taggedLine(String[] lines, char marker) {
         for (int i = 1; i < lines.length; i++) {
             String l = lines[i];
-            if (l != null && l.length() > 2 && l.charAt(0) == marker && l.charAt(1) == ' ') {
-                return l.substring(2);
+            if (l != null && l.length() > 2 && l.charAt(0) == marker
+                    && (l.charAt(1) == ' ' || (marker == '2' && l.length() > 3
+                    && l.charAt(1) == 'v' && l.charAt(2) == ' '))) {
+                return (marker == '2' && l.charAt(1) == 'v') ? l.substring(1) : l.substring(2);
             }
         }
         return null;
     }
 
     /**
-     * Line 2 is "2 &lt;count&gt; &lt;lane0&gt; ...", each lane packed by the shim as
-     * shape*2 + isHighlighted. The argument is the PAYLOAD taggedLine() already stripped the "2 "
-     * marker from, i.e. "&lt;count&gt; &lt;lane0&gt; ...". Anything else clears the lanes.
+     * Backward-compatible primary-arrow view of {@link #packLaneState(String)}. Existing unit tests
+     * and callers that only understand one arrow per lane can keep using this helper.
      *
      * Angles are NOT clamped: laneDirection is a plain byte with no enumerated value set (unlike
      * laneType/guidanceInfo), and the stock navigation drives the full arrow family on a colour cluster.
+     *
      */
     static int[] packLanes(String payload) {
+        return packLaneState(payload).lanes;
+    }
+
+    /**
+     * IPC lane decoder. Old "2 count packed..." frames become one direction per lane. New frames
+     * are "2v count dirCount packed... dirCount packed...": `packed = shape*2 + highlighted`.
+     * The primary arrow is the highlighted direction when present, else the first; the complete list
+     * remains available to media, laneSidestreets and JunctionSchematic.
+     */
+    static NavState.LaneState packLaneState(String payload) {
         int[] packed = null;
+        int[][] directions = null;
         int n = 0;
         if (payload != null && payload.length() > 0) {
             try {
                 StringTokenizer st = new StringTokenizer(payload, " ");
-                int count = Integer.parseInt(st.nextToken());
+                String first = st.nextToken();
+                boolean v2 = "v".equals(first);
+                int count = Integer.parseInt(v2 ? st.nextToken() : first);
                 if (count > NavState.MAX_LANES) {
                     count = NavState.MAX_LANES;                   // shim caps at 8; be defensive
                 }
                 if (count > 0) {
                     packed = new int[1 + 2 * count];
+                    directions = new int[count][];
                     while (n < count && st.hasMoreTokens()) {
-                        int lane = Integer.parseInt(st.nextToken());
-                        packed[1 + 2 * n] = laneShapeToDirection(lane >> 1);
-                        // AA gives a boolean per lane and several can be set at once, so "the single
-                        // best" is not expressible: every highlighted lane becomes BEST_RECOMMENDATION.
-                        packed[2 + 2 * n] = ((lane & 1) != 0) ? 2 : 0;
+                        int dirCount = v2 ? Integer.parseInt(st.nextToken()) : 1;
+                        if (dirCount < 1 || dirCount > NavState.MAX_LANE_DIRECTIONS) {
+                            break;
+                        }
+                        int[] dirs = new int[dirCount];
+                        int primary = 0;
+                        boolean highlighted = false;
+                        for (int d = 0; d < dirCount; d++) {
+                            if (!st.hasMoreTokens()) {
+                                throw new NumberFormatException();
+                            }
+                            int lane = Integer.parseInt(st.nextToken());
+                            dirs[d] = laneShapeToDirection(lane >> 1);
+                            if (d == 0 || ((lane & 1) != 0 && !highlighted)) {
+                                primary = dirs[d];
+                                highlighted = (lane & 1) != 0;
+                            }
+                        }
+                        packed[1 + 2 * n] = primary;
+                        packed[2 + 2 * n] = highlighted ? 2 : 0;
+                        directions[n] = dirs;
                         n++;
                     }
                 }
@@ -747,10 +1341,39 @@ public final class AANavReader implements Runnable {
             }
         }
         if (n == 0) {
-            return NO_LANES;
+            return NavState.NO_LANES;
         }
         packed[0] = n;
-        return packed;
+        if (n != directions.length) {
+            int[][] trimmed = new int[n][];
+            System.arraycopy(directions, 0, trimmed, 0, n);
+            directions = trimmed;
+        }
+        return new NavState.LaneState(packed, directions);
+    }
+
+    /**
+     * IPC line 5 (1.7 only): "&lt;event&gt; &lt;side&gt; &lt;angle&gt; &lt;number&gt;" of the manoeuvre AFTER the current
+     * one, in line 1's vocabulary. The argument is the payload taggedLine() stripped the "5 " from.
+     * Absent or malformed -> null (no next manoeuvre).
+     */
+    static int[] packNextManeuver(String payload) {
+        if (payload == null || payload.length() == 0) {
+            return null;
+        }
+        try {
+            StringTokenizer st = new StringTokenizer(payload, " ");
+            int event = Integer.parseInt(st.nextToken());
+            int side = Integer.parseInt(st.nextToken());
+            int angle = Integer.parseInt(st.nextToken());
+            int number = Integer.parseInt(st.nextToken());
+            if (event <= 0) {
+                return null;
+            }
+            return new int[]{ event, side, angle, number };
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     /**
@@ -779,10 +1402,10 @@ public final class AANavReader implements Runnable {
         return new int[]{ meters, seconds };
     }
 
-    private void applyDestination(String payload) {
+    /** Line 4 (distance / time) and line 8 (arrival clock) as the one thing the cluster shows. */
+    static NavState.Destination destinationOf(String payload, String eta) {
         int[] d = packDestination(payload);
-        NavState.destinationMeters = d[0];
-        NavState.destinationSeconds = d[1];
+        return new NavState.Destination(d[0], d[1], eta);
     }
 
     /**
@@ -803,6 +1426,56 @@ public final class AANavReader implements Runnable {
             minutes = 59;
         }
         return new int[]{ hours, minutes };
+    }
+
+    /**
+     * The phone's arrival clock string (IPC line 8) -&gt; {hour 0..23, minute 0..59}, or null when it
+     * cannot be read. Accepts what the navigators were seen to send ("17:42", "7:51") plus the
+     * 12-hour forms of an English phone ("5:42 PM", "12:05 am", "5:42 p.m."); "." also separates.
+     * Anything else (a date, a day suffix, garbage) -&gt; null, and the cluster gets the remaining
+     * time instead.
+     */
+    public static int[] parseEtaClock(String eta) {
+        if (eta == null) {
+            return null;
+        }
+        String s = eta.trim();
+        int n = s.length();
+        int i = 0;
+        int h = 0;
+        int hd = 0;
+        while (i < n && hd < 2 && Character.isDigit(s.charAt(i))) {
+            h = h * 10 + (s.charAt(i) - '0');
+            i++;
+            hd++;
+        }
+        if (hd == 0 || i >= n || (s.charAt(i) != ':' && s.charAt(i) != '.')) {
+            return null;
+        }
+        i++;
+        if (i + 2 > n || !Character.isDigit(s.charAt(i)) || !Character.isDigit(s.charAt(i + 1))) {
+            return null;
+        }
+        int m = (s.charAt(i) - '0') * 10 + (s.charAt(i + 1) - '0');
+        i += 2;
+        String rest = s.substring(i).trim().toLowerCase();
+        if (rest.length() > 0) {
+            String ampm = rest.replace('.', ' ').trim();
+            boolean pm = ampm.startsWith("p");
+            boolean am = ampm.startsWith("a");
+            if ((!pm && !am) || h < 1 || h > 12) {
+                return null;
+            }
+            if (am) {
+                h = (h == 12) ? 0 : h;
+            } else {
+                h = (h == 12) ? 12 : h + 12;
+            }
+        }
+        if (h > 23 || m > 59) {
+            return null;
+        }
+        return new int[]{ h, m };
     }
 
     /** AA lane shape -&gt; VW laneDirection, the same 0..255 CCW scale the manoeuvre arrow uses. */

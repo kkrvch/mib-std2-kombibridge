@@ -64,6 +64,12 @@ phone ── AA ──► libgal (shim) ──► /dev/shmem/aa_nav ──► ja
                  each callback       dist time unit road"
 ```
 
+Both files (`aa_nav`, `aa_media`) end with the line `end`. The shim rewrites a file whole on each
+event, which is not atomic, so the jar takes a file only when that last line is there. Otherwise
+it would sometimes parse a half-written one. This is why the jar and libgal must come from the same
+build: a jar with this check shows no nav or media data with an older libgal (the reverse
+combination works).
+
 `/dev/shmem` is a RAM filesystem (the SAL itself logs there), so nothing touches flash. (This is
 the non-nav path. On a nav-capable cluster the jar feeds the same shmem data into the navsd BAP
 functions instead of `CurrentStationInfo` — see [NAVIGATION_VIA_NAVSD.md](NAVIGATION_VIA_NAVSD.md).)
@@ -100,10 +106,10 @@ measured on the cluster, top to bottom:
 
 | row | BAP field | route guidance active | Android Auto connected, no route |
 |---|---|---|---|
-| 1 | `secondaryInformation` | street, `Rerouting...`, or the **lane row** while there is one | artist |
-| 2 | `tertiaryInformation` | maneuver word + roundabout exit | album |
+| 1 | `secondaryInformation` | street, the rerouting notice, or the **lane row** while there is one | artist |
+| 2 | `tertiaryInformation` | the navigator's instruction text when it says more than the street (IPC line 9), else the maneuver word; + roundabout exit | album |
 | 3 | `primaryInformation` (**big font**) | arrow glyph + distance to the turn | track title |
-| 4 | `quaternaryInformation` | distance + time to the destination | progress bar (`SHOW_MEDIA_PROGRESS`) |
+| 4 | `quaternaryInformation` | distance + time to the destination | progress bar (`Media.SHOW_PROGRESS`) |
 
 ```
 | x | x | ► |         <- lanes, only in the last few hundred metres
@@ -123,6 +129,12 @@ so that is where it goes. Losing the street name for the last few hundred metres
 trade: at that point the junction is in sight and which lane matters far more than what it is
 called. The rerouting notice still wins the row, since row 1 is the only place that notice appears
 and lanes carried over from a route being recalculated are stale anyway.
+
+The words the mod writes itself (maneuver words, the rerouting notice, "exit", units) come from
+`de.aatokombi.Strings`, in the language the head unit last set on the instrument cluster
+(`LanguageHelper.lastRequestedLanguageForInstrumentCluster`, read by reflection; JVM locale, then
+English, as fallbacks). English and Russian are built in; another language is one more row in
+`Strings.TABLE`.
 
 The now-playing title used to scroll in row 4 as a marquee and no longer does — the route wants all
 four rows, and music is fully visible whenever no route is guiding.
@@ -152,8 +164,14 @@ The same library exposes more endpoints the SAL likewise ignores:
   are usually compatible, but strictly should be recompiled against the target `MIBHMI.jar`.
 - **shim** - `inject.py` **auto-resolves** all per-firmware addresses
   from the target libgal's own `.dynsym` / relocations / `.plt`, and auto-locates the `BL` patch
-  site by scanning `GalReceiver::init` for the call to the `onChannelOpened` PLT stub. The same
-  shim sources adapt to any STD2 libgal build. (Confirmed necessary in practice: even two copies
+  site by scanning `GalReceiver::init` for the call to the `onChannelOpened` PLT stub. The
+  object layouts the shim relies on (the MessageRouter inside GalReceiver, its service table,
+  endpoint fields, vtable slots, IoBuffer words, listener pointers) are read by `shim/layout.py`
+  from the instructions of the small exported functions that use them and baked into the blob's
+  `.gallayout` slots; what is not a single number (the media listener's calling conventions, the
+  fields the stock `addDiscoveryInfo` serialises) is compared by a position-independent
+  fingerprint of the code. A failed check stops the build (navigation) or leaves the media
+  endpoint out. `tests/inject` exercises this on altered copies of the real library. (Confirmed necessary in practice: even two copies
   of the same build — the device copy vs the firmware-image copy — have addresses shifted by 8 bytes, so the
   old hardcoded values were wrong for the firmware-image libgal.) See
   [`../shim/README.md`](../shim/README.md).

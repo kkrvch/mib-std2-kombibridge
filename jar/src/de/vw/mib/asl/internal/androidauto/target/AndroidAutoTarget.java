@@ -24,6 +24,7 @@ import de.vw.mib.asl.internal.androidauto.api.impl.ASLAndroidAutoExBoxServiceImp
 import de.vw.mib.asl.internal.androidauto.api.impl.ExboxGuidanceListenerImpl;
 import de.vw.mib.asl.internal.media.clients.player.TrackInfo;
 import de.vw.mib.genericevents.EventGeneric;
+import de.vw.mib.genericevents.GenericEventException;
 import de.vw.mib.genericevents.GenericEvents;
 import de.vw.mib.log4mib.LogMessage;
 import de.vw.mib.threads.AsyncServiceFactory;
@@ -36,6 +37,7 @@ import org.dsi.ifc.androidauto2.TelephonyState;
 import org.dsi.ifc.androidauto2.TrackData;
 import org.dsi.ifc.base.DSIListener;
 import org.dsi.ifc.global.ResourceLocator;
+import org.osgi.framework.InvalidSyntaxException;
 import org.osgi.framework.ServiceReference;
 
 import java.io.FileInputStream;
@@ -67,9 +69,9 @@ public class AndroidAutoTarget
     private /*final*/ String _classname;
     private ASLAndroidAutoExBoxServiceImpl apiImpl;
     private NavigationHandler navigationHandler;
-    // NOTE: the MST2 jxe->jar decompile corrupted these large int constants (jxe2jar artifact).
-    // The framework runtime expects target id 1590002 (== the repo/MHI2 value), confirming the
-    // VW ASL framework uses the same constants on MST2 as on MHI2. Use the repo values.
+    // NOTE: the old jxe->jar conversion (ghcr.io/adi961/jxe2jar) corrupted these large int
+    // constants. The fixed converter (tools/jxe2jar) yields exactly these values from the stock
+    // AndroidAutoTarget, so they are now confirmed against the unit's own bytecode.
     /*final*/ int[] OBSERVED_EVENTS = new int[]{6100005, 6100006, 6100016, 6100017, 6100025, 4000045, 4000015, 4000024, 4000021, 4000007, 4300038};
     /*final*/ int[] DSI_ANDROIDAUTO2_ATTR = new int[]{1, 6, 2, 3, 4, 5, 7, 8};
     static /* synthetic */ Class class$org$dsi$ifc$androidauto2$DSIAndroidAuto2;
@@ -77,7 +79,7 @@ public class AndroidAutoTarget
     static /* synthetic */ Class class$de$vw$mib$threads$AsyncServiceFactory;
     static /* synthetic */ Class class$de$vw$mib$popup$PopupInformationHandler;
 
-    public AndroidAutoTarget(GenericEvents genericEvents, int n, String string) {
+    public AndroidAutoTarget(GenericEvents genericEvents, int n, String string) throws Exception {
         super(genericEvents, n, string);
         this._classname = "AndroidAutoTarget";
         if (this.isTraceEnabled()) {
@@ -86,7 +88,7 @@ public class AndroidAutoTarget
         this.initHandler();
     }
 
-    public AndroidAutoTarget(GenericEvents genericEvents, String string) {
+    public AndroidAutoTarget(GenericEvents genericEvents, String string) throws Exception {
         super(genericEvents, string);
         this._classname = "AndroidAutoTarget";
         if (this.isTraceEnabled()) {
@@ -95,7 +97,7 @@ public class AndroidAutoTarget
         this.initHandler();
     }
 
-    public AndroidAutoTarget(GenericEvents genericEvents, int n) {
+    public AndroidAutoTarget(GenericEvents genericEvents, int n) throws Exception {
         super(genericEvents, n);
         this._classname = "AndroidAutoTarget";
         if (this.isTraceEnabled()) {
@@ -127,16 +129,19 @@ public class AndroidAutoTarget
         // AAtoKombi: feed AA nav from the patched GAL lib via /dev/shmem/aa_nav (replaces the stubbed
         // DSIAndroidAuto2 nav path). A single AANavReader parses the file once and routes the maneuver
         // by runtime cluster type (ClusterCaps): the navsd Navigation menu on a nav-capable cluster,
-        // the media now-playing widget on a non-nav one. Gated by Config.SHOW_NAV so it drives NO
+        // the media now-playing widget on a non-nav one. Gated by Config.Navigation.ENABLED so it drives NO
         // cluster surface when nav is off (not started -> NavState.ACTIVE stays false -> navsd renders
         // stock; the media branch is off too). Defensive: must never break target construction.
+        // AAtoKombi: at DEBUG, ask the patched GAL library for its per-trip dump (see TripDump).
+        try { de.aatokombi.TripDump.apply(); } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#1", t); }
+        try { de.aatokombi.ClusterVideo.applyMode(); } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#2", t); }
         try {
-            if (Config.SHOW_NAV) de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
-        } catch (Throwable t) {}
+            if (Config.Navigation.ENABLED) de.vw.mib.bap.mqbab2.navsd.functions.AANavReader.ensureStarted(this.navigationHandler);
+        } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#3", t); }
         // AAtoKombi: feed the real AA now-playing track via /dev/shmem/aa_media (patched GAL media
         // endpoint), shown in the cluster media widget when no route guidance is active.
-        // Gated by Config.SHOW_MEDIA so now-playing can be turned off independently.
-        try { if (Config.SHOW_MEDIA) new ShmemMediaReader(this).start(); } catch (Throwable t) {}
+        // Gated by Config.Media.ENABLED so now-playing can be turned off independently.
+        try { if (Config.Media.ENABLED) new ShmemMediaReader(this).start(); } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#4", t); }
         this.requestHandler.initNavigationListener(this.navigationListener);
         this.aslHandler.initNavigationListener(this.navigationListener);
         this.audioHandler.initTimerHandler(this.timerHandler);
@@ -147,7 +152,7 @@ public class AndroidAutoTarget
     }
 
     // @Override
-    public void gotEvent(EventGeneric eventGeneric) {
+    public void gotEvent(EventGeneric eventGeneric) throws Exception {
         if (this.aslEventHandler == null) {
             // An event can be dispatched here from the AbstractTarget super-constructor
             // (register() -> gotEvent()) BEFORE initHandler() runs and BEFORE the framework
@@ -205,7 +210,7 @@ public class AndroidAutoTarget
         return this.dsiAndroidAuto2;
     }
 
-    public void startup() {
+    public void startup() throws GenericEventException, InvalidSyntaxException {
         ServiceReference[] serviceReferenceArray;
         if (this.isTraceEnabled()) {
             this.trace().append("AndroidAutoTarget").append(".startup()").log();
@@ -345,7 +350,12 @@ public class AndroidAutoTarget
         TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__album = trackData.album;
         TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__artist = trackData.artist;
         TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__total_time = trackData.duration;
-        TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__is_cover_available = false;
+        // The cover belongs to the patched GAL media endpoint (applyCoverArt, called on every
+        // metadata event of the phone). With that path on, this callback must not take the cover
+        // away again: arriving after applyCoverArt it would leave the track without one.
+        if (!Config.Media.ENABLED || !Config.Media.SHOW_COVER_ART) {
+            TrackInfo.mMetaInfos[0].avdc_audio_current_track_info__is_cover_available = false;
+        }
         TrackInfo.CURRENT_TRACK_INFO.updateList(TrackInfo.mMetaInfos);
     }
 
@@ -357,11 +367,11 @@ public class AndroidAutoTarget
 
     // The DSI cover-art-URL callback is empty on this platform: AA cover art does not arrive via the
     // DSIAndroidAuto2 attribute here. The real cover bytes come from the patched GAL media endpoint
-    // (/dev/shmem/aa_cover -> ShmemMediaReader -> applyCoverArt below), gated by Config.SHOW_COVER_ART.
+    // (/dev/shmem/aa_cover -> ShmemMediaReader -> applyCoverArt below), gated by Config.Media.SHOW_COVER_ART.
     public void dsiAndroidAuto2UpdateCoverArtUrl(ResourceLocator resourceLocator, int n) {
     }
 
-    // ===== AID album cover (Config.SHOW_COVER_ART) =====================================
+    // ===== AID album cover (Config.Media.SHOW_COVER_ART) =====================================
     // The shim writes the raw AlbumArt bytes to /dev/shmem/aa_cover; here we stage them into the HMI
     // image cache and point TrackInfo list-58's __cover at them with __is_cover_available=true. The
     // stock MediaCoverArtAdapter reads list 58 and the stock CoverArt usecase forwards it to the
@@ -433,16 +443,40 @@ public class AndroidAutoTarget
         }
     }
 
-    // Pick (once, cached) a directory we can write AND the picture server can read: prefer the VW HMI
-    // image cache /var/app/icab/tmp (the cluster reads from there); else fall back to /dev/shmem (RAM).
+    // Where the covers go (once, cached). A new file every track, so it must be RAM: the unit's
+    // root file system is its flash (mount, car 2026-11-17: / on hd0t177, qnx6; RAM only on
+    // /ramdisk and /dev/shmem). The VW HMI image cache /var/app/icab/tmp is used only when it
+    // really lies in RAM; else /dev/shmem. COVER_ON_FLASH_FILE brings the old choice back, should
+    // the picture server not read covers from /dev/shmem (not verified on the car yet).
+    static final String ICAB_TMP = "/var/app/icab/tmp";
+    static final String COVER_RAM_DIR = "/dev/shmem";
+    static final String COVER_ON_FLASH_FILE = "/tsd/var/aatokombi/cover-on-flash";
+
+    /** The decision itself: the image cache only if it is writable and in RAM (or forced). */
+    static String coverDirFor(String icabRealPath, boolean icabWritable, boolean forceIcab) {
+        if (!icabWritable) {
+            return COVER_RAM_DIR;
+        }
+        if (forceIcab) {
+            return ICAB_TMP;
+        }
+        String r = (icabRealPath != null) ? icabRealPath : "";
+        return (r.startsWith("/ramdisk/") || r.startsWith("/dev/shmem/") || r.equals("/dev/shmem"))
+                ? ICAB_TMP : COVER_RAM_DIR;
+    }
+
     private String coverDir() {
         if (coverDirCached != null) {
             return coverDirCached;
         }
-        String tmp = "/var/app/icab/tmp";
-        try { new java.io.File(tmp).mkdirs(); } catch (Throwable t) {}
-        coverDirCached = dirWritable(tmp) ? tmp : "/dev/shmem";
-        MIBLogger.getInstance().debug("coverDir -> " + coverDirCached);
+        try { new java.io.File(ICAB_TMP).mkdirs(); } catch (Throwable t) { de.aatokombi.Quiet.note("AndroidAutoTarget#5", t); }
+        String real = null;
+        try { real = new java.io.File(ICAB_TMP).getCanonicalPath(); } catch (Throwable t) { real = null; }
+        boolean force = false;
+        try { force = new java.io.File(COVER_ON_FLASH_FILE).exists(); } catch (Throwable t) { force = false; }
+        coverDirCached = coverDirFor(real, dirWritable(ICAB_TMP), force);
+        MIBLogger.getInstance().info("cover art is staged in " + coverDirCached + " (" + ICAB_TMP + " is "
+                + (real != null ? real : "?") + (force ? ", cover-on-flash set" : "") + ")");
         return coverDirCached;
     }
 

@@ -3,21 +3,22 @@ package de.vw.mib.asl.internal.androidauto.target;
 import de.aatokombi.Config;
 import de.adi961.miblogger.MIBLogger;
 import de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo;
+import de.vw.mib.bap.mqbab2.audiosd.functions.SourceState;
 import de.vw.mib.asl.framework.internal.framework.ServiceManager;
 import de.vw.mib.timer.Timer;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
+import java.io.FileInputStream;
 
 /**
  * Reads the Android Auto now-playing track from /dev/shmem/aa_media (written by the patched GAL
- * receiver / navshim MediaPlaybackStatusEndpoint, see work/shim/) and shows it on the cluster's
- * media widget via {@link CurrentStationInfo}. Gated by {@link Config#SHOW_MEDIA}.
+ * receiver / navshim MediaPlaybackStatusEndpoint, see shim/src/navshim_fs.cpp) and shows it on the cluster's
+ * media widget via {@link CurrentStationInfo}. Gated by {@link Config#Media.ENABLED}.
  *
  * IPC line (the shim rewrites the whole line, O_TRUNC):
- *   seq &lt;Song&gt;\t&lt;Artist&gt;\t&lt;Album&gt;\t&lt;posSec&gt;\t&lt;durSec&gt;
+ *   seq &lt;Song&gt;\t&lt;Artist&gt;\t&lt;Album&gt;\t&lt;posSec&gt;\t&lt;durSec&gt;\t&lt;coverSeq&gt;\t&lt;coverLen&gt;
+ *       \t&lt;connected&gt;\t&lt;session&gt;\t&lt;state&gt;\t&lt;shuffle&gt;\t&lt;repeat&gt;\t&lt;repeatOne&gt;
  * The seq is separated by the first space; the text/number fields are tab-separated. posSec/durSec
- * feed the optional progress bar ({@link Config#SHOW_MEDIA_PROGRESS}); they are appended after the
+ * feed the optional progress bar ({@link Config#Media.SHOW_PROGRESS}); they are appended after the
  * three track strings so an older 3-field line still parses (pos/dur then default to 0 = no bar).
  *
  * Disconnect handling is event-driven, not timed: the shim writes an explicit {@code connected} flag
@@ -25,9 +26,25 @@ import java.io.FileReader;
  * a {@code session} epoch (field 8) that bumps on every reconnect (GalReceiver::init). We clear the
  * now-playing text immediately on connected=0 and on a new session, and KEEP the last track while
  * connected=1 (so a paused track no longer blanks after a few seconds). A long
- * {@link Config#AA_STALE_BACKSTOP_MS} backstop only covers a hard yank that produced no teardown call.
+ * {@link #AA_STALE_BACKSTOP_MS} backstop only covers a hard yank that produced no teardown call.
  */
 public class ShmemMediaReader implements Runnable {
+
+    /**
+     * Backstop timeout (ms) for the ONE disconnect case the GAL library gives no signal for: the
+     * phone is physically yanked and the SAL never tears the receiver down, so the
+     * GalReceiver::shutdown hook never fires and the connected flag stays stuck at 1.
+     *
+     * The normal disconnect edge is event-driven and instant, NOT timed: the patched shim flips an
+     * explicit {@code connected} flag to 0 the moment the AA session tears down (its
+     * GalReceiver::shutdown hook), and bumps a {@code session} epoch on every reconnect
+     * (GalReceiver::init). The readers clear immediately on connected=0 and on a new session, and
+     * KEEP the last frame indefinitely while connected=1 (so Waze frozen at a light no longer
+     * blanks). This backstop only bites when connected has been stuck at 1 with no new data for this
+     * long - a hard yank with no teardown callback. Generous so a long stop never trips it. Also
+     * used by AANavReader.
+     */
+    public static final long AA_STALE_BACKSTOP_MS = 300000L;   // 5 min
 
     private static final String PATH = "/dev/shmem/aa_media";
     private static final long POLL_MS = 500L;
@@ -48,7 +65,7 @@ public class ShmemMediaReader implements Runnable {
 
     /** Create and start the repeating poll timer on the framework timer thread. */
     public void start() {
-        if (!Config.SHOW_MEDIA) {
+        if (!Config.Media.ENABLED) {
             return; // now-playing feature disabled
         }
         try {
@@ -72,6 +89,11 @@ public class ShmemMediaReader implements Runnable {
 
     private void processOnce() {
         String line = readLine();
+        if (line == UNCHANGED) {
+            // Byte for byte what the last poll handled (a paused track, a closed session).
+            maybeClearStale();
+            return;
+        }
         if (line == null || line.length() == 0) {
             maybeClearStale();
             return;
@@ -90,12 +112,13 @@ public class ShmemMediaReader implements Runnable {
 
         // Tab-split the remainder. Trailing fields are optional/appended over time.
         //   f: song artist album posSec durSec coverSeq coverLen connected session
+        //      state shuffle repeat repeatOne
         String rest = line.substring(sp + 1);
         String[] f = splitTabs(rest);
         // connected: present+valid => use it; absent (older shim) OR torn/garbage (partial read of the
         // truncate-rewritten file) => default 1 (assume connected), so we never spuriously clear.
         int connected = (int) parseLongSafe(f.length > 7 ? f[7] : null, 1L);
-        long session  = parseLongSafe(f.length > 8 ? f[8] : null, -1L);
+        long session  = sessionOf(f, lastSession);
 
         // New AA session (phone reconnected): drop stale now-playing and re-arm the seq tracker.
         if (session != lastSession) {
@@ -128,12 +151,14 @@ public class ShmemMediaReader implements Runnable {
         int posSec = parseIntSafe(f.length > 3 ? f[3] : null);
         int durSec = parseIntSafe(f.length > 4 ? f[4] : null);
 
-        // Verbosity driven solely by Config.LOG_LEVEL; compile-time gate so this per-poll string is
+        // Verbosity driven solely by Config.Advanced.LOG_LEVEL; compile-time gate so this per-poll string is
         // not built unless compiled at DEBUG/TRACE.
-        if (Config.LOG_LEVEL <= MIBLogger.DEBUG) {
+        if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) {
             MIBLogger.getInstance().debug("aa_media seq=" + seq + " conn=" + connected + " sess=" + session
                     + " song=" + song + " artist=" + artist + " album=" + album
-                    + " pos=" + posSec + " dur=" + durSec);
+                    + " pos=" + posSec + " dur=" + durSec
+                    + " state=" + (f.length > 9 ? f[9] : "-") + " shuffle=" + (f.length > 10 ? f[10] : "-")
+                    + " repeat=" + (f.length > 11 ? f[11] : "-") + " repeatOne=" + (f.length > 12 ? f[12] : "-"));
         }
 
         CurrentStationInfo.mediaTitle = song;
@@ -143,11 +168,18 @@ public class ShmemMediaReader implements Runnable {
         CurrentStationInfo.mediaDurSec = durSec;
         CurrentStationInfo.pokeNav();
 
+        // Shuffle / repeat (fields 10..12, appended by a newer shim; absent -> off). SourceState
+        // re-sends only on a change, so the ~1/s heartbeat costs nothing here.
+        SourceState.setAndroidAutoPlaybackMode(
+                parseIntSafe(f.length > 10 ? f[10] : null) == 1,
+                parseIntSafe(f.length > 11 ? f[11] : null) == 1,
+                parseIntSafe(f.length > 12 ? f[12] : null) == 1);
+
         // Cover art (AID only): fields 5=coverSeq, 6=coverLen (appended after pos/dur by the shim).
         // coverSeq advances on every metadata event (track switch); re-evaluate the cover only then,
         // not on the ~1s heartbeat. coverLen 0 => phone sent no art => clear it. Fully gated by
         // SHOW_COVER_ART so a non-AID build never touches the kombipictureserver path.
-        if (Config.SHOW_COVER_ART && target != null) {
+        if (Config.Media.SHOW_COVER_ART && target != null) {
             long coverSeq = parseLongSafe(f.length > 5 ? f[5] : null, -1L);
             int coverLen = parseIntSafe(f.length > 6 ? f[6] : null);
             if (coverSeq != lastCoverSeq) {
@@ -155,6 +187,15 @@ public class ShmemMediaReader implements Runnable {
                 target.applyCoverArt(coverLen);
             }
         }
+    }
+
+    /**
+     * The session epoch (field 8). A line that does not carry a readable one - cut short, or from
+     * an older shim - keeps the session we already know: reading it as "another session" cleared
+     * the now-playing text and re-staged the cover for nothing.
+     */
+    static long sessionOf(String[] f, long known) {
+        return parseLongSafe(f.length > 8 ? f[8] : null, known);
     }
 
     /** Parse a long, defaulting on null / garbage. */
@@ -206,13 +247,16 @@ public class ShmemMediaReader implements Runnable {
         if (CurrentStationInfo.mediaTitle == null) {
             return; // nothing shown
         }
-        if (System.currentTimeMillis() - lastSeqChangeMs > Config.AA_STALE_BACKSTOP_MS) {
+        if (System.currentTimeMillis() - lastSeqChangeMs > AA_STALE_BACKSTOP_MS) {
             clearNowPlaying();
         }
     }
 
     /** Clear the now-playing override (and the AID cover) when playback stops / the phone disconnects. */
     private void clearNowPlaying() {
+        // Shuffle / repeat belong to the session as much as the track does. Outside the early return:
+        // the flags can be set before any title has arrived. A no-op when they are already off.
+        SourceState.setAndroidAutoPlaybackMode(false, false, false);
         if (CurrentStationInfo.mediaTitle == null) {
             return; // already clear
         }
@@ -222,28 +266,69 @@ public class ShmemMediaReader implements Runnable {
         CurrentStationInfo.mediaPosSec = 0;
         CurrentStationInfo.mediaDurSec = 0;
         CurrentStationInfo.pokeNav();
-        if (Config.SHOW_COVER_ART && target != null) {
-            try { target.applyCoverArt(0); } catch (Throwable t) {}
+        if (Config.Media.SHOW_COVER_ART && target != null) {
+            try { target.applyCoverArt(0); } catch (Throwable t) { de.aatokombi.Quiet.note("ShmemMediaReader#1", t); }
             lastCoverSeq = -2L;
         }
         MIBLogger.getInstance().debug("aa_media cleared now-playing");
     }
 
+    // The file as last read: an unchanged one is not split and parsed again.
+    private final byte[] rawBuf = new byte[1024];
+    private final byte[] lastRaw = new byte[1024];
+    private int lastRawLen = -1;
+    private static final String UNCHANGED = new String("unchanged");   // compared by identity
+
     private String readLine() {
-        BufferedReader br = null;
+        FileInputStream in = null;
         try {
-            br = new BufferedReader(new FileReader(PATH));
-            return br.readLine();
+            in = new FileInputStream(PATH);
+            int n = 0;
+            int r;
+            while (n < rawBuf.length && (r = in.read(rawBuf, n, rawBuf.length - n)) > 0) {
+                n += r;
+            }
+            if (n <= 0) {
+                return null;                       // the shim is rewriting it right now
+            }
+            // Only a complete file: one cut by a concurrent rewrite lacks the end line. It is not
+            // remembered either, so the complete file of the next poll is parsed in full.
+            int body = de.aatokombi.IpcFile.body(rawBuf, n);
+            if (body < 0) {
+                return null;
+            }
+            if (n == lastRawLen) {
+                int i = 0;
+                while (i < n && rawBuf[i] == lastRaw[i]) {
+                    i++;
+                }
+                if (i == n) {
+                    return UNCHANGED;
+                }
+            }
+            System.arraycopy(rawBuf, 0, lastRaw, 0, n);
+            lastRawLen = n;
+            return firstLine(new String(rawBuf, 0, body));
         } catch (Exception ex) {
             return null; // file absent yet / transient -> ignore
         } finally {
-            if (br != null) {
+            if (in != null) {
                 try {
-                    br.close();
+                    in.close();
                 } catch (Exception ex) {
                     // ignore
                 }
             }
         }
+    }
+
+    /** The text up to its first line end. */
+    static String firstLine(String text) {
+        int nl = text.indexOf('\n');
+        int end = (nl < 0) ? text.length() : nl;
+        if (end > 0 && text.charAt(end - 1) == '\r') {
+            end--;
+        }
+        return text.substring(0, end);
     }
 }

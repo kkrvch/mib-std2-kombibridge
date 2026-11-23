@@ -27,7 +27,7 @@ extends DistanceTimeToDestinationStage {
     public static boolean isActive() { return INSTANCE != null; }
     public static void poke() {
         DistanceTimeToDestination i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("DistanceTimeToDestination#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -77,7 +77,7 @@ extends DistanceTimeToDestinationStage {
 
     /** The Android Auto source: remaining travel time, never an arrival clock (see MQB TimeToDestination). */
     private void setTimeInfoFromAndroidAuto(DistanceTimeToDestination_Status distanceTimeToDestination_Status) {
-        int seconds = NavState.destinationSeconds;
+        int seconds = NavState.destination.seconds;
         try {
             distanceTimeToDestination_Status.timeInfo.navigationTimeFormat = this.getSystemTimeFormat() == 0 ? 1 : 0;
         } catch (Throwable t) {
@@ -136,7 +136,7 @@ extends DistanceTimeToDestinationStage {
 
     private void setDistanceAndUnit(DistanceTimeToDestination_Status distanceTimeToDestination_Status) {
         if (NavState.ACTIVE) {   // AA active -> NavState.destinationMeters through the stock formatter
-            int meters = NavState.destinationMeters;
+            int meters = NavState.destination.meters;
             if (meters <= 0) {
                 distanceTimeToDestination_Status.distanceToDestination.distance = -1;
                 distanceTimeToDestination_Status.distanceToDestination.unit = 255;

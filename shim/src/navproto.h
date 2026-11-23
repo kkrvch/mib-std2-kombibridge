@@ -29,18 +29,34 @@ typedef unsigned long  usize;
 // opposed to dist/time which are to the next manoeuvre. Both stay 0 on 1.3 (the legacy feed has no
 // such fields), and 0 is also how "the phone has not said yet" is spelled — at 0 m / 0 s you have
 // arrived and guidance ends anyway, so the two are not worth telling apart.
+// curRoad = the road the car is on NOW (0x8007 current_road, 1.7 only), as opposed to road = the
+// road the next manoeuvre turns into. Empty = the phone did not say.
+// next* = steps[1], the manoeuvre AFTER the current one (1.7 only): the cluster can draw it as the
+// small "then" arrow (navsd ManeuverDescriptor.maneuver_2). Same (event, side) vocabulary as the
+// current one; nextValid 0 = the phone sent no second step (or one we cannot name).
+// destName = the address of the FIRST destination in 0x8006 (NavigationDestination.address, 1.7
+// only), as one free-form string ("ул. Ленина 1"); the jar puts it into navsd DestinationInfo.
+// Empty = the phone did not say.
 struct NavState{ u32 seq,status,event,side,dist,time,unit; i32 angle,number; char road[64];
-                 char distText[16]; u32 destDist,destTime; };
+                 char distText[16]; u32 destDist,destTime;
+                 u32 nextValid,nextEvent,nextSide; i32 nextAngle,nextNumber;
+                 char curRoad[64]; char destName[96];
+                 char destEta[16];   // phone's arrival clock for the nearest destination ("17:42")
+                 char cue[96];       // steps[0] instruction text ("Turn left onto ..."), "" = none
+               };
 static NavState g_st;
 
 // Lane guidance (1.7 only) goes out as IPC line 2, so line 1 stays byte-identical:
-//   "2 <count> <lane0> ..."   lane = shape*2 + isHighlighted
+//   "2v <count> <n0> <lane0> ... <n1> <lane...> ..."
+// Each lane keeps every direction Android Auto supplied; lane = shape*2 + isHighlighted.
 // shape: 0 UNKNOWN, 1 STRAIGHT, 2/3 SLIGHT_L/R, 4/5 NORMAL_L/R, 6/7 SHARP_L/R, 8/9 U_TURN_L/R.
 // The cluster shows at most 6 lanes; we cap at 8 and let the jar clamp.
-enum { MAX_LANES = 8 };
+enum { MAX_LANES = 8, MAX_LANE_DIRECTIONS = 3 };
 // Sanity bounds for the 1.7 distance/time fields — anything else means "the phone doesn't know".
 enum { MAX_DIST_M = 20000000, MAX_TIME_S = 1000000 };
-static u8  g_lane[MAX_LANES];
+static u8  g_lane[MAX_LANES];                                  // primary (highlighted else first)
+static u8  g_laneDirs[MAX_LANES][MAX_LANE_DIRECTIONS];
+static u8  g_laneDirCount[MAX_LANES];
 static u32 g_nLane;
 
 // ===== minimal protobuf reader ===============================================================
@@ -67,7 +83,22 @@ static void pb_str(PB* s,char* dst,int cap){
   int j=0;
   for(u32 i=0;i<n;i++){ char c=(char)s->p[i];
     if(c=='\n'||c=='\r'||c=='\t') c=' ';          // line 1 is newline-delimited; never break it
+    // Invisible characters the cluster font draws as a hyphen or a box: Google Maps puts SOFT
+    // HYPHENS into long Russian words ("Направляй\u00ADтесь" came out "Направляй-тесь", 2026-10).
+    // Dropped: U+00AD, U+200B..U+200D (zero-width), U+2060 (word joiner), U+FEFF (BOM).
+    { const u8* q=s->p+i; u32 left=n-i;
+      if(left>=2 && q[0]==0xC2 && q[1]==0xAD){ i+=1; continue; }
+      if(left>=3 && q[0]==0xE2 && q[1]==0x80 && q[2]>=0x8B && q[2]<=0x8D){ i+=2; continue; }
+      if(left>=3 && q[0]==0xE2 && q[1]==0x81 && q[2]==0xA0){ i+=2; continue; }
+      if(left>=3 && q[0]==0xEF && q[1]==0xBB && q[2]==0xBF){ i+=2; continue; } }
     if(j<cap-1) dst[j++]=c; }
+  // Cut short: never leave half a UTF-8 sequence at the end (Cyrillic is 2 bytes a letter), or the
+  // jar decodes a replacement glyph onto the cluster. Back off to the lead byte of the partial char.
+  if((u32)j<n && j>0){
+    int k=j; while(k>0 && (((u8)dst[k-1])&0xC0)==0x80) k--;   // k-1 = lead byte (or ASCII)
+    if(k>0){ u8 lead=(u8)dst[k-1]; int need=(lead>=0xF0)?4:(lead>=0xE0)?3:(lead>=0xC0)?2:1;
+             if(j-(k-1)<need) j=k-1; }
+  }
   dst[j]=0; s->p+=n;
 }
 
@@ -83,11 +114,12 @@ static void pb_str(PB* s,char* dst,int cap){
 //   NavigationStep  { NavigationManeuver maneuver=1; NavigationText instruction=2;
 //                     repeated NavigationLane lanes=3; NavigationRoadInfo road_info=4; }
 //   NavigationText  { text=1 }      NavigationRoadInfo { repeated string road_names=1 }
+//   NavigationDestination { string address=1; ChargingStationDetails charging_station=2; }
 //   NavigationDestination { address=1; ChargingStationDetails charging_station=2 }
 //   NavigationManeuver { type=1; roundabout_exit_number=2; roundabout_exit_angle=3; }
 //   NavigationLane  { repeated LaneDirection dir=1 }   LaneDirection { shape=1; is_highlighted=2; }
 //   NavigationCurrentPosition { NavigationStepDistance step=1; NavigationDestinationDistance dest=2;
-//                               NavigationRoad road=3 }
+//                               NavigationText current_road=3 }   (NavigationText { text=1 })
 //   NavigationStepDistance { NavigationDistance distance=1; time_to_step_seconds=2 }
 //   NavigationDestinationDistance { NavigationDistance distance=1; eta=2(string);
 //                                   time_to_arrival_seconds=3 }
@@ -126,22 +158,37 @@ static const u8 g_mvmap[N_MANEUVER] = {
   MV(15,1), MV(15,2), MV(16,1), MV(16,2)      /* 47 FERRY_BOAT_L/R, FERRY_TRAIN_L/R */
 };
 
-static void parse_maneuver(PB s){
+// Writes through pointers so the current step and the follow-up step share one decoder.
+static void parse_maneuver_to(PB s,u32* event,u32* side,i32* number,i32* angle){
   u32 f,w;
   while(pb_tag(&s,&f,&w)){
     if(f==1&&w==0){ u32 t=pb_var(&s); u8 m=(t<N_MANEUVER)?g_mvmap[t]:g_mvmap[0];
-                    g_st.event=(u32)(m>>2); g_st.side=(u32)(m&3); }
-    else if(f==2&&w==0){ u32 v=pb_var(&s); g_st.number=(v>=1&&v<=99 )?(i32)v:0; }  // -1 => absent
-    else if(f==3&&w==0){ u32 v=pb_var(&s); g_st.angle =(v>=1&&v<=360)?(i32)v:0; }  // -1 => absent
+                    *event=(u32)(m>>2); *side=(u32)(m&3); }
+    else if(f==2&&w==0){ u32 v=pb_var(&s); *number=(v>=1&&v<=99 )?(i32)v:0; }  // -1 => absent
+    else if(f==3&&w==0){ u32 v=pb_var(&s); *angle =(v>=1&&v<=360)?(i32)v:0; }  // -1 => absent
     else pb_skip(&s,w);
   }
 }
+static void parse_maneuver(PB s){ parse_maneuver_to(s,&g_st.event,&g_st.side,&g_st.number,&g_st.angle); }
 
-// A BAP lane element carries ONE arrow, but a lane may allow several directions ("left and
-// straight"). Take the highlighted one when there is one, else the first.
+// steps[1]: only its manoeuvre is kept — the cluster's "then" arrow has no street, lanes or distance
+// of its own. Called after parse_step, which has already cleared next* for this snapshot.
+static void parse_next_step(PB s){
+  u32 ev=0,sd=3; i32 num=0,ang=0; u32 f,w;
+  while(pb_tag(&s,&f,&w)){
+    if(f==1&&w==2){ PB d; if(!pb_sub(&s,&d)) break; parse_maneuver_to(d,&ev,&sd,&num,&ang); }
+    else pb_skip(&s,w);
+  }
+  if(ev==0) return;                              // unnamed / invalid type: nothing to draw
+  g_st.nextEvent=ev; g_st.nextSide=sd; g_st.nextNumber=num; g_st.nextAngle=ang; g_st.nextValid=1;
+}
+
+// A lane may allow several directions ("left and straight"). Keep all of them for the IPC;
+// `g_lane` remains the highlighted direction when there is one, else the first, for the BAP
+// laneDirection field that can carry only one primary arrow.
 static void parse_lane(PB s){
   if(g_nLane>=MAX_LANES) return;
-  u32 f,w; int shape=0,hi=0,have=0;
+  u32 f,w; u8 dirs[MAX_LANE_DIRECTIONS]; int n=0,hi=0;
   while(pb_tag(&s,&f,&w)){
     if(f==1&&w==2){
       PB d; if(!pb_sub(&s,&d)) break;
@@ -151,10 +198,54 @@ static void parse_lane(PB s){
         else if(df==2&&dw==0) h=pb_var(&d)?1:0;
         else pb_skip(&d,dw);
       }
-      if(!have || (h && !hi)){ shape=sh; hi=h; have=1; }
+      if(sh>=0 && sh<=9){
+        int packed=(sh<<1)|h, exists=-1;
+        for(int i=0;i<n;i++) if((dirs[i]>>1)==sh){ exists=i; break; }
+        if(exists>=0){
+          if(h) dirs[exists]=(u8)packed;            // preserve recommendation on duplicates
+        } else if(n<MAX_LANE_DIRECTIONS) {
+          dirs[n++]=(u8)packed;
+        }
+      }
     } else pb_skip(&s,w);
   }
-  if(have && shape>=0 && shape<=9) g_lane[g_nLane++]=(u8)((shape<<1)|hi);
+  if(n){
+    int selected=0;
+    for(int i=0;i<n;i++) if((dirs[i]&1) && !hi){ selected=i; hi=1; }
+    for(int i=0;i<n;i++) g_laneDirs[g_nLane][i]=dirs[i];
+    g_laneDirCount[g_nLane]=(u8)n;
+    g_lane[g_nLane]=dirs[selected];
+    g_nLane++;
+  }
+}
+
+// Copy src into dst[cap], cut at a whole UTF-8 character.
+static void str_fit(char* dst,int cap,const char* src){
+  int j=0; while(src[j] && j<cap-1){ dst[j]=src[j]; j++; }
+  if(src[j] && j>0){
+    int k=j; while(k>0 && (((u8)dst[k-1])&0xC0)==0x80) k--;
+    if(k>0){ u8 lead=(u8)dst[k-1]; int need=(lead>=0xF0)?4:(lead>=0xE0)?3:(lead>=0xC0)?2:1;
+             if(j-(k-1)<need) j=k-1; }
+  }
+  dst[j]=0;
+}
+static const char* str_find(const char* h,const char* n){
+  for(;*h;h++){ const char* a=h; const char* b=n; while(*b && *a==*b){ a++; b++; } if(!*b) return h; }
+  return 0;
+}
+// Google Maps (ru) sometimes puts the whole instruction into the road name:
+//   "здесь: ул. Садовая В сторону ул. Ленина"
+// Too long for the cluster line, and the first half ("here: <the road you turn at>") says nothing
+// the arrow does not. Kept: from "В сторону"/"в сторону" on; without it, the text after "здесь: ".
+static const char* road_clean(const char* t){
+  static const char* const here[]={ "здесь: ","Здесь: " };
+  for(unsigned i=0;i<sizeof here/sizeof here[0];i++){
+    const char* h=here[i]; const char* a=t; while(*h && *a==*h){ a++; h++; }
+    if(*h) continue;                                         // no "здесь: " prefix
+    const char* to=str_find(a," В сторону "); if(!to) to=str_find(a," в сторону ");
+    return to ? to+1 : a;
+  }
+  return t;
 }
 
 // A step is a COMPLETE snapshot of the manoeuvre, so everything it owns is cleared before parsing:
@@ -165,12 +256,16 @@ static void parse_lane(PB s){
 // media widget for a poll cycle. The 0x8007 fields (dist/time/unit) live in the other message and
 // keep their last good value on purpose.
 static void parse_step(PB s){
+  PB s0=s;                                       // the whole step, for the second (cue) pass
   g_st.event=0; g_st.side=3;                     // 3 = TurnSide UNSPECIFIED, as the legacy feed sent
   g_st.number=0; g_st.angle=0; g_st.road[0]=0; g_nLane=0;
+  g_st.nextValid=0; g_st.nextEvent=0; g_st.nextSide=3; g_st.nextAngle=0; g_st.nextNumber=0;
   // The cluster's street line wants a road name, so road_info wins and the instruction is only the
   // fallback for a phone that omits it. Held aside rather than written straight into g_st.road,
   // because protobuf fields may arrive in any order and field 2 must not overwrite field 4.
-  char cue[sizeof g_st.road]; cue[0]=0;
+  // Both read into larger buffers than g_st.road so road_clean sees the whole text before the cut.
+  char cue[160]; cue[0]=0;
+  char rn[160]; rn[0]=0;
   u32 f,w;
   while(pb_tag(&s,&f,&w)){
     if(w!=2){ pb_skip(&s,w); continue; }
@@ -185,26 +280,49 @@ static void parse_step(PB s){
                    while(pb_tag(&d,&rf,&rw)){
                      // Repeated, and a junction can carry several ("A4", "E40"). One line on the
                      // cluster, so the first non-empty name is the one that fits.
-                     if(rf==1&&rw==2 && !g_st.road[0]) pb_str(&d,g_st.road,sizeof g_st.road);
+                     if(rf==1&&rw==2 && !rn[0]) pb_str(&d,rn,sizeof rn);
                      else pb_skip(&d,rw); } }
   }
-  if(!g_st.road[0]){
-    for(usize i=0;i<sizeof g_st.road;i++){ g_st.road[i]=cue[i]; if(!cue[i]) break; }
-  }
+  str_fit(g_st.road,sizeof g_st.road,road_clean(rn[0] ? rn : cue));
+  // The instruction itself, kept apart for the media widget's manoeuvre line (IPC line 9). Its own,
+  // larger buffer: a spoken cue is longer than a road name. Re-read rather than copied from `cue`
+  // above, which is sized for the road fallback.
+  g_st.cue[0]=0;
+  { PB r=s0; u32 rf,rw;
+    while(pb_tag(&r,&rf,&rw)){
+      if(rf==2&&rw==2){ PB d; if(!pb_sub(&r,&d)) break; u32 tf,tw;
+        while(pb_tag(&d,&tf,&tw)){ if(tf==1&&tw==2) pb_str(&d,g_st.cue,sizeof g_st.cue); else pb_skip(&d,tw); } }
+      else pb_skip(&r,rw);
+    } }
 }
 
-// Only the first step reaches the cluster; step[1] is the follow-up manoeuvre. The clearing of the
-// previous manoeuvre happens in parse_step, i.e. only once a step is actually there — see there.
+// steps[0] is the manoeuvre the cluster draws; steps[1] the follow-up one, kept only as the "then"
+// arrow (next*, see parse_next_step); anything after that is ignored. The clearing of the previous
+// manoeuvre happens in parse_step, i.e. only once a step is actually there — see there.
 //
 // Returns 1 when a step was actually parsed. The caller uses that as the "guidance is running"
 // signal: at 1.7 the stock dispatcher is bypassed entirely, so its status callback never fires and
 // this message is the only evidence that a route exists.
+// The destination is message-level, so it follows the same "complete snapshot" rule as the step,
+// but only for a frame that carried a step: a stepless (truncated) frame changes nothing.
 static int parse_navstate(const u8* p,u32 len){
   PB s; s.p=p; s.e=p+len;
-  int first=1; u32 f,w;
+  int first=1,second=0,gotDest=0; u32 f,w;
+  char dest[sizeof g_st.destName]; dest[0]=0;
   while(pb_tag(&s,&f,&w)){
-    if(f==1&&w==2){ PB d; if(!pb_sub(&s,&d)) break; if(first){ parse_step(d); first=0; } }
+    if(f==1&&w==2){ PB d; if(!pb_sub(&s,&d)) break;
+                    if(first){ parse_step(d); first=0; }
+                    else if(!second){ parse_next_step(d); second=1; } }   // steps[2..] unused
+    else if(f==2&&w==2){ PB d; if(!pb_sub(&s,&d)) break;
+                    if(!gotDest){ u32 df,dw;                             // dests[1..] = later legs
+                      while(pb_tag(&d,&df,&dw)){
+                        if(df==1&&dw==2) pb_str(&d,dest,sizeof dest);
+                        else pb_skip(&d,dw); }
+                      gotDest=1; } }
     else pb_skip(&s,w);
+  }
+  if(!first){
+    for(usize i=0;i<sizeof g_st.destName;i++){ g_st.destName[i]=dest[i]; if(!dest[i]) break; }
   }
   return !first;
 }
@@ -230,6 +348,9 @@ static int parse_navstatus(const u8* p,u32 len){
 
 static void parse_curpos(const u8* p,u32 len){
   PB s; s.p=p; s.e=p+len; u32 f,w; int gotDest=0;
+  // The current road is part of every position update; one that does not carry it means "not known
+  // here" (unnamed road, car park), so it is cleared rather than left showing the last street.
+  char cur[sizeof g_st.curRoad]; cur[0]=0;
   while(pb_tag(&s,&f,&w)){
     if(f==1&&w==2){                              // NavigationStepDistance (field 2 is the destination)
       PB d; if(!pb_sub(&s,&d)) break;
@@ -261,6 +382,7 @@ static void parse_curpos(const u8* p,u32 len){
       PB d; if(!pb_sub(&s,&d)) break;            // per remaining waypoint, nearest first.
       if(gotDest) continue;                      // only the nearest reaches the cluster; a stopover
       gotDest=1;                                 // is what the driver is heading for right now.
+      char eta[sizeof g_st.destEta]; eta[0]=0;   // absent in this entry => cleared below
       u32 df,dw;
       while(pb_tag(&d,&df,&dw)){
         if(df==1&&dw==2){ PB n; if(!pb_sub(&d,&n)) break;
@@ -272,15 +394,127 @@ static void parse_curpos(const u8* p,u32 len){
             if(nf==1&&nw==0){ u32 v=pb_var(&n); if(v<=MAX_DIST_M) g_st.destDist=v; }
             else pb_skip(&n,nw);
           } }
-        // Field 2 is the phone's ETA clock string ("17:11"); we take the remaining seconds instead,
-        // so no timezone or clock-skew question ever arises. Committed independently of the metres:
-        // they are separate cluster functions (fid 22 and 21), not one displayed pair.
+        // Field 2 is the phone's ETA clock string ("17:11", locale-formatted). It goes out verbatim
+        // (IPC line 8) for the arrival-clock form of fid 22; the remaining seconds below stay the
+        // default form. Committed independently of the metres: separate cluster functions.
+        else if(df==2&&dw==2){ pb_str(&d,eta,sizeof eta); }
         else if(df==3&&dw==0){ u32 v=pb_var(&d); if(v<=MAX_TIME_S) g_st.destTime=v; }
         else pb_skip(&d,dw);
+      }
+      for(usize i=0;i<sizeof g_st.destEta;i++){ g_st.destEta[i]=eta[i]; if(!eta[i]) break; }
+    }
+    else if(f==3&&w==2){                         // NavigationText current_road { text = 1 }
+      PB d; if(!pb_sub(&s,&d)) break;
+      u32 tf,tw;
+      while(pb_tag(&d,&tf,&tw)){
+        if(tf==1&&tw==2 && !cur[0]) pb_str(&d,cur,sizeof cur);
+        else pb_skip(&d,tw);
       }
     }
     else pb_skip(&s,w);
   }
+  // Committed when the frame named a road, or was read to its end without one. A frame cut short
+  // before field 3 says nothing about the road, so the last one stays (no flicker on a bad frame).
+  if(cur[0] || s.p>=s.e){
+    for(usize i=0;i<sizeof g_st.curRoad;i++){ g_st.curRoad[i]=cur[i]; if(!cur[i]) break; }
+  }
+}
+
+// ===== ServiceDiscoveryResponse: opt out of the phone's Bluetooth set-up ======================
+// With 1.7 advertised, current Android Auto runs its car-pairing flow late: it waits ~2 min in
+// STATE_REQUESTING_CAR_PAIRING_PREPARATION for a 1.7 head unit to say it is ready (the 1.3-era
+// libgal never does), then sends BluetoothPairingRequest mid-music. The head unit answers
+// "delayed, then already paired", the phone re-routes its Bluetooth audio, and the media player
+// pauses. Observed on the car at 121 s after connect, every session; on 1.3 the same exchange
+// happens in the first 2 s, before any music.
+// The protocol has an opt-out: BluetoothChannel.adapter_address = "SKIP_THIS_BLUETOOTH" and the
+// phone skips its Bluetooth state machine. The car's own Bluetooth (HFP calls, contacts) is set up
+// by the head unit as it is without Android Auto, so nothing is lost.
+// Layout: ServiceDiscoveryResponse { repeated ChannelDescriptor = 1 }, ChannelDescriptor
+// { BluetoothChannel = 6 }, BluetoothChannel { string adapter_address = 1; packed methods = 2 }.
+// in/n = the message WITHOUT its 2-byte id. Writes the rewritten message to out and returns its
+// length; returns 0 (send the original unchanged) when there is no Bluetooth channel, it already
+// says SKIP_THIS_BLUETOOTH, or anything does not parse or fit. Never reads outside in[0..n).
+static const char SDP_SKIP_BT[] = "SKIP_THIS_BLUETOOTH";
+static int sdp_rd(const u8* p, u32 n, u32* i, u32* v){
+  u32 r=0;
+  for(int sh=0; sh<35 && *i<n; sh+=7){ u8 b=p[(*i)++]; r|=(u32)(b&0x7f)<<sh; if(!(b&0x80)){ *v=r; return 1; } }
+  return 0;
+}
+static u32 sdp_wr(u8* o, u32 v){ u32 k=0; while(v>=0x80){ o[k++]=(u8)(v|0x80); v>>=7; } o[k++]=(u8)v; return k; }
+// Skips one field's value (the key already read); 0 on a truncated or unknown wire type.
+static int sdp_skipval(const u8* p, u32 n, u32* i, u32 wt){
+  u32 v;
+  if(wt==0) return sdp_rd(p,n,i,&v);
+  if(wt==1){ if(n-*i<8) return 0; *i+=8; return 1; }
+  if(wt==5){ if(n-*i<4) return 0; *i+=4; return 1; }
+  if(wt==2){ if(!sdp_rd(p,n,i,&v) || v>n-*i) return 0; *i+=v; return 1; }
+  return 0;
+}
+static u32 sdp_copy(u8* out, u32 o, u32 cap, const u8* src, u32 len){
+  if(len>cap-o) return 0xffffffffu;
+  for(u32 k=0;k<len;k++) out[o+k]=src[k];
+  return o+len;
+}
+// One BluetoothChannel with field 1 replaced; returns its new length or 0.
+static u32 sdp_bt_rewrite(const u8* b, u32 n, u8* out, u32 cap, int* already){
+  u32 i=0, o=0; int seen=0;
+  while(i<n){
+    u32 ks=i, key; if(!sdp_rd(b,n,&i,&key)) return 0;
+    if((key>>3)==1 && (key&7)==2){
+      u32 L; if(!sdp_rd(b,n,&i,&L) || L>n-i) return 0;
+      if(L==sizeof SDP_SKIP_BT-1){
+        u32 k=0; while(k<L && b[i+k]==(u8)SDP_SKIP_BT[k]) k++;
+        if(k==L) *already=1;
+      }
+      i+=L; seen=1;
+      if(cap-o < 2+sizeof SDP_SKIP_BT) return 0;
+      out[o++]=0x0a; o+=sdp_wr(out+o, sizeof SDP_SKIP_BT-1);
+      o=sdp_copy(out,o,cap,(const u8*)SDP_SKIP_BT,sizeof SDP_SKIP_BT-1); if(o==0xffffffffu) return 0;
+      continue;
+    }
+    if(!sdp_skipval(b,n,&i,key&7)) return 0;
+    o=sdp_copy(out,o,cap,b+ks,i-ks); if(o==0xffffffffu) return 0;
+  }
+  return seen ? o : 0;
+}
+static u8 g_sdpDesc[1024], g_sdpBt[256];
+static u32 sdp_skip_bluetooth(const u8* in, u32 n, u8* out, u32 cap){
+  u32 i=0, o=0; int changed=0;
+  while(i<n){
+    u32 ks=i, key; if(!sdp_rd(in,n,&i,&key)) return 0;
+    if((key>>3)==1 && (key&7)==2){                       // ChannelDescriptor
+      u32 L; if(!sdp_rd(in,n,&i,&L) || L>n-i) return 0;
+      const u8* c=in+i; u32 j=0, t=0; int has=0;
+      while(j<L){
+        u32 cks=j, ck; if(!sdp_rd(c,L,&j,&ck)) return 0;
+        if((ck>>3)==6 && (ck&7)==2){                     // BluetoothChannel
+          u32 bl; if(!sdp_rd(c,L,&j,&bl) || bl>L-j) return 0;
+          int already=0;
+          u32 nb=sdp_bt_rewrite(c+j,bl,g_sdpBt,sizeof g_sdpBt,&already);
+          if(!nb || already) return 0;
+          if(sizeof g_sdpDesc-t < 6+nb) return 0;
+          g_sdpDesc[t++]=(u8)((6<<3)|2); t+=sdp_wr(g_sdpDesc+t,nb);
+          t=sdp_copy(g_sdpDesc,t,sizeof g_sdpDesc,g_sdpBt,nb); if(t==0xffffffffu) return 0;
+          j+=bl; has=1; continue;
+        }
+        if(!sdp_skipval(c,L,&j,ck&7)) return 0;
+        t=sdp_copy(g_sdpDesc,t,sizeof g_sdpDesc,c+cks,j-cks); if(t==0xffffffffu) return 0;
+      }
+      i+=L;
+      if(has){
+        if(cap-o < 6+t) return 0;
+        out[o++]=(u8)((1<<3)|2); o+=sdp_wr(out+o,t);
+        o=sdp_copy(out,o,cap,g_sdpDesc,t); if(o==0xffffffffu) return 0;
+        changed=1; continue;
+      }
+      o=sdp_copy(out,o,cap,in+ks,i-ks); if(o==0xffffffffu) return 0;
+      continue;
+    }
+    if(!sdp_skipval(in,n,&i,key&7)) return 0;
+    o=sdp_copy(out,o,cap,in+ks,i-ks); if(o==0xffffffffu) return 0;
+  }
+  return changed ? o : 0;
 }
 
 #endif // NAVPROTO_H

@@ -56,7 +56,7 @@ NavigationServiceListener {
     private static volatile LaneGuidance INSTANCE = null;
     public static void poke() {
         LaneGuidance i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("LaneGuidance#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -64,7 +64,7 @@ NavigationServiceListener {
         // function via poke(), and the guard in computeFullLaneGuidanceList keeps the AA branch off
         // where it does not belong — so the unit's own navigation keeps feeding the row when AA is idle.
         INSTANCE = this;
-        try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+        try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) { de.aatokombi.Quiet.note("LaneGuidance#2", t); }
         this.timer = this.getTimerService().createTimer(this, 1000);
         this.fullLaneGuidanceChangedArray = new LaneGuidance_ChangedArray();
         this.actualLaneGuidanceList = new LaneGuidance_ChangedArray();
@@ -112,12 +112,12 @@ NavigationServiceListener {
     public void getArray(BAPEntity bAPEntity, ArrayListener arrayListener) {
         // The cluster pulls this array itself; that it does so at all is hardware-confirmed, so what
         // is left to see here is the content. Behind DEBUG: this runs on every FSG request.
-        if (Config.LOG_LEVEL <= MIBLogger.DEBUG) {
+        if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) {
             try {
                 MIBLogger.getInstance().debug("LaneGuidance.getArray: cluster requested "
                         + this.fullLaneGuidanceChangedArray.getArrayData().size() + " lane(s), onOff="
                         + this.fullLaneGuidanceChangedArray.laneGuidanceOnOff);
-            } catch (Throwable t) {}
+            } catch (Throwable t) { de.aatokombi.Quiet.note("LaneGuidance#3", t); }
         }
         LaneGuidance_GetArray laneGuidance_GetArray = (LaneGuidance_GetArray)bAPEntity;
         if (this.getArrayRequestTracker().requestGetArray(laneGuidance_GetArray)) {
@@ -156,7 +156,7 @@ NavigationServiceListener {
     public void uninitialize() {
         this.timer.stop();
         this.getArrayRequestTracker().reset();
-        try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+        try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) { de.aatokombi.Quiet.note("LaneGuidance#4", t); }
     }
 
     public void indicationError(int n, BAPFunctionListener bAPFunctionListener) {
@@ -250,7 +250,8 @@ NavigationServiceListener {
     /** The Android Auto source for the list above. */
     private void computeFromAndroidAuto(LaneGuidance_ChangedArray laneGuidance_ChangedArray) {
         BAPArrayData bAPArrayData = laneGuidance_ChangedArray.getArrayData();
-        int[] lanes = NavState.lanes;                    // one volatile read: count + pairs
+        NavState.LaneState laneState = NavState.laneState; // one volatile read: primary + all directions
+        int[] lanes = laneState.lanes;
         int total = (lanes != null && lanes.length > 0) ? lanes[0] : 0;
         if (lanes == null || total > (lanes.length - 1) / 2) {
             total = 0;
@@ -263,7 +264,12 @@ NavigationServiceListener {
         for (int i = 0; i < keep.length; i++) {
             LaneGuidance_LaneGuidance e = new LaneGuidance_LaneGuidance(laneGuidance_ChangedArray.getArrayHeader());
             e.laneDirection = lanes[1 + 2 * keep[i]];
-            e.laneSidestreets.setEmptyString();
+            String alternatives = AANavReader.laneSideStreets(laneState, keep[i]);
+            if (alternatives.length() > 0) {
+                e.laneSidestreets.setContent(alternatives);
+            } else {
+                e.laneSidestreets.setEmptyString();
+            }
             e.laneType = 1;                              // NORMAL_LANE
             e.laneMarking_left = 0;
             e.laneMarking_right = 0;
@@ -285,7 +291,7 @@ NavigationServiceListener {
         int on = 0;
         if (keep.length > 0) {
             boolean setup = true;
-            try { setup = this.getNavigationService().isSetupLaneGuidanceActive(); } catch (Throwable t) {}
+            try { setup = this.getNavigationService().isSetupLaneGuidanceActive(); } catch (Throwable t) { de.aatokombi.Quiet.note("LaneGuidance#5", t); }
             on = setup ? 1 : 0;
         }
         laneGuidance_ChangedArray.laneGuidanceOnOff = on;

@@ -70,7 +70,7 @@ implements TimerNotifier {
     public static void poke() {
         CurrentStationInfo i = INSTANCE;
         if (i != null) {
-            try { i.process(-1); } catch (Throwable t) {}
+            try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("CurrentStationInfo#1", t); }
         }
     }
 
@@ -99,7 +99,7 @@ implements TimerNotifier {
 
     private Timer getUpdateTimer() {
         if (this._updateTimer == null) {
-            this._updateTimer = this.getStageInitializer().createTimer((BAPStage)this, (TimerNotifier)this, (long)0, 0);
+            this._updateTimer = this.getStageInitializer().createTimer((BAPStage)this, (TimerNotifier)this, 200L, 0);
         }
         return this._updateTimer;
     }
@@ -113,7 +113,7 @@ implements TimerNotifier {
 
     private Timer getSuppressionTimer() {
         if (this._suppressionTimer == null) {
-            this._suppressionTimer = this.getStageInitializer().createTimer((BAPStage)this, (TimerNotifier)this, (long)0, 1);
+            this._suppressionTimer = this.getStageInitializer().createTimer((BAPStage)this, (TimerNotifier)this, 2000L, 1);
         }
         return this._suppressionTimer;
     }
@@ -446,7 +446,7 @@ implements TimerNotifier {
             int mediaPosSec = de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo.mediaPosSec;
             int mediaDurSec = de.vw.mib.bap.mqbab2.audiosd.functions.CurrentStationInfo.mediaDurSec;
 
-            if (Config.SHOW_NAV
+            if (Config.Navigation.ENABLED
                     && connType == 3
                     && NavigationHandler.aaRouteGuidanceActive
                     && navPrimary != null && navPrimary.length() > 0) {
@@ -468,8 +468,8 @@ implements TimerNotifier {
             // the stock media field assignment so it reads like a native track: infotext_1=artist,
             // infotext_2=title, infotext_3=album (or a progress bar in place of album when
             // SHOW_MEDIA_PROGRESS is on \u2014 PQ has no 4th line for it).
-            if (Config.SHOW_MEDIA && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
-                String bar = Config.SHOW_MEDIA_PROGRESS ? progressBar(mediaPosSec, mediaDurSec) : "";
+            if (Config.Media.ENABLED && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
+                String bar = Config.Media.SHOW_PROGRESS ? progressBar(mediaPosSec, mediaDurSec) : "";
                 String line3 = (bar.length() > 0) ? bar : (mediaAlbum != null ? mediaAlbum : "");
                 currentStationInfo_Status.infotext_1.setContent(clampLine(mediaArtist));
                 currentStationInfo_Status.infotext_2.setContent(clampLine(mediaTitle));
@@ -560,10 +560,10 @@ implements TimerNotifier {
 
     private void setBapCurrentStationInfoInfoTextsForMedia(CurrentStationInfo_Status currentStationInfo_Status) {
         block0 : switch (this.getCurrentAudioSource()) {
-            case 1: 
+            case 1:
             case 4: {
                 switch (this.getCDContentType()) {
-                    case 3: 
+                    case 3:
                     case 4: {
                         int n = this.getDvdChapter();
                         int n2 = this.getDvdChapterCount();
@@ -584,7 +584,7 @@ implements TimerNotifier {
                 this.setBapCurrentStationInfoNoInformationAvailable(currentStationInfo_Status);
                 break;
             }
-            case 7: 
+            case 7:
             case 14: {
                 this.setBapCurrentStationInfoInfoTextsForExternalDevice(currentStationInfo_Status);
                 break;
@@ -596,16 +596,16 @@ implements TimerNotifier {
                 currentStationInfo_Status.infotext_2.setContent(this.getLanguageString(5));
                 break;
             }
-            case 2: 
-            case 5: 
-            case 8: 
-            case 10: 
-            case 11: 
+            case 2:
+            case 5:
+            case 8:
+            case 10:
+            case 11:
             case 13: {
                 this.setBapCurrentStationInfoInfoTextsForExternalDevice(currentStationInfo_Status);
                 break;
             }
-            case 3: 
+            case 3:
             case 9: {
                 this.setBapCurrentStationInfoNoInformationAvailable(currentStationInfo_Status);
                 break;
@@ -644,7 +644,7 @@ implements TimerNotifier {
 
     private void setBapCurrentStationInfoInfoTexts(CurrentStationInfo_Status currentStationInfo_Status) {
         switch (this.lastAudioComponent) {
-            case 2: 
+            case 2:
             case 3: {
                 this.setBapCurrentStationInfoInfoTextsForMedia(currentStationInfo_Status);
                 break;
@@ -679,9 +679,9 @@ implements TimerNotifier {
     private int getBapCurrentStationInfoHandleForRadio() {
         int n;
         switch (this.getCurrentStationInfoBand()) {
-            case 0: 
-            case 1: 
-            case 2: 
+            case 0:
+            case 1:
+            case 2:
             case 3: {
                 n = this.findBapPosIdInReceptionList();
                 break;
@@ -781,7 +781,7 @@ implements TimerNotifier {
 
     public void timerFired(int n) {
         switch (n) {
-            case 1: 
+            case 1:
             case 2: {
                 this.process(-1);
                 break;

@@ -63,12 +63,13 @@ regardless, and every stock-service call is wrapped so a non-routing engine can 
 |---|---|---|---|
 | `ActiveRgType` | 39 | the gate: `rgtype = 0` (RGI_FROM_BAP_FUNCTION_MANEUVER_DESCRIPTOR) so the cluster draws our maneuver; stock `3` (MOST_MAP) waits for a map video we cannot supply | `NavState.ACTIVE` |
 | `RGStatus` | 17 | route-guidance active flag | `NavState.ACTIVE` |
-| `ManeuverDescriptor` | 23 | the arrow: `mainElement` + `direction` (+ a roundabout exit spoke in `sidestreets`) | GAL event + side/angle/exit number |
+| `ManeuverDescriptor` | 23 | the arrow: `mainElement` + `direction` (+ a roundabout exit spoke in `sidestreets`); `maneuver_2` = the small "then" arrow (see below) | GAL event + side/angle/exit number; IPC line 5 |
 | `DistanceToNextManeuver` | 18 | distance to the turn + the approach-segment bargraph | GAL dist |
-| `TurnToInfo` | 20 | the "turn into <street>" line | GAL road |
+| `TurnToInfo` | 20 | the street line: the road the manoeuvre turns into once it is near; before that (FOLLOW_STREET, including AA's own DEPART / STRAIGHT steps, and the PREPARE_* stage) the road the car is on — AA's current road, else the unit's own map-matched street, else the next road | GAL road; IPC line 6; `getCurrentPositionInfo()` |
+| `CurrentPositionInfo` | 19 | the current road (stock fills it only while its own guidance is idle; the cluster may not show it during guidance); while AA's own map is on the AID (`ClusterMap.HIDE_PLATE_ON_AA_MAP`): the TurnToInfo street instead, since TurnToInfo is then empty (it is the plate above the map) and the turn widget shows this one; DistanceToDestination / TimeToDestination are reported invalid | IPC line 6 (0x8007 `current_road`) |
 | `LaneGuidance` | 24 | the lane row of the junction ahead (a BAP **array**, max 6 lanes, not a property) | `NavState.lanes` |
 | `DistanceToDestination` | 21 | distance to the destination | `NavState.destinationMeters` |
-| `TimeToDestination` | 22 | remaining travel time (a duration, **not** an arrival clock) | `NavState.destinationSeconds` |
+| `TimeToDestination` | 22 | remaining travel time, or the arrival clock when the stock nav-menu switch says so (`getTimeToDestinationTimeInfo() == 1`) and the phone's ETA string parses (`AANavReader.parseEtaClock`); otherwise the remaining time | `NavState.destinationSeconds`, `NavState.destinationEta` (IPC line 8) |
 
 `ActiveRgType.rgtype = 0` is the real gate (the analogue of the property-732 path on non-nav units,
 but on the correct producer).
@@ -94,8 +95,15 @@ right-turn arrow for the five kilometres before the turn (`AANavReader.maneuverI
 
 | `dist` / `time` to the maneuver | `mainElement` | bargraph |
 |---|---|---|
-| `<= MANEUVER_NEAR_METERS` **or** `<= MANEUVER_NEAR_SECONDS` | the real maneuver | on |
-| further than both | `FOLLOW_STREET`, `direction = 0` | off |
+| `<= ManeuverStages.NEAR_METERS` **or** `<= ManeuverStages.NEAR_SECONDS` | the real maneuver | on |
+| `<= ManeuverStages.PREPARE_METERS` **or** `<= ManeuverStages.PREPARE_SECONDS` | `PREPARE_TURN` / `PREPARE_ROUNDABOUT` / `PREPARE_SQUARE` / `PREPARE_UTURN`, turned the manoeuvre's way | off |
+| further than all gates | `FOLLOW_STREET`, `direction = 0` | off |
+
+The prepare stage (`AANavReader.maneuverPreparing` / `prepareElementFor`, defaults 1000 m / 80 s)
+only exists for manoeuvres the cluster has a prepare glyph for: turns (incl. onto a main road),
+roundabouts, squares and U-turns. Exits, forks, merges and the destination go straight from
+`FOLLOW_STREET` to the real glyph. In the prepare stage the street line already shows the road the
+manoeuvre turns into, and `maneuver_2` behaves as when near. `0`/`0` disables the stage.
 
 Two gates because 400 m is half a minute in town but twelve seconds on a motorway; the countdown is
 the phone's `time_to_step_seconds` (IPC field 8, protocol 1.7), and `0` on either field means "not
@@ -106,6 +114,41 @@ Stock does the same, which is where the shape comes from: its enum carries `FOLL
 only for the real ones (`{3,4,5,13..27,32..35}`) — the bargraph *is* the approach signal. The stock
 thresholds are in the native nav engine (Java only forwards the DSI array in
 `HsmTargetBap.dsiNavigationUpdateBapManeuverDescriptor`), so the two numbers above are ours.
+
+## Double turn
+
+With `Config.Navigation.SHOW_DOUBLE_TURN` (default on), a near left/right `TURN` whose next AA step
+(`steps[1]`, IPC line 5) is a turn to the other side is drawn as the stock `DOUBLE_TURN` glyph (35).
+Verified on the AID with a synthetic second step: direction 64 draws "left, then right", 192
+"right, then left"; a same-side pair has no glyph and stays a plain turn. AA gives no distance
+between steps, so any second step counts. `maneuver_2` keeps the next step, but the AID was seen to
+ignore it. Google Maps, Yandex and 2GIS sent no second step on any trip so far.
+
+## Rerouting
+
+While the phone reports `NavigationState = REROUTING` (3, protocol 1.7; Google Maps and 2GIS send it
+for 0.3-1.3 s, Yandex never does) `maneuver_1` is the stock `RECALC_ROUTE` glyph (10), exactly as the
+unit's own navigation shows a recalculation: no `maneuver_2`, an empty `TurnToInfo` (the cluster
+captions the glyph itself, in its own language), the distance invalid and no lanes. There is no
+extra hold time — it lasts as long as the phone says so.
+
+## The second ("then") arrow — `maneuver_2`
+
+`ManeuverDescriptor` carries up to three manoeuvres; the stock navigation fills `maneuver_2` with
+the one that follows the current manoeuvre. With `Config.Navigation.SHOW_NEXT_MANEUVER` (default on) the shim
+keeps AA's `steps[1]` (IPC line `5 <event> <side> <angle> <number>`) and `AANavReader.nextManeuverFor`
+picks what the second arrow shows:
+
+| phase | `maneuver_1` | `maneuver_2` |
+|---|---|---|
+| manoeuvre near or in the prepare stage | the manoeuvre (or its `PREPARE_*` glyph) | the one after it (`steps[1]`) |
+| manoeuvre still far | `FOLLOW_STREET` | the manoeuvre itself, as a preview |
+
+A second arrow that would only say "follow the street" is left out (`NO_SYMBOL`), and the field is
+rewritten on every send so a pooled status object never carries an old arrow over. AA gives no
+distance between the two manoeuvres, so unlike the stock engine this cannot be limited to closely
+spaced turns. Whether a given cluster draws `maneuver_2` at all is the cluster's business — it is
+the AID this is aimed at.
 
 ## Notes / limits
 

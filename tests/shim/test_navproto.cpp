@@ -38,7 +38,8 @@ static Buf lane(int shape,int hi,int shape2=-1,int hi2=0){
   return ln;
 }
 
-static void reset(){ std::memset(&g_st,0,sizeof g_st); g_nLane=0; std::memset(g_lane,0,sizeof g_lane); }
+static void reset(){ std::memset(&g_st,0,sizeof g_st); g_nLane=0; std::memset(g_lane,0,sizeof g_lane);
+                     std::memset(g_laneDirs,0,sizeof g_laneDirs); std::memset(g_laneDirCount,0,sizeof g_laneDirCount); }
 
 // ---- golden frame 1: "Use the 2nd from the right lane to turn right", 5 lanes ------------------
 static void test_five_lanes(){
@@ -72,7 +73,7 @@ static void test_roundabout(){
   Buf step; step.m(1,mv); step.m(4,rd);
   step.m(3,lane(4,1)); step.m(3,lane(4,0)); step.m(3,lane(1,0));
   Buf st; st.m(1,step);
-  Buf second; second.m(1,mv);                    // a follow-up step must be IGNORED
+  Buf second; second.m(1,mv);                    // follow-up step: must not touch the current one
   st.m(1,second);
   parse_navstate(st.b,(u32)st.n);
 
@@ -83,9 +84,52 @@ static void test_roundabout(){
   CHECK(g_nLane==3, "nLane=%u want 3 (only the first step)", g_nLane);
   const u8 want[3] = { (4<<1)|1, (4<<1)|0, (1<<1)|0 };
   for(int i=0;i<3 && g_nLane==3;i++) CHECK(g_lane[i]==want[i], "lane[%d]=%u want %u", i, g_lane[i], want[i]);
+  CHECK(g_st.nextValid==1 && g_st.nextEvent==13 && g_st.nextNumber==2 && g_st.nextAngle==270,
+        "next=%u/%u/%d/%d want 1/13/2/270 (steps[1] kept as the next manoeuvre)",
+        g_st.nextValid, g_st.nextEvent, g_st.nextNumber, g_st.nextAngle);
 }
 
-// ---- a lane that allows several directions: the routed one wins --------------------------------
+// ---- steps[1] -> the "then" manoeuvre; it is part of the snapshot like everything else ---------
+static void test_next_step(){
+  reset();
+  Buf mv1; mv1.v(1,8);                             // TURN_NORMAL_RIGHT
+  Buf rd;  rd.s(1,"First Street");
+  Buf step1; step1.m(1,mv1); step1.m(4,rd); step1.m(3,lane(4,1));
+  Buf mv2; mv2.v(1,7); mv2.neg1(2); mv2.neg1(3);   // TURN_NORMAL_LEFT, no roundabout fields
+  Buf rd2; rd2.s(1,"Second Street");
+  Buf step2; step2.m(1,mv2); step2.m(4,rd2); step2.m(3,lane(1,0)); step2.m(3,lane(1,0));
+  Buf mv3; mv3.v(1,39);                            // DESTINATION: a third step must be ignored
+  Buf step3; step3.m(1,mv3);
+  Buf st; st.m(1,step1); st.m(1,step2); st.m(1,step3);
+  parse_navstate(st.b,(u32)st.n);
+  CHECK(g_st.event==4 && g_st.side==2, "current=%u/%u want 4/2", g_st.event, g_st.side);
+  CHECK(std::strcmp(g_st.road,"First Street")==0, "road='%s' (steps[1] must not overwrite it)", g_st.road);
+  CHECK(g_nLane==1, "nLane=%u want 1 (steps[1]'s lanes must not leak into the current row)", g_nLane);
+  CHECK(g_st.nextValid==1, "nextValid=%u want 1", g_st.nextValid);
+  CHECK(g_st.nextEvent==4 && g_st.nextSide==1, "next=%u/%u want 4/1 (TURN LEFT)", g_st.nextEvent, g_st.nextSide);
+  CHECK(g_st.nextNumber==0 && g_st.nextAngle==0, "next number/angle=%d/%d want 0/0",
+        g_st.nextNumber, g_st.nextAngle);
+
+  // A snapshot with ONE step: the old next manoeuvre is gone with it.
+  Buf only; only.m(1,step1);
+  parse_navstate(only.b,(u32)only.n);
+  CHECK(g_st.nextValid==0, "nextValid=%u want 0 after a single-step snapshot", g_st.nextValid);
+
+  // A second step with an unnamed type (0 / out of range) is no next manoeuvre either.
+  Buf bad; bad.v(1,200);
+  Buf stepb; stepb.m(1,bad);
+  Buf st2; st2.m(1,step1); st2.m(1,stepb);
+  parse_navstate(st2.b,(u32)st2.n);
+  CHECK(g_st.nextValid==0, "nextValid=%u want 0 for an unknown follow-up type", g_st.nextValid);
+
+  // An empty frame keeps everything, the next manoeuvre included (same rule as the current one).
+  parse_navstate(st.b,(u32)st.n);
+  parse_navstate((const u8*)"",0);
+  CHECK(g_st.nextValid==1 && g_st.nextEvent==4, "empty frame dropped the next manoeuvre (%u/%u)",
+        g_st.nextValid, g_st.nextEvent);
+}
+
+// ---- a lane that allows several directions: primary is routed, complete list is retained --------
 static void test_multi_direction_lane(){
   reset();
   Buf step; step.m(3,lane(4,0, 1,1));            // NORMAL_LEFT (no) + STRAIGHT (highlighted)
@@ -93,6 +137,9 @@ static void test_multi_direction_lane(){
   parse_navstate(st.b,(u32)st.n);
   CHECK(g_nLane==1, "nLane=%u want 1", g_nLane);
   CHECK(g_lane[0]==((1<<1)|1), "lane[0]=%u want %u (STRAIGHT, highlighted)", g_lane[0], (1<<1)|1);
+  CHECK(g_laneDirCount[0]==2, "lane[0] directions=%u want 2", g_laneDirCount[0]);
+  CHECK(g_laneDirs[0][0]==((4<<1)|0), "lane[0] first=%u want NORMAL_LEFT", g_laneDirs[0][0]);
+  CHECK(g_laneDirs[0][1]==((1<<1)|1), "lane[0] second=%u want STRAIGHT highlighted", g_laneDirs[0][1]);
 }
 
 // ---- lane count is capped, and a lane-less frame CLEARS the previous lanes ---------------------
@@ -156,6 +203,11 @@ static void test_road_vs_instruction(){
   parse_navstate(st2.b,(u32)st2.n);
   CHECK(std::strcmp(g_st.road,"Main Street")==0, "road='%s' want 'Main Street' whatever the order",
         g_st.road);
+  CHECK(std::strcmp(g_st.cue,"Turn right onto Main Street")==0, "cue='%s' kept apart", g_st.cue);
+  // A step without an instruction leaves no cue behind from the previous one.
+  Buf stepNc; stepNc.m(4,road); Buf stNc; stNc.m(1,stepNc);
+  parse_navstate(stNc.b,(u32)stNc.n);
+  CHECK(g_st.cue[0]==0, "cue='%s' want empty", g_st.cue);
 
   // A phone that sends no road_info at all: the instruction is better than an empty street line.
   reset();
@@ -229,6 +281,7 @@ static void test_curpos(){
         g_st.destDist);
   CHECK(g_st.destTime==1978,  "destTime=%u want 1978 (to arrival, not the 24 to the step)",
         g_st.destTime);
+  CHECK(std::strcmp(g_st.curRoad,"R1")==0, "curRoad='%s' want 'R1' (field 3, current road)", g_st.curRoad);
 
   // The three NavigationDistance fields are committed together: an unknown distance must not leave
   // the previous text standing next to a new number, and a frame without the string must clear it
@@ -258,7 +311,7 @@ static void test_curpos(){
 // ---- an over-long distance string must be truncated, not overflow -----------------------------
 static void test_long_dist_text(){
   reset();
-  Buf d; d.v(1,100); d.s(2,"a very long distance string from the phone"); 
+  Buf d; d.v(1,100); d.s(2,"a very long distance string from the phone");
   Buf sd; sd.m(1,d);
   Buf cp; cp.m(1,sd);
   parse_curpos(cp.b,(u32)cp.n);
@@ -335,6 +388,36 @@ static void test_snapshot_clears(){
         g_st.event, g_st.side);
 }
 
+// ---- current road (0x8007 field 3): per-frame, cleared when a whole frame omits it ----------------
+static void test_current_road(){
+  reset();
+  Buf road; road.s(1,"Main\tStreet");
+  Buf sd; sd.v(1,300);
+  Buf step; step.m(1,sd);
+  Buf cp; cp.m(1,step); cp.m(3,road);
+  parse_curpos(cp.b,(u32)cp.n);
+  CHECK(std::strcmp(g_st.curRoad,"Main Street")==0, "curRoad='%s' want 'Main Street' (tab sanitised)", g_st.curRoad);
+  CHECK(g_st.road[0]==0, "road='%s' must stay untouched by the current road", g_st.road);
+
+  // A complete frame without field 3: the phone no longer names the road -> cleared.
+  Buf cp2; cp2.m(1,step);
+  parse_curpos(cp2.b,(u32)cp2.n);
+  CHECK(g_st.curRoad[0]==0, "curRoad='%s' want empty after a frame without it", g_st.curRoad);
+
+  // A frame cut short says nothing about the road: the last one stays.
+  parse_curpos(cp.b,(u32)cp.n);
+  Buf longer; longer.m(1,step); longer.m(3,road);
+  parse_curpos(longer.b,(u32)longer.n - 4);
+  CHECK(std::strcmp(g_st.curRoad,"Main Street")==0, "curRoad='%s' must survive a truncated frame", g_st.curRoad);
+
+  // Overlong names are cut to the buffer, never past it.
+  char big[200]; std::memset(big,'x',199); big[199]=0;
+  Buf rb; rb.s(1,big);
+  Buf cp3; cp3.m(3,rb);
+  parse_curpos(cp3.b,(u32)cp3.n);
+  CHECK(std::strlen(g_st.curRoad)==sizeof g_st.curRoad-1, "curRoad len=%u", (unsigned)std::strlen(g_st.curRoad));
+}
+
 // ---- "-1" (unknown) distance/time must NOT clobber the last good countdown ---------------------
 // Seen live on DHU at 0 m to the manoeuvre: the phone sends -1, which as an unsigned varint
 // saturates to 4294967295 and would overflow the jar's Integer.parseInt, dropping the whole line.
@@ -378,6 +461,19 @@ static void test_long_road(){
         std::strlen(g_st.road), sizeof(g_st.road)-1);
 }
 
+// str_fit (also the media strings' copy, rd_str_to): a cut never leaves half a UTF-8 letter.
+static void test_utf8_fit(){
+  char d[8];
+  str_fit(d, sizeof d, "abc");                     CHECK(std::strcmp(d,"abc")==0, "short: '%s'", d);
+  str_fit(d, sizeof d, "abcdefghij");              CHECK(std::strcmp(d,"abcdefg")==0, "ascii cut: '%s'", d);
+  str_fit(d, sizeof d, "\xd0\x90\xd0\x91\xd0\x92\xd0\x93");   // 4 Cyrillic letters, 8 bytes
+  CHECK(std::strcmp(d,"\xd0\x90\xd0\x91\xd0\x92")==0, "2-byte letters cut whole: len %zu", std::strlen(d));
+  str_fit(d, sizeof d, "abcd\xe2\x80\xa6x");      // "abcd" + 3-byte ellipsis + x: 7 bytes fit exactly
+  CHECK(std::strcmp(d,"abcd\xe2\x80\xa6")==0, "3-byte letter that fits: len %zu", std::strlen(d));
+  str_fit(d, sizeof d, "abcde\xe2\x80\xa6");      // the ellipsis would need byte 8
+  CHECK(std::strcmp(d,"abcde")==0, "3-byte letter cut whole: '%s'", d);
+}
+
 // ---- every truncation of a valid frame must be survivable (ASan catches over-reads) ------------
 static void test_truncations(){
   Buf mv; mv.v(1,8); mv.v(2,2); mv.v(3,270);
@@ -409,24 +505,137 @@ static void test_fuzz(){
   }
 }
 
+// ---- destination address (0x8006 field 2) ----------------------------------------------------
+static int hexval(char c){ return c<='9'? c-'0' : (c|32)-'a'+10; }
+static void test_destination(){
+  reset();
+  // Golden frame: Google Maps, 2026-10 trip dump (one step + one destination).
+  const char* hx="0a6c0a02080112320a30d09220d181d182d0bed180d0bed0bdd18320d183d0bb2e20d0a1d182d0b0d185d0b0d0bdd0bed0b2d181d0bad0b0d18f22320a30d09220d181d182d0bed180d0bed0bdd18320d183d0bb2e20d0a1d182d0b0d185d0b0d0bdd0bed0b2d181d0bad0b0d18f12220a20d183d0bb2e20d09fd180d0bed0bcd18bd188d0bbd0b5d0bdd0bdd0b0d18f2031";
+  u8 fr[256]; u32 n=0; for(const char* h=hx; h[0]&&h[1]; h+=2) fr[n++]=(u8)(hexval(h[0])*16+hexval(h[1]));
+  CHECK(parse_navstate(fr,n)==1, "golden frame: no step parsed");
+  CHECK(std::strcmp(g_st.destName,"\xd1\x83\xd0\xbb. \xd0\x9f\xd1\x80\xd0\xbe\xd0\xbc\xd1\x8b\xd1\x88\xd0\xbb\xd0\xb5\xd0\xbd\xd0\xbd\xd0\xb0\xd1\x8f 1")==0,
+        "destName='%s'", g_st.destName);
+  CHECK(g_st.event==1, "event=%u want 1 (DEPART)", g_st.event);
+
+  // Only the first destination; later legs ignored.
+  Buf a1; a1.s(1,"Home"); Buf a2; a2.s(1,"Work");
+  Buf mv; mv.v(1,7); Buf st; st.m(1,mv);
+  Buf f2; f2.m(1,st); f2.m(2,a1); f2.m(2,a2);
+  parse_navstate(f2.b,(u32)f2.n);
+  CHECK(std::strcmp(g_st.destName,"Home")==0, "destName='%s' want Home", g_st.destName);
+
+  // A complete frame with a step but no destination clears it; a stepless one changes nothing.
+  Buf f3; f3.m(1,st); parse_navstate(f3.b,(u32)f3.n);
+  CHECK(g_st.destName[0]==0, "destName='%s' want empty", g_st.destName);
+  parse_navstate(f2.b,(u32)f2.n);
+  Buf f4; f4.m(2,a2); parse_navstate(f4.b,(u32)f4.n);
+  CHECK(std::strcmp(g_st.destName,"Home")==0, "stepless frame changed destName to '%s'", g_st.destName);
+
+  // Truncation never leaves half a UTF-8 letter: 60 x "Ж" (120 bytes) into a 96-byte buffer.
+  char big[121]; for(int i=0;i<60;i++){ big[2*i]=(char)0xd0; big[2*i+1]=(char)0x96; } big[120]=0;
+  Buf ab; ab.s(1,big); Buf f5; f5.m(1,st); f5.m(2,ab);
+  parse_navstate(f5.b,(u32)f5.n);
+  usize L=std::strlen(g_st.destName);
+  CHECK(L==94, "destName len=%u want 94 (47 whole letters)", (unsigned)L);
+}
+
+// ---- destination ETA string (0x8007 destination field 2) ---------------------------------------
+static void test_dest_eta(){
+  reset();
+  // Golden frame: Google Maps trip dump, 0x8007 with "12:50".
+  const char* hx="0a070a05120130180112160a0a08be131203322c351803120531323a3530188a03";
+  u8 fr[64]; u32 n=0; for(const char* h=hx; h[0]&&h[1]; h+=2) fr[n++]=(u8)(hexval(h[0])*16+hexval(h[1]));
+  parse_curpos(fr,n);
+  CHECK(std::strcmp(g_st.destEta,"12:50")==0, "destEta='%s' want 12:50", g_st.destEta);
+  CHECK(g_st.destTime==394 && g_st.destDist==2494, "dest %u m / %u s", g_st.destDist, g_st.destTime);
+  // A destination entry without the string clears it; only the nearest destination counts.
+  Buf dd; dd.v(1,1000); Buf d1; d1.m(1,dd); d1.v(3,60);
+  Buf d2; d2.m(1,dd); d2.s(2,"23:59"); d2.v(3,600);
+  Buf cp; cp.m(2,d1); cp.m(2,d2);
+  parse_curpos(cp.b,(u32)cp.n);
+  CHECK(g_st.destEta[0]==0, "destEta='%s' want empty (nearest has none)", g_st.destEta);
+  Buf d3; d3.m(1,dd); d3.s(2,"5:42 PM"); d3.v(3,60); Buf cp2; cp2.m(2,d3);
+  parse_curpos(cp2.b,(u32)cp2.n);
+  CHECK(std::strcmp(g_st.destEta,"5:42 PM")==0, "destEta='%s'", g_st.destEta);
+}
+
+// ---- ServiceDiscoveryResponse: SKIP_THIS_BLUETOOTH ---------------------------------------------
+// Minimal reader for the checks: the n-th length-delimited field f of a message.
+static int pb_get(const unsigned char* p,int n,int f,int idx,const unsigned char** out,int* outLen){
+  int i=0,seen=0;
+  while(i<n){
+    unsigned k=0; int sh=0; do{ k|=(unsigned)(p[i]&0x7f)<<sh; sh+=7; }while(p[i++]&0x80);
+    int w=k&7;
+    if(w==0){ while(p[i++]&0x80){} continue; }
+    if(w!=2) return 0;
+    unsigned L=0; sh=0; do{ L|=(unsigned)(p[i]&0x7f)<<sh; sh+=7; }while(p[i++]&0x80);
+    if((int)(k>>3)==f && seen++==idx){ *out=p+i; *outLen=(int)L; return 1; }
+    i+=(int)L;
+  }
+  return 0;
+}
+static void test_sdp_skip_bluetooth(){
+  Buf bt;   bt.s(1,"AA:BB:CC:DD:EE:FF"); { Buf m; m.v(1,2); m.v(1,4); bt.tag(2,2); bt.varint((unsigned)m.n);
+            std::memcpy(bt.b+bt.n,m.b,m.n); bt.n+=m.n; }
+  Buf cdBt; cdBt.v(1,8); cdBt.m(6,bt); cdBt.v(9,1);
+  Buf cdV;  cdV.v(1,3); { Buf big; for(int k=0;k<20;k++) big.s(2,"xxxxxxxxxx"); cdV.m(3,big); }
+  Buf sdp;  sdp.m(1,cdV); sdp.m(1,cdBt); sdp.s(2,"make"); sdp.v(5,1);
+  unsigned char out[2048];
+  u32 n=sdp_skip_bluetooth(sdp.b,(u32)sdp.n,out,sizeof out);
+  CHECK(n==(u32)sdp.n+2, "rewritten length %u (orig %d)", n, sdp.n);
+  // expected: the same message with the address swapped
+  Buf bt2;  bt2.s(1,"SKIP_THIS_BLUETOOTH"); { Buf m; m.v(1,2); m.v(1,4); bt2.tag(2,2); bt2.varint((unsigned)m.n);
+            std::memcpy(bt2.b+bt2.n,m.b,m.n); bt2.n+=m.n; }
+  Buf cd2;  cd2.v(1,8); cd2.m(6,bt2); cd2.v(9,1);
+  Buf exp;  exp.m(1,cdV); exp.m(1,cd2); exp.s(2,"make"); exp.v(5,1);
+  CHECK(n==(u32)exp.n && std::memcmp(out,exp.b,exp.n)==0, "rewritten bytes differ");
+  const unsigned char* c; int cl; const unsigned char* b; int bl; const unsigned char* a; int al;
+  CHECK(pb_get(out,(int)n,1,1,&c,&cl) && pb_get(c,cl,6,0,&b,&bl) && pb_get(b,bl,1,0,&a,&al)
+        && al==19 && std::memcmp(a,"SKIP_THIS_BLUETOOTH",19)==0, "address not replaced");
+  // already skipped -> untouched (0)
+  CHECK(sdp_skip_bluetooth(exp.b,(u32)exp.n,out,sizeof out)==0, "second rewrite should be a no-op");
+  // no Bluetooth channel -> 0
+  Buf nob; nob.m(1,cdV); nob.s(2,"make");
+  CHECK(sdp_skip_bluetooth(nob.b,(u32)nob.n,out,sizeof out)==0, "no BT channel must return 0");
+  // output too small -> 0
+  CHECK(sdp_skip_bluetooth(sdp.b,(u32)sdp.n,out,20)==0, "small output must return 0");
+  // every truncation -> 0 or a well-formed shorter rewrite, never an over-read (ASan)
+  for(int k=0;k<sdp.n;k++) (void)sdp_skip_bluetooth(sdp.b,(u32)k,out,sizeof out);
+  // random bytes
+  unsigned seed=7;
+  for(int r=0;r<3000;r++){
+    unsigned char junk[300]; int jn=(int)(seed%300);
+    for(int k=0;k<jn;k++){ seed=seed*1103515245u+12345u; junk[k]=(unsigned char)(seed>>16); }
+    if(jn>3){ junk[0]=0x0a; junk[1]=(unsigned char)(jn-2>127?127:jn-2); }
+    (void)sdp_skip_bluetooth(junk,(u32)jn,out,sizeof out);
+    seed=seed*1103515245u+12345u;
+  }
+}
+
 int main(){
   struct { const char* name; void(*fn)(); } tests[] = {
     {"five lanes (golden frame)",     test_five_lanes},
     {"roundabout exit + angle",       test_roundabout},
+    {"next manoeuvre (steps[1])",     test_next_step},
     {"multi-direction lane",          test_multi_direction_lane},
     {"lane cap + clearing",           test_caps_and_clearing},
     {"navstate reports a step",       test_navstate_reports_step},
     {"road name vs instruction",      test_road_vs_instruction},
     {"navigation state / rerouting",  test_navstatus},
     {"current position distances",    test_curpos},
+    {"current road",                  test_current_road},
+    {"destination address",           test_destination},
+    {"destination ETA string",        test_dest_eta},
     {"long distance string",          test_long_dist_text},
     {"unknown (-1) distance",         test_unknown_distance},
     {"legacy event vocabulary",       test_event_vocabulary},
     {"snapshot clears stale fields",  test_snapshot_clears},
     {"road sanitising",               test_road_sanitising},
     {"long road truncation",          test_long_road},
+    {"UTF-8 safe cut",                test_utf8_fit},
     {"truncated frames",              test_truncations},
     {"fuzz",                          test_fuzz},
+    {"SDP: skip phone Bluetooth",     test_sdp_skip_bluetooth},
   };
   for(unsigned i=0;i<sizeof tests/sizeof tests[0];i++){
     int before=g_fail;

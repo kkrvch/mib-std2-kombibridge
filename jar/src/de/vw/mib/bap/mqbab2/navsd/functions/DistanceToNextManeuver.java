@@ -1,5 +1,8 @@
 /*
- * Decompiled with CFR 0.152.
+ * Decompiled with CFR 0.152 from the stock MIBHMI class. navsd-shadow deltas (marked
+ * "navsd-shadow delta"): a live re-send hook for AANavReader, and while Android Auto guides the
+ * distance to the next manoeuvre comes from NavState (the metres the shim reports) instead of the
+ * unit's own nav engine.
  */
 package de.vw.mib.bap.mqbab2.navsd.functions;
 
@@ -38,7 +41,7 @@ NavigationServiceListener {
     private static volatile DistanceToNextManeuver INSTANCE = null;
     public static void poke() {
         DistanceToNextManeuver i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("DistanceToNextManeuver#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -50,7 +53,7 @@ NavigationServiceListener {
             try {
                 this.getSystemService().addSystemServiceListener(this, SYSTEM_LISTENER_IDS);
                 this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
-            } catch (Throwable t) {}
+            } catch (Throwable t) { de.aatokombi.Quiet.note("DistanceToNextManeuver#2", t); }
         }
         DistanceToNextManeuver_Status s = this.dequeueBAPEntity();
         this.setDistanceToNextManeuverStatusData(s);
@@ -76,27 +79,27 @@ NavigationServiceListener {
         if (iterator.hasNext()) {
             NavigationManeuverDescriptorElement navigationManeuverDescriptorElement = (NavigationManeuverDescriptorElement)iterator.next();
             switch (navigationManeuverDescriptorElement.getMainelement()) {
-                case 3: 
-                case 4: 
-                case 5: 
-                case 13: 
-                case 14: 
-                case 15: 
-                case 16: 
-                case 17: 
-                case 18: 
-                case 19: 
-                case 20: 
-                case 21: 
-                case 22: 
-                case 23: 
-                case 24: 
-                case 25: 
-                case 26: 
-                case 27: 
-                case 32: 
-                case 33: 
-                case 34: 
+                case 3:
+                case 4:
+                case 5:
+                case 13:
+                case 14:
+                case 15:
+                case 16:
+                case 17:
+                case 18:
+                case 19:
+                case 20:
+                case 21:
+                case 22:
+                case 23:
+                case 24:
+                case 25:
+                case 26:
+                case 27:
+                case 32:
+                case 33:
+                case 34:
                 case 35: {
                     n = navigationDistanceToNextManeuver.getDistanceToNextManeuverBargraphOnOff();
                     break;
@@ -118,8 +121,8 @@ NavigationServiceListener {
         if (iterator.hasNext()) {
             NavigationManeuverDescriptorElement navigationManeuverDescriptorElement = (NavigationManeuverDescriptorElement)iterator.next();
             switch (navigationManeuverDescriptorElement.getMainelement()) {
-                case 8: 
-                case 9: 
+                case 8:
+                case 9:
                 case 10: {
                     bl = false;
                     break;
@@ -141,25 +144,26 @@ NavigationServiceListener {
         // not raw metres.
         try {
             if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
-                if (NavState.distanceMeters > 0) {
+                NavState.Distance dn = NavState.distance;     // one read: metres and the approach flag
+                if (dn.meters > 0) {
                     int[] nArray = new int[2];
                     try {
                         if (this.getSystemService().getCurrentDistanceUnit() == 1) {
-                            this.getFixFormatter().cnv2Distance2withMinDistanceMiles(NavState.distanceMeters, nArray);
+                            this.getFixFormatter().cnv2Distance2withMinDistanceMiles(dn.meters, nArray);
                         } else {
-                            this.getFixFormatter().cnvDistance2KilometersExt(NavState.distanceMeters, nArray);
+                            this.getFixFormatter().cnvDistance2KilometersExt(dn.meters, nArray);
                         }
                         distanceToNextManeuver_Status.distanceToNextManeuver.distance = nArray[0];
                         distanceToNextManeuver_Status.distanceToNextManeuver.unit = nArray[1];
                     } catch (Throwable tf) {
                         // formatter/system service unavailable -> raw metres (better than nothing)
-                        distanceToNextManeuver_Status.distanceToNextManeuver.distance = NavState.distanceMeters;
+                        distanceToNextManeuver_Status.distanceToNextManeuver.distance = dn.meters;
                         distanceToNextManeuver_Status.distanceToNextManeuver.unit = 0;
                     }
                     // The bargraph is the approach signal, not a permanent gauge: stock enables it
                     // for real manoeuvre elements only (verifiedBapBargraphSetting below).
-                    distanceToNextManeuver_Status.bargraphInfo.bargraphOnOff = NavState.approaching ? 1 : 0;
-                    distanceToNextManeuver_Status.bargraphInfo.bargraph = Math.min(100, NavState.distanceMeters * 100 / 300);
+                    distanceToNextManeuver_Status.bargraphInfo.bargraphOnOff = dn.approaching ? 1 : 0;
+                    distanceToNextManeuver_Status.bargraphInfo.bargraph = Math.min(100, dn.meters * 100 / 300);
                     distanceToNextManeuver_Status.validityInformation.distanceToNextManeuverValid = true;
                 } else {
                     distanceToNextManeuver_Status.distanceToNextManeuver.distance = -1;
@@ -220,7 +224,7 @@ NavigationServiceListener {
             try {
                 this.getSystemService().removeSystemServiceListener(this, SYSTEM_LISTENER_IDS);
                 this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
-            } catch (Throwable t) {}
+            } catch (Throwable t) { de.aatokombi.Quiet.note("DistanceToNextManeuver#3", t); }
         }
     }
 

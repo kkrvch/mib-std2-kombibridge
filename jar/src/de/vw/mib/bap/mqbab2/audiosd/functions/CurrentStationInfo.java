@@ -1,5 +1,8 @@
 /*
- * Decompiled with CFR 0.152.
+ * Decompiled with CFR 0.152 from the stock MIBHMI class. AAtoKombi deltas (marked "AAtoKombi"):
+ * while Android Auto is connected, the media widget's info lines show the AA turn-by-turn line
+ * (set by AANavReader) or the AA now-playing track and progress (set by ShmemMediaReader) instead
+ * of the "Android Auto" label. The PQ shadow (mqbpq) reads the same static holders.
  */
 package de.vw.mib.bap.mqbab2.audiosd.functions;
 
@@ -94,20 +97,20 @@ ExboxServiceListener {
     public static volatile String mediaTitle = null;
     public static volatile String mediaArtist = null;
     public static volatile String mediaAlbum = null;
-    // AAtoKombi now-playing progress (Config.SHOW_MEDIA_PROGRESS). ShmemMediaReader sets these from
+    // AAtoKombi now-playing progress (Config.Media.SHOW_PROGRESS). ShmemMediaReader sets these from
     // the GAL MediaPlaybackStatus (position) / MediaPlaybackMetadata (duration).
     public static volatile int mediaPosSec = 0;
     public static volatile int mediaDurSec = 0;
-    // AAtoKombi feature switches (SHOW_NAV / SHOW_MEDIA / ...) live in de.aatokombi.Config.
+    // AAtoKombi feature switches (Config.Navigation / Config.Media / ...) live in de.aatokombi.Config.
     private static CurrentStationInfo INSTANCE = null;
 
     public static void pokeNav() {
         CurrentStationInfo i = INSTANCE;
         if (i != null) {
-            try { i.process(-1); } catch (Throwable t) {}
+            try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("CurrentStationInfo#1", t); }
         }
         // Fan out to the PQ audiosd shadow (reads these same holders); no-op on MQB. Guarded.
-        try { de.vw.mib.bap.mqbpq.audiosd.functions.CurrentStationInfo.poke(); } catch (Throwable t) {}
+        try { de.vw.mib.bap.mqbpq.audiosd.functions.CurrentStationInfo.poke(); } catch (Throwable t) { de.aatokombi.Quiet.note("CurrentStationInfo#2", t); }
     }
 
     // Clamp our injected text to 72 chars so an over-long title/street can never overflow the
@@ -321,10 +324,10 @@ ExboxServiceListener {
     private void setStationInfoForMedia(CurrentStationInfo_Status currentStationInfo_Status) {
         MediaService mediaService = this.getMediaService();
         block0 : switch (mediaService.getCurrentAudioSource()) {
-            case 1: 
+            case 1:
             case 4: {
                 switch (mediaService.getCDContentType()) {
-                    case 3: 
+                    case 3:
                     case 4: {
                         int n = mediaService.getDvdChapter();
                         int n2 = mediaService.getDvdChapterCount();
@@ -357,24 +360,24 @@ ExboxServiceListener {
                 this.setStationInfoNoInformationAvailable(currentStationInfo_Status);
                 break;
             }
-            case 7: 
+            case 7:
             case 14: {
                 this.setStationInfoForMediaExternalDevice(currentStationInfo_Status);
                 currentStationInfo_Status.quaternaryInformation.setContent("");
                 currentStationInfo_Status.qi_Type = 0;
                 break;
             }
-            case 2: 
-            case 5: 
-            case 6: 
-            case 8: 
-            case 10: 
-            case 11: 
+            case 2:
+            case 5:
+            case 6:
+            case 8:
+            case 10:
+            case 11:
             case 13: {
                 this.setStationInfoForMediaExternalDevice(currentStationInfo_Status);
                 break;
             }
-            case 3: 
+            case 3:
             case 9: {
                 this.setStationInfoNoInformationAvailable(currentStationInfo_Status);
                 break;
@@ -421,7 +424,7 @@ ExboxServiceListener {
         // status serialization — we fall back to the stock label instead of blanking the widget
         // (a black media menu was seen once on a cold first launch). All our text is length-clamped.
         try {
-            if (Config.SHOW_NAV
+            if (Config.Navigation.ENABLED
                     && connType == 3
                     && !de.vw.mib.bap.mqbab2.navsd.functions.ClusterCaps.isNavCapable()
                     && de.aatokombi.MediaViewMode.showNavigation()
@@ -447,10 +450,10 @@ ExboxServiceListener {
                 String navQ4 = clampLine(navQuaternary);          // null-safe -> ""
                 currentStationInfo_Status.quaternaryInformation.setContent(navQ4);
                 currentStationInfo_Status.qi_Type = 0;
-                if (Config.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "' q4='" + navQ4 + "'");
+                if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: nav-in-media p='" + navPrimary + "' s='" + navSecondary + "' t='" + navTertiary + "' q4='" + navQ4 + "'");
             }
             // No active route, or music selected by the wheel: show the real now-playing track.
-            else if (Config.SHOW_MEDIA && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
+            else if (Config.Media.ENABLED && connType == 3 && mediaTitle != null && mediaTitle.length() > 0) {
                 string = clampLine(mediaTitle);                       // line 1: track title
                 n = 72;
                 currentStationInfo_Status.secondaryInformation.setContent(clampLine(mediaArtist));
@@ -458,13 +461,13 @@ ExboxServiceListener {
                 currentStationInfo_Status.tertiaryInformation.setContent(clampLine(mediaAlbum));
                 currentStationInfo_Status.ti_Type = mediaAlbum != null && mediaAlbum.length() != 0 ? 74 : 0;
                 // Optional Q4 progress bar; n=0 selects the 4-line layout (pi_Type note above).
-                String bar = Config.SHOW_MEDIA_PROGRESS ? progressBar(mediaPosSec, mediaDurSec) : "";
+                String bar = Config.Media.SHOW_PROGRESS ? progressBar(mediaPosSec, mediaDurSec) : "";
                 if (bar.length() > 0) {
                     n = 0;
                     currentStationInfo_Status.quaternaryInformation.setContent(clampLine(bar));
                     currentStationInfo_Status.qi_Type = 0;
                 }
-                if (Config.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: track-in-media t='" + mediaTitle + "' a='" + mediaArtist + "' al='" + mediaAlbum + "' bar='" + bar + "'");
+                if (Config.Advanced.LOG_LEVEL <= MIBLogger.DEBUG) MIBLogger.getInstance().debug("CurrentStationInfo: track-in-media t='" + mediaTitle + "' a='" + mediaArtist + "' al='" + mediaAlbum + "' bar='" + bar + "'");
             }
         } catch (Throwable t) {
             // Never let our injection blank the cluster — revert to the plain "Android Auto" label.
@@ -712,7 +715,7 @@ ExboxServiceListener {
                 this.lastAudioComponent = n;
             }
             switch (this.lastAudioComponent) {
-                case 2: 
+                case 2:
                 case 3: {
                     this.setStationInfoForMedia(currentStationInfo_Status);
                     break;
@@ -925,12 +928,12 @@ ExboxServiceListener {
     }
 
     static {
-        RADIO_LISTENER_IDS = new int[]{1410, 1339, 1324, 1320, 1321, 1371, 1372, 3404, 3403, 1443, 1436, 2323, 1409, 1423, 1356, 1357, 1352, 1354, 533079040, 516301824, 1445, 1446, 1366, 1426, 1454, 1456, 1455, 1308, 3962};
+        RADIO_LISTENER_IDS = new int[]{1410, 1339, 1324, 1320, 1321, 1371, 1372, 3404, 3403, 1443, 1436, 2323, 1409, 1423, 1356, 1357, 1352, 1354, 2410015, 2410014, 1445, 1446, 1366, 1426, 1454, 1456, 1455, 1308, 3962};
         MEDIA_LISTENER_IDS = new int[]{8, 3520, 124, 125, 138, 2849, 58};
         TV_TUNER_LISTENER_IDS = new int[]{2314};
-        SMARTPHONE_INTEGRATION_LISTENER_IDS = new int[]{1114057728};
+        SMARTPHONE_INTEGRATION_LISTENER_IDS = new int[]{2910018};
         NAVIGATION_LISTENER_IDS = new int[]{2389, 2388};
         SOUND_LISTENER_IDS = new int[]{1470};
-        EXBOX_LISTENER_IDS = new int[]{-1995243392};
+        EXBOX_LISTENER_IDS = new int[]{-2147478647};
     }
 }

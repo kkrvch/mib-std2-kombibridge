@@ -21,7 +21,7 @@ extends TurnToInfoStage {
     public static boolean isActive() { return INSTANCE != null; }
     public static void poke() {
         TurnToInfo i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("TurnToInfo#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -72,7 +72,7 @@ extends TurnToInfoStage {
 
     protected void setTurnToInfoStatusData(TurnToInfo_Status turnToInfo_Status) {
         if (NavState.ACTIVE) {   // AA active -> NavState.street; else stock
-            String s = (NavState.street != null) ? NavState.street : EMPTY_STRING;
+            String s = NavState.streets.street;
             turnToInfo_Status.turnToInfo.setContent(s);
             return;
         }

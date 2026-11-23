@@ -25,7 +25,7 @@ extends DistanceToNextManeuverStage {
     public static boolean isActive() { return INSTANCE != null; }
     public static void poke() {
         DistanceToNextManeuver i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("DistanceToNextManeuver#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -100,7 +100,7 @@ extends DistanceToNextManeuverStage {
         if (NavState.ACTIVE) {   // AA active -> NavState.distanceMeters, bargraph off; else stock
             distanceToNextManeuver_Status.bargraphInfo.bargraphOnOff = 0;
             distanceToNextManeuver_Status.bargraphInfo.bargraph = 0;
-            int dist = NavState.distanceMeters;
+            int dist = NavState.distance.meters;
             if (dist > 0) {
                 int[] nArray = new int[2];
                 int unit;

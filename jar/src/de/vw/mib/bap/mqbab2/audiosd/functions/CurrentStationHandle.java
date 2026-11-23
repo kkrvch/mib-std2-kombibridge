@@ -3,7 +3,7 @@
  *
  * The centred cluster now-playing view only binds album cover art when the active source has a VALID
  * station handle; AA never gives one (fsgHandle = -1), so its cover shows only in the side wells.
- * Two gated changes fix it (both no-ops when Config.SHOW_COVER_ART is off — compile-time constant, so
+ * Two gated changes fix it (both no-ops when Config.Media.SHOW_COVER_ART is off — compile-time constant, so
  * javac drops the synthesis entirely):
  *   1. setCurrentStationHandleForMedia(): synthesize a stable fsgHandle = 1 when the media browser
  *      gives no pos id, so the stock CoverArt usecase can answer with a matching valid handle.
@@ -317,7 +317,7 @@ TvTunerServiceListener {
     private void setCurrentStationHandleForMedia(CurrentStation_Handle_Status currentStation_Handle_Status) {
         MediaService mediaService = this.getMediaService();
         int n = this.computeCurrentActiveMediaPosId();
-        if (Config.SHOW_COVER_ART && n == 0) {
+        if (Config.Media.SHOW_COVER_ART && n == 0) {
             // AA gives no BAP media pos id -> stock would leave fsgHandle = -1 and the centred cluster
             // now-playing view would never bind the cover. Synthesize a stable positive handle so the
             // stock CoverArt usecase can answer responseCoverArt() with a matching valid station handle.
@@ -369,7 +369,7 @@ TvTunerServiceListener {
                 // centred cluster well never binds an AA cover. Route it through the media handler so
                 // the synthesized handle above lets the cover attach. Byte-for-byte stock when the
                 // compile-time flag is off (only the else branch survives constant folding).
-                if (Config.SHOW_COVER_ART) {
+                if (Config.Media.SHOW_COVER_ART) {
                     this.setCurrentStationHandleForMedia(currentStation_Handle_Status);
                 } else {
                     this.setInvalidCurrentStationHandleStatus(currentStation_Handle_Status);
@@ -483,7 +483,7 @@ TvTunerServiceListener {
     }
 
     static {
-        MEDIA_LISTENER_IDS = new int[]{492571648, 526126080};
+        MEDIA_LISTENER_IDS = new int[]{810013, 810015};
         RADIO_LISTENER_IDS = new int[]{1324, 2486, 1412};
         TV_TUNER_LISTENER_IDS = new int[]{2662};
         SOUND_LISTENER_IDS = new int[]{1470};

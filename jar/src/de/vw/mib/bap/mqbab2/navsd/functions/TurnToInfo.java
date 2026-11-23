@@ -29,7 +29,7 @@ NavigationServiceListener {
     private static volatile TurnToInfo INSTANCE = null;
     public static void poke() {
         TurnToInfo i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("TurnToInfo#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -37,7 +37,7 @@ NavigationServiceListener {
         // On a nav-capable cluster register it so the unit's own nav re-sends when AA is inactive.
         INSTANCE = this;
         if (ClusterCaps.isNavCapable()) {
-            try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+            try { this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) { de.aatokombi.Quiet.note("TurnToInfo#2", t); }
         }
         return this.computeTurnToInfoStatus();
     }
@@ -57,18 +57,35 @@ NavigationServiceListener {
         this.sendTurnToInfoStatus(this.computeTurnToInfoStatus());
     }
 
+    /**
+     * Stock method, unchanged: the unit's own next-turn street and signpost. It is part of what the
+     * stock class offers its subclasses - TurnToInfoArabic (not shadowed) overrides it and calls
+     * this one - so the shadow must have it (found by tools/check_shadows.py api).
+     */
+    protected void setTurnToInfoStatusData(TurnToInfo_Status turnToInfo_Status) {
+        NavigationTurnToInfo n = this.getNavigationService().getTurnToInfo();
+        turnToInfo_Status.turnToInfo.setContent(n.getTurnToInfoStreet());
+        turnToInfo_Status.signPost.setContent(n.getTurnToInfoSignPost());
+    }
+
     private TurnToInfo_Status computeTurnToInfoStatus() {
         TurnToInfo_Status turnToInfo_Status = this.dequeueBAPEntity();
         // navsd-shadow delta: street straight from NavState (the AA next-turn road); on a nav-capable
         // cluster, when AA is inactive, the unit's own next-turn street + signpost instead.
         try {
             if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
-                turnToInfo_Status.turnToInfo.setContent(NavState.street != null ? NavState.street : "");
+                // navsd-shadow delta: with AA's own map on the AID this line stays empty - it is the
+                // plate above the map (trip 2026-11-19: on a straight stretch the unit's own guidance
+                // sends no turn-to street, and the plate is then gone while the turn widget still
+                // shows the street). The street moves to CurrentPositionInfo, which the widget shows
+                // in its place. KombiMap re-sends both when the AA map comes or goes.
+                boolean plateOff = de.aatokombi.Config.ClusterMap.HIDE_PLATE_ON_AA_MAP
+                        && de.aatokombi.KombiMap.aaMapShown();
+                turnToInfo_Status.turnToInfo.setContent(plateOff ? "" : aaStreetLine(this.getNavigationService()));
                 turnToInfo_Status.signPost.setContent("");
             } else if (ClusterCaps.isNavCapable()) {
-                NavigationTurnToInfo n = this.getNavigationService().getTurnToInfo();
-                turnToInfo_Status.turnToInfo.setContent(n.getTurnToInfoStreet());
-                turnToInfo_Status.signPost.setContent(n.getTurnToInfoSignPost());
+                // the stock path, through the stock method: a subclass may override it
+                this.setTurnToInfoStatusData(turnToInfo_Status);
             } else {
                 turnToInfo_Status.turnToInfo.setContent("");
                 turnToInfo_Status.signPost.setContent("");
@@ -77,6 +94,27 @@ NavigationServiceListener {
             // leave empty on any failure; never crash navsd
         }
         return turnToInfo_Status;
+    }
+
+    /**
+     * The street line while AA guides (navsd-shadow delta): NavState's street; when that asks for
+     * the current position (manoeuvre not near yet, AA named no current road) the unit's own
+     * map-matched street (the value CurrentPositionInfo falls back to), else the next-turn road.
+     */
+    static String aaStreetLine(NavigationService ns) {
+        NavState.Streets st = NavState.streets;       // one read: the line and what to do without it
+        if (!st.wantsCurrentPosition) {
+            return st.street;
+        }
+        String own = null;
+        try {
+            if (ns != null && ns.getNavigationStatus() == 0) {
+                own = ns.getCurrentPositionInfo();
+            }
+        } catch (Throwable t) {
+            own = null;
+        }
+        return (own != null && own.length() > 0) ? own : st.nextRoad;
     }
 
     public void getProperty(BAPEntity bAPEntity, PropertyListener propertyListener) {
@@ -95,7 +133,7 @@ NavigationServiceListener {
     public void uninitialize() {
         // navsd-shadow delta: a listener was only registered on a nav-capable cluster (see init).
         if (ClusterCaps.isNavCapable()) {
-            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) {}
+            try { this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS); } catch (Throwable t) { de.aatokombi.Quiet.note("TurnToInfo#3", t); }
         }
     }
 

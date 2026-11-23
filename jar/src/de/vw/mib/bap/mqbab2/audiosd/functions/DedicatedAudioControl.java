@@ -1383,7 +1383,7 @@ RadioServiceListener {
         DedicatedAudioControl_StartResult dedicatedAudioControl_StartResult = (DedicatedAudioControl_StartResult)bAPEntity;
         // Wheel view selection is restricted to AA guidance in the non-nav Audio flow.
         // Leave raw MFL hardkeys and every other BAP action on their original path.
-        if (de.aatokombi.Config.SHOW_NAV && de.aatokombi.Config.SHOW_MEDIA
+        if (de.aatokombi.Config.Navigation.ENABLED && de.aatokombi.Config.Media.ENABLED
                 && !de.vw.mib.bap.mqbab2.navsd.functions.ClusterCaps.isNavCapable()
                 && this.currentDACAction == 0
                 && this.getSystemService().getSystemOnOffState() > 1

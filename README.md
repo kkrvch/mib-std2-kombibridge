@@ -33,7 +33,7 @@ protocol.
   <img src="docs/img/cluster-media.jpg" alt="Android Auto now-playing track with an ASCII progress bar (media mode) on a MIB2 STD2 instrument cluster" width="640">
   <br>
   <em><strong>Media mode:</strong> the real now-playing track (artist / album / title) with an ASCII progress
-  bar (<code>SHOW_MEDIA_PROGRESS</code>, off by default), shown when no route guidance is active.</em>
+  bar (<code>Media.SHOW_PROGRESS</code>, off by default), shown when no route guidance is active.</em>
 </p>
 
 ### SEAT Virtual Cluster (Digital Cockpit)
@@ -50,9 +50,9 @@ protocol.
 <p align="center">
   <img src="docs/img/cluster-cover-seat.jpg" alt="Android Auto album cover art on a SEAT Digital Cockpit / colour Virtual Cluster, with the now-playing track and ASCII progress bar" width="640">
   <br>
-  <em><strong>Cover art</strong> (<code>SHOW_COVER_ART</code>, AID / colour Virtual Cockpit only): the Android Auto
+  <em><strong>Cover art</strong> (<code>Media.SHOW_COVER_ART</code>, AID / colour Virtual Cockpit only): the Android Auto
   album cover pushed to the cluster alongside the now-playing track and the
-  <code>SHOW_MEDIA_PROGRESS</code> bar. Both switches are off by default.</em>
+  <code>Media.SHOW_PROGRESS</code> bar.</em>
 </p>
 
 ### Older PQ cluster (mono centre display)
@@ -134,15 +134,20 @@ only builds the two artifacts.
 ## Patch the unit (step by step)
 
 You build the two artifacts **against the exact files from your own unit**, then deploy them back
-with the toolbox. Nothing here is firmware-version-specific — the shim auto-adapts across STD2
-firmware builds. (Development was done on **`MST2_EU_SK_ZR_P0480T`**.)
+with the toolbox. The libgal patch reads what it needs out of your file: the function addresses
+from its symbols and the object layouts (where the message router sits, the endpoint fields, the
+vtable slots, the buffer words) from the code of its own small functions. When that code does not
+look as expected the build stops and writes nothing, rather than produce a library that crashes;
+when only the media part differs, it builds without now-playing. The mod has been run in a car on
+**`MST2_EU_SK_ZR_P0480T`** only, and the shadowed HMI classes come from that build — on another
+firmware a successful build is a good sign, not a test drive.
 
 > For a pure **FTP + Telnet** install/build/rollback flow, follow
 > [`docs/INSTALL_FTP_TELNET.md`](docs/INSTALL_FTP_TELNET.md) instead (Still requires toolbox to enable FTP/Telnet).
 
 ### 0. Prerequisites (once)
 - **The deployment toolbox** ([olli991/mib-std2-pq-zr-toolbox](https://github.com/olli991/mib-std2-pq-zr-toolbox)) set up for your unit.
-- **Docker** — the whole build runs in containers (jxe2jar + the JDK 8 / clang / lld / pyelftools
+- **Docker** — the whole build runs in containers (the vendored `tools/jxe2jar` converter + the JDK 8 / clang / lld / pyelftools
   toolchain), so nothing else needs installing.
 
 ### 1. Pull the two files off the unit (with the toolbox)
@@ -162,11 +167,54 @@ Use the toolbox's **"Dump files"** menu item to copy these from the unit to your
 # -> dist/AAtoKombi.jar                  (the HMI mod)
 # -> dist/libext.google.gal.receiver.so  (the patched libgal)
 ```
+
+To build the capture-only MST2 VideoSink probe, pass the environment variable through the Docker
+build:
+
+```sh
+VIDEO_PROBE=1 ./build.sh /path/to/your/MIBHMI.jxe /path/to/your/libext.google.gal.receiver.so dist-probe
+```
+
+The resulting `dist-probe/libext.google.gal.receiver.so` records callback counters in
+`/dev/shmem/aa_video_probe`; it does not render video to the cluster. In PowerShell, use
+`$env:VIDEO_PROBE = "1"` before invoking the script with Bash.
+
+The heavy one-shot forensic collector is opt-in with `VIDEO_PROBE_DEEP=1`; it is intended for a
+single controlled diagnostic run and is not the normal probe mode.
+
+Android Auto map on the Active Info Display (experimental) is switched with `ClusterMap.ENABLED` in
+`jar/src/de/aatokombi/Config.java` (read by `build.sh`; `CLUSTER_SINK=0/1` in the environment
+overrides it). With it the patched libgal advertises a second, cluster-type H.264 display to the phone and passes its stream
+to DisplayManager through shared memory; `native/libkb_dm.so`, preloaded into DisplayManager, sends
+it to the cluster in place of the stock map video. See `native/README.md` (install, off switches,
+risks) and `shim/DESIGN_VIDEO_PIPELINE.md`. If Android Auto stops connecting, put the normal libgal
+back; if the unit resets at boot, the toolbox's Disable AAtoKombi (or its `reset` file on the SD)
+takes the hook out again; over telnet `native/install/uninstall_dm_hook.sh` does the same.
+
+```sh
+./build.sh /path/to/your/MIBHMI.jxe /path/to/your/libext.google.gal.receiver.so dist-cluster   # ClusterMap.ENABLED = true
+# -> dist-cluster/{AAtoKombi.jar, libext.google.gal.receiver.so, libkb_dm.so}
+```
+
+If Docker reports `Operation not permitted` while writing `shim/build/navshim.o`, remove only the
+generated shim artifacts and rerun the same command:
+
+```powershell
+Remove-Item shim/build/navshim.o,shim/build/navshim.so,shim/build/libext.google.gal.receiver.so -Force -ErrorAction SilentlyContinue
+```
+
+After building, the host tests run in the same container (protocol decoders, cluster video ring,
+jar mappings, the shadow check against your `MIBHMI.jar`, the libgal layout checks); a failed test
+stops the build before anything is copied to `dist/`. `SKIP_TESTS=1 ./build.sh ...` skips them.
+`./build.sh <MIBHMI.jxe> -` builds the jar only, for when the libgal on the unit stays as it is.
+
 Everything runs in Docker: it converts the `.jxe` to a jar, builds the toolchain image (cached
 after the first run), compiles both artifacts inside the container with the repo bind-mounted, and
 drops the two deployables in `dist/`.
 
-On Windows, start Docker Desktop with Linux containers and double-click `build.bat`. It asks for
+On Windows, double-click `build.bat`. It needs Docker Desktop with Linux containers: when Docker
+Desktop is missing, it offers to install it with winget (administrator rights, possibly a reboot),
+and when its engine is not running, it starts Docker Desktop and waits for it. It asks for
 `MIBHMI.jxe` and the stock `libext.google.gal.receiver.so` in two Open dialogs, builds, and opens
 the `dist` folder with the results. From PowerShell it takes the same arguments as `build.sh`:
 ```powershell
@@ -180,10 +228,14 @@ resolves its per-build addresses from the file you pass, and the jar is rebuilt 
 ### 3. Deploy both artifacts back to the unit (with the toolbox)
 Put the two `dist/` outputs onto the toolbox SD card, then run the toolbox's Enable step:
 - copy `dist/AAtoKombi.jar` to the SD `custom/java/` folder,
-- copy `dist/libext.google.gal.receiver.so` to the SD `custom/sal/...gal/` folder.
+- copy `dist/libext.google.gal.receiver.so` to the SD `custom/sal/` folder,
+- only for the Android Auto map on the cluster: copy `dist/libkb_dm.so` next to it, to `custom/sal/`.
 
 The Enable step then installs the jar onto the HMI `-Xbootclasspath/p` (in `runHMI.sh`) and swaps in
-the patched libgal (keeping a backup of the original).
+the patched libgal (keeping a backup of the original). With `libkb_dm.so` next to the libgal it also
+preloads the DisplayManager hook (after checking it on the unit; if the check fails, the rest is
+installed without it). Without it on the SD, a hook left from an earlier install is removed: it has
+to come from the same build as the libgal.
 
 It's **fully reversible** — the toolbox's Disable removes the jar from the bootclasspath and
 restores the original libgal. Nothing is written to flash by the mod itself (the captured data
@@ -194,7 +246,7 @@ goes through `/dev/shmem`, a RAM filesystem).
   maneuver + street; play music with no active route → it shows the real Title/Artist/Album.
 - On MQB non-nav clusters, turn the wheel in the Audio menu during guidance to select music
   (NEXT) or navigation (PREVIOUS). Repeated turns in the same direction keep the chosen view;
-  a new route starts with navigation. This works when `SHOW_NAV` and `SHOW_MEDIA` are enabled.
+  a new route starts with navigation. This works when `Navigation.ENABLED` and `Media.ENABLED` are on.
   Nav-capable clusters and separate steering-wheel track buttons retain their normal behavior.
   Wheel view selection is not implemented for the PQ input path.
 - If something's off, check that `/dev/shmem/aa_nav` and `/dev/shmem/aa_media` exist and advance
@@ -203,16 +255,27 @@ goes through `/dev/shmem`, a RAM filesystem).
 
 ### Options
 The defaults just work. All build-time switches live in one file —
-`jar/src/de/aatokombi/Config.java`; flip a constant and rebuild the jar:
-- `SHOW_NAV` — draw AA turn-by-turn on the cluster (the navsd **Navigation** menu on a nav-capable
-  cluster, the media widget on a non-nav one). Default on.
-- `SHOW_MEDIA` — show the real now-playing track when not navigating or when selected with the wheel. Default on.
-- `SHOW_MEDIA_PROGRESS` — add an ASCII playback progress bar to the now-playing track. Default off.
-- `SHOW_COVER_ART` — push the AA album cover to the cluster (AID / colour Virtual Cockpit only; inert
-  on a monochrome cluster). Requires `SHOW_MEDIA`. Default off.
-- `SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is active"*
-  cluster placeholder. Default on.
-- `LOG_LEVEL` — log verbosity (`TRACE` … `SILENT`).
+`jar/src/de/aatokombi/Config.java`, grouped by topic; flip a constant and rebuild the jar
+(`build.sh` prints the values that went into the build, as `Group.NAME value`):
+- `Navigation.ENABLED` — draw AA turn-by-turn on the cluster (the navsd **Navigation** menu on a
+  nav-capable cluster, the media widget on a non-nav one); also the master switch of the AA map on
+  the AID. Default on. Next to it: `SHOW_NEXT_MANEUVER`, `SHOW_DOUBLE_TURN`,
+  `SHOW_JUNCTION_SCHEMATIC` (all default on).
+- `ManeuverStages.*` — how the arrow develops as the turn approaches: the *follow the street* and
+  *prepare* stages (`FOLLOW_STREET`, `PREPARE`) and their distance / time gates (`NEAR_*`,
+  `PREPARE_*`).
+- `Media.ENABLED` — show the real now-playing track when not navigating or when selected
+  with the wheel.
+  Default on. `Media.SHOW_PROGRESS` adds an ASCII playback progress bar (default off);
+  `Media.SHOW_COVER_ART` pushes the AA album cover to the cluster (AID / colour Virtual Cockpit
+  only; inert on a monochrome cluster; default on). Both need `Media.ENABLED`.
+- `ClusterMap.*` — Android Auto's own map on the AID: `ENABLED` (a build switch: the libgal with
+  the map plus `libkb_dm.so`, or the plain libgal), `START_ON_MAP`, `AA_MAP_ONLY_DURING_GUIDANCE`,
+  `HIDE_PLATE_ON_AA_MAP` (no street / ETA plate above the AA map, which then gets more room), `MODE_CYCLE`.
+- `Advanced.SUPPRESS_NAV_ACTIVE_PLACEHOLDER` — hide the stock *"Navigation on the mobile device is
+  active"* cluster placeholder. Default on. `Advanced.DESKTOP_HEAD_UNIT` — present the head unit
+  as Google's Desktop Head Unit, so Android Auto runs sideloaded apps (only with `ClusterMap.ENABLED`;
+  default off). `Advanced.LOG_LEVEL` — log verbosity (`TRACE` … `SILENT`).
 
 Deeper build notes: [`docs/`](docs/) and [`shim/README.md`](shim/README.md).
 

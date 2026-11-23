@@ -37,7 +37,7 @@ implements Property,
 ASLNavSDConstants,
 NavigationServiceListener,
 SystemServiceListener {
-    protected static final int[] NAVIGATION_LISTENER_IDS = new int[]{732, 737153024, 750, 753930240};
+    protected static final int[] NAVIGATION_LISTENER_IDS = new int[]{732, 1110059, 750, 1110060};
     protected static final int[] SYSTEM_LISTENER_IDS = new int[]{1643};
     static Class class$de$vw$mib$bap$mqbab2$generated$navsd$serializer$TimeToDestination_Status;
 
@@ -45,7 +45,7 @@ SystemServiceListener {
     private static volatile TimeToDestination INSTANCE = null;
     public static void poke() {
         TimeToDestination i = INSTANCE;
-        if (i != null) { try { i.process(-1); } catch (Throwable t) {} }
+        if (i != null) { try { i.process(-1); } catch (Throwable t) { de.aatokombi.Quiet.note("TimeToDestination#1", t); } }
     }
 
     public BAPEntity init(BAPStageInitializer bAPStageInitializer) {
@@ -58,7 +58,7 @@ SystemServiceListener {
             try {
                 this.getNavigationService().addNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
                 this.getSystemService().addSystemServiceListener(this, SYSTEM_LISTENER_IDS);
-            } catch (Throwable t) {}
+            } catch (Throwable t) { de.aatokombi.Quiet.note("TimeToDestination#2", t); }
         }
         return null;
     }
@@ -86,6 +86,17 @@ SystemServiceListener {
         int n5;
         // navsd-shadow delta. isNavCapable() is not redundant with ACTIVE — it also keeps this MQB
         // function stock on a PQ unit, where AANavReader's own navCapable() answers true.
+        if (de.aatokombi.Config.ClusterMap.HIDE_PLATE_ON_AA_MAP && de.aatokombi.KombiMap.aaMapShown()) {
+            // navsd-shadow delta: no ETA line on the plate above AA's own map (KombiMap re-sends
+            // this when the map comes or goes): reported as not valid, like with no route.
+            timeToDestination_Status.timeInfo.timeInfoType = 0;
+            timeToDestination_Status.validityInformation.timeInfo_MinuteIsValid = false;
+            timeToDestination_Status.validityInformation.timeInfo_HourIsValid = false;
+            timeToDestination_Status.validityInformation.timeInfo_DayIsAvailableToBeDisplayed = false;
+            timeToDestination_Status.validityInformation.timeInfo_MonthIsAvailableToBeDisplayed = false;
+            timeToDestination_Status.validityInformation.timeInfo_YearIsAvailableToBeDisplayed = false;
+            return;
+        }
         if (ClusterCaps.isNavCapable() && NavState.ACTIVE) {
             this.setTimeInfoFromAndroidAuto(timeToDestination_Status);
             return;
@@ -136,12 +147,39 @@ SystemServiceListener {
      * where it is covered by the host test.
      */
     private void setTimeInfoFromAndroidAuto(TimeToDestination_Status timeToDestination_Status) {
-        int seconds = NavState.destinationSeconds;
+        NavState.Destination dest = NavState.destination;   // one read: the time and the clock string
+        int seconds = dest.seconds;
         boolean valid = seconds > 0;
         try {
             timeToDestination_Status.timeInfo.navigationTimeFormat = this.getSystemService().getSystemTimeFormat() == 0 ? 1 : 0;
         } catch (Throwable t) {
             timeToDestination_Status.timeInfo.navigationTimeFormat = 0;
+        }
+        // The stock nav-menu switch (arrival time vs time to destination) is the unit's own setting,
+        // readable whether or not its route guidance runs; 1 = arrival clock. The clock comes from the
+        // phone's own ETA string, so it matches what the phone shows; unreadable -> remaining time.
+        int preference = 0;
+        try {
+            preference = this.getNavigationService().getTimeToDestinationTimeInfo();
+        } catch (Throwable t) {
+            preference = 0;
+        }
+        int[] clock = (preference == 1 && valid) ? AANavReader.parseEtaClock(dest.eta) : null;
+        logForm(preference, clock);
+        if (clock != null) {
+            timeToDestination_Status.timeInfo.timeInfoType = 1;   // arrival clock
+            timeToDestination_Status.timeInfo.hour = clock[0];
+            timeToDestination_Status.timeInfo.minute = clock[1];
+            timeToDestination_Status.timeInfo.day = 0;
+            timeToDestination_Status.timeInfo.month = 0;
+            timeToDestination_Status.timeInfo.year = 0;
+            timeToDestination_Status.validityInformation.timeInfo_MinuteIsValid = true;
+            timeToDestination_Status.validityInformation.timeInfo_HourIsValid = true;
+            // The phone's string carries no date, so an arrival after midnight shows just the time.
+            timeToDestination_Status.validityInformation.timeInfo_DayIsAvailableToBeDisplayed = false;
+            timeToDestination_Status.validityInformation.timeInfo_MonthIsAvailableToBeDisplayed = false;
+            timeToDestination_Status.validityInformation.timeInfo_YearIsAvailableToBeDisplayed = false;
+            return;
         }
         int[] hm = AANavReader.remainingHoursMinutes(seconds);
         timeToDestination_Status.timeInfo.timeInfoType = 0;   // remaining travel time, not arrival clock
@@ -157,6 +195,20 @@ SystemServiceListener {
         timeToDestination_Status.validityInformation.timeInfo_DayIsAvailableToBeDisplayed = false;
         timeToDestination_Status.validityInformation.timeInfo_MonthIsAvailableToBeDisplayed = false;
         timeToDestination_Status.validityInformation.timeInfo_YearIsAvailableToBeDisplayed = false;
+    }
+
+    // Debug-only, change-triggered: which form went out and why.
+    private static String lastFormLog = null;
+    private static void logForm(int preference, int[] clock) {
+        if (de.aatokombi.Config.Advanced.LOG_LEVEL > de.adi961.miblogger.MIBLogger.DEBUG) {
+            return;
+        }
+        String line = "TimeToDestination: pref=" + preference + " eta='" + NavState.destination.eta + "' -> "
+                + (clock != null ? ("arrival " + clock[0] + ":" + clock[1]) : "remaining");
+        if (!line.equals(lastFormLog)) {
+            lastFormLog = line;
+            de.adi961.miblogger.MIBLogger.getInstance().debug(line);
+        }
     }
 
     private void sendtimeToDestinationStatus(TimeToDestination_Status timeToDestination_Status) {
@@ -182,7 +234,7 @@ SystemServiceListener {
             try {
                 this.getNavigationService().removeNavigationServiceListener(this, NAVIGATION_LISTENER_IDS);
                 this.getSystemService().removeSystemServiceListener(this, SYSTEM_LISTENER_IDS);
-            } catch (Throwable t) {}
+            } catch (Throwable t) { de.aatokombi.Quiet.note("TimeToDestination#3", t); }
         }
     }
 

@@ -43,14 +43,27 @@ per-session totals). Legacy `8004`/`8005` ids showing up there mean the session 
 - `DESIGN.md` — the navigation reverse-engineering spec (endpoint layout, vtable slots, protocol
   message ids, listener interface, injection mechanics).
 - `DESIGN_MEDIA.md` — the same spec for the `MediaPlaybackStatusEndpoint` (now-playing) path.
+- `DESIGN_VIDEO.md` — the MST2/i.MX6 capture-only VideoSink probe boundary; it deliberately does
+  not select an AID display surface or alter the existing nav/media endpoints.
+- `DESIGN_VIDEO_PIPELINE.md` — the next full H.264 → i.MX6 VPU → QNX Screen → cluster/MOST
+  pipeline, based on the confirmed target firmware exports and the recovered callback contract.
 - `re/FindDisconnect.java` — the Ghidra RE helper that located the `GalReceiver::shutdown`
   teardown edge the disconnect hook patches.
 
 ## Build
 ```sh
 ./build.sh /your/unit/libext.google.gal.receiver.so   # -> build/libext.google.gal.receiver.so
+# Optional, capture-only VideoSink callback probe (no display output):
+VIDEO_PROBE=1 ./build.sh /your/unit/libext.google.gal.receiver.so
+# Optional, heavyweight forensic mode (not for normal runtime use):
+VIDEO_PROBE=1 VIDEO_PROBE_DEEP=1 ./build.sh /your/unit/libext.google.gal.receiver.so
 ```
 Requirements: `clang`, `ld.lld` (`brew install lld`), `python3` + `pyelftools`.
+
+`VIDEO_PROBE_DEEP=1` deep forensic scans were observed to reboot the HU; they are for one
+controlled diagnostic run only. (The earlier `VIDEO_PIPELINE=1` ingress queue is gone: it copied
+the MAIN display's video into a queue nothing ever read. The AA map on the cluster takes another
+way - its own cluster-type sink, `CLUSTER_SINK=1`, see `src/cluster_sink.h`.)
 
 ## Per-firmware addresses — auto-resolved
 The addresses differ between libgal builds (even between two copies of the same build — e.g. the
@@ -58,7 +71,7 @@ on-device copy and the firmware-image copy are shifted by 8 bytes). `inject.py` 
 them **from the target libgal you pass it**, and bakes them into the blob's `.galrefs` slots
 before relativizing — nothing is hardcoded:
 
-The six `.galrefs` slots (in `g_ref[]` enum order):
+The eight `.galrefs` slots (in `g_ref[]` enum order; the last two are optional probe targets):
 
 | `.galrefs` slot | how `inject.py` resolves it |
 |---|---|
@@ -68,6 +81,8 @@ The six `.galrefs` slots (in `g_ref[]` enum order):
 | `onChannelOpened` PLT stub | the `.plt` stub that resolves the `onChannelOpened` GOT slot |
 | `MediaPlaybackStatusEndpoint` vtable | `.dynsym` symbol `_ZTV27MediaPlaybackStatusEndpoint` |
 | `MessageRouter::shutdown` | `.dynsym` symbol `_ZN13MessageRouter8shutdownEv` (the call the shutdown hook displaces + re-runs) |
+| `VideoSink::handleDataAvailable` | `.dynsym` symbol `_ZN9VideoSink19handleDataAvailableEyRK10shared_ptrI8IoBufferEj` (used only by `--video-probe`) |
+| `VideoSink::handleCodecConfig` | `.dynsym` symbol `_ZN9VideoSink17handleCodecConfigEPvj` (used only by `--video-probe`) |
 
 Plus the two `BL` patch sites (auto-located, each overridable):
 
@@ -79,3 +94,46 @@ Plus the two `BL` patch sites (auto-located, each overridable):
 `inject.py` prints the resolved values on every run; compare them against `nm -D libgal` if you
 want to double-check. If a `BL` auto-locator fails on some exotic build, override it with
 `--bl-offset 0xNNNN` (init) or `--bl-offset-shutdown 0xNNNN` (shutdown).
+The probe uses two additional ARM `B` patches at the VideoSink entry points and refuses to write
+if their target prologues differ from the verified target build.
+
+### Object layouts (`layout.py`, the `.gallayout` slots)
+
+Addresses are half of what differs between builds; the other half is where things sit inside
+libgal's objects. `layout.py` reads those from the target too and `inject.py` writes them into the
+blob's `.gallayout` slots (`g_lay[]` in `navshim_fs.cpp`), which the shim uses instead of literals:
+
+| slot | read from |
+|---|---|
+| `L_ROUTER_OFF` | `GalReceiver::registerService`: `add r0, r0, #off; b MessageRouter::registerService` |
+| `L_EP_SVCID`, `L_TABLE_BIAS` | `MessageRouter::registerService`: `ldrb rA,[r1,#svcid]` ... `add rA,rA,#bias; ldr rX,[r0,rA,lsl #2]` |
+| `L_EP_OPEN`, `L_EP_CHANNEL` | `ProtocolEndpointBase::onChannelOpened`: the two `strb` |
+| `L_EP_ROUTER` | `NavigationStatusEndpoint::start`: the `ldr r0,[this,#router]` next to `ldrb r1,[this,#channel]` |
+| `L_VT_WORDS`, `L_VT_ROUTE`, `L_VT_DISCOVERY` | the relocations of `_ZTV24NavigationStatusEndpoint` (which slot names which method) |
+| `L_IO_REF`, `L_IO_DATA`, `L_IO_START`, `L_IO_END` | the prologue of `NavigationStatusEndpoint::routeMessage` |
+| `L_NAV_LISTENER`, `L_MEDIA_LISTENER` | the first load of `handleNavigationStatus` / `handleMediaPlaybackStatus` |
+| `L_MEDIA_OK` | 1 when the media listener code has a known fingerprint |
+
+Two things are not single numbers and are compared by a fingerprint instead (sha256 of the
+function's code with branch displacements and literal-pool contents masked, so code that only
+moved keeps it): the stock `NavigationStatusEndpoint::addDiscoveryInfo` (it serialises endpoint
+fields the shim fills in) and the three media functions whose listener calling conventions the
+shim's `m_status` / `m_metadata` are written against.
+
+Outcome: everything read and known -> patched; media code differs -> patched without the media
+endpoint (a warning says so); anything else -> `inject.py` stops and writes nothing
+(`--assume-reference-layout` overrides that, for experiments). `python3 shim/layout.py <libgal>`
+prints the table for a library without patching it; `tests/inject/run.sh` runs the checks on
+altered copies. Only one firmware build was available, so "another build" has so far only been
+simulated that way.
+
+When the probe is installed on the unit, it writes the following RAM-only artifacts under
+`/dev/shmem/`: `aa_video_probe` (summary), `aa_video_probe_samples` (sample history),
+`aa_video_probe_config` (bounded codec-config bytes), `aa_video_probe_payload` (bounded candidate
+payload), `aa_video_probe_forensic.bin` (eight raw stack/object/descriptor snapshots for
+offline analysis), and `aa_video_probe_candidates.bin` (candidate base/offset/end ranges with
+up to 512 bytes from each range). Copy all of them before rebooting the unit.
+
+`VIDEO_PROBE_DEEP=1` enables the large raw object/candidate snapshots. Keep it separate from the
+normal probe: the deep mode adds direct memory scans and substantial RAM-file writes and is intended
+for a single controlled forensic run.

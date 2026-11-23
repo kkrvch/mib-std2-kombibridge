@@ -17,7 +17,7 @@ public class MIBLogger {
     public static final int ERROR = 4;
     public static final int SILENT = 5;
 
-    private int logLevel = Config.LOG_LEVEL;
+    private int logLevel = Config.Advanced.LOG_LEVEL;
 
     static MIBLogger instance;
 
@@ -61,17 +61,54 @@ public class MIBLogger {
         String line = "[" + logPrefix + "] [" + level + "] [" + getCallingClassName() + "]: " + message;
         System.out.println(line);   // goes to the system j9/hmi log (sloginfo), system-managed
         // Optional diagnostic mirror to a RAM file, so the log can be pulled to SD via the toolbox
-        // dump (no direct FS access to the unit). OFF unless DEBUG/TRACE is enabled, because this
-        // appends unbounded and /dev/shmem is RAM — at INFO our lines are still in sloginfo anyway.
+        // dump (no direct FS access to the unit). OFF unless DEBUG/TRACE is enabled: /dev/shmem is
+        // RAM — at INFO our lines are still in sloginfo anyway.
         if (logLevel <= DEBUG) {
+            mirror(line);
+        }
+    }
+
+    /**
+     * The RAM mirror is bounded: at MIRROR_MAX_BYTES the file becomes MIRROR_PATH + ".1" (replacing
+     * the previous one) and a new one is started, so the newest lines are always kept and the two
+     * files together never take more than twice that. Sizes are counted in chars, close enough.
+     */
+    static final String MIRROR_PATH = "/dev/shmem/aatokombi.log";
+    static final long MIRROR_MAX_BYTES = 1024L * 1024L;
+    private static String mirrorPath = MIRROR_PATH;
+    private static long mirrorMax = MIRROR_MAX_BYTES;
+    private static long mirrorBytes = -1L;
+
+    /** Host tests only: another file and limit (the unit always uses the constants above). */
+    static synchronized void mirrorTo(String path, long maxBytes) {
+        mirrorPath = path;
+        mirrorMax = maxBytes;
+        mirrorBytes = -1L;
+    }
+
+    static synchronized void mirror(String line) {
+        try {
+            if (mirrorBytes < 0L) {
+                mirrorBytes = new java.io.File(mirrorPath).length();   // 0 when there is no file yet
+            }
+            if (mirrorBytes >= mirrorMax) {
+                java.io.File old = new java.io.File(mirrorPath + ".1");
+                old.delete();
+                if (!new java.io.File(mirrorPath).renameTo(old)) {
+                    new java.io.File(mirrorPath).delete();
+                }
+                mirrorBytes = 0L;
+            }
+            java.io.FileWriter fw = new java.io.FileWriter(mirrorPath, true);
             try {
-                java.io.FileWriter fw = new java.io.FileWriter("/dev/shmem/aatokombi.log", true);
                 fw.write(line);
                 fw.write('\n');
+            } finally {
                 fw.close();
-            } catch (Throwable t) {
-                // never let logging disturb the HMI
             }
+            mirrorBytes += line.length() + 1;
+        } catch (Throwable t) {
+            // never let logging disturb the HMI
         }
     }
 

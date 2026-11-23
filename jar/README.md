@@ -6,14 +6,14 @@ classes shadow the stock ones with the same fully-qualified names.
 ## Sources (`src/`)
 
 Our own code:
-- `de/aatokombi/Config.java` — the single file of compile-time switches (`SHOW_NAV`, `SHOW_MEDIA`,
-  `SHOW_MEDIA_PROGRESS`, `SHOW_COVER_ART`, `SUPPRESS_NAV_ACTIVE_PLACEHOLDER`,
-  `AA_STALE_BACKSTOP_MS`, `LOG_LEVEL`). Every gate is a compile-time constant, so a disabled
+- `de/aatokombi/Config.java` — the single file of compile-time switches , grouped as nested classes
+  (`Navigation`, `ManeuverStages`, `Media`, `ClusterMap`, `Advanced`). Technical constants (key
+  codes, timeouts) live in the class that uses them. Every gate is a compile-time constant, so a disabled
   feature is dead-code-eliminated and leaves no bytecode behind. Parts of the turn-by-turn feed that
   the runtime already gates — the lane row and the destination distance / travel time (present only
   when the phone sends them), the rerouting notice (protocol 1.7 only) — deliberately have no switch
   of their own.
-- `de/adi961/miblogger/MIBLogger.java` — logger (also mirrors to `/dev/shmem/aatokombi.log`).
+- `de/adi961/miblogger/MIBLogger.java` — logger (at DEBUG also mirrors to `/dev/shmem/aatokombi.log`, newest 1..2 MB kept).
 - `de/vw/mib/bap/mqbab2/navsd/functions/AANavReader.java` — polls `/dev/shmem/aa_nav`
   (written by the shim), maps the maneuver/street/distance/lanes/destination, and drives **both**
   outputs: the navsd cluster Navigation menu on a nav-capable cluster, or the media now-playing
@@ -49,9 +49,9 @@ MQB (`mqbab2`):
   + distance (big) / distance + time to the destination. Row layout, the glyph set and why the lanes
   live in the street row are documented in [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 - `…/audiosd/functions/CurrentStationHandle.java` — synthesises a valid station handle for the AA
-  source so the centred cover-art view binds (gated on `SHOW_COVER_ART`; a no-op otherwise).
+  source so the centred cover-art view binds (gated on `Media.SHOW_COVER_ART`; a no-op otherwise).
 - `…/common/api/androidauto/AndroidAutoASLDataAdapter.java` — forces
-  `isAndroidAutoRouteGuidanceActive()` false under `SUPPRESS_NAV_ACTIVE_PLACEHOLDER` to hide the
+  `isAndroidAutoRouteGuidanceActive()` false under `Advanced.SUPPRESS_NAV_ACTIVE_PLACEHOLDER` to hide the
   stock *"Navigation on the mobile device is active"* placeholder (folds in the former
   `NavActiveIgnore.jar`).
 
@@ -87,3 +87,27 @@ artifacts:
 - comment out `@Override` (not valid in 1.3),
 - make autoboxing explicit (`Integer`→`.intValue()`, `Boolean`→`.booleanValue()`),
 - give any uninitialised `static final` (CFR-inlined constants) a dummy initialiser.
+
+## Shadows are checked against your MIBHMI.jar
+
+A shadow is a copy of a stock class of one firmware with the mod's changes in it. `jar/build.sh`
+therefore runs `tools/check_shadows.py` twice against the `MIBHMI.jar` it compiles with:
+
+- **before compiling** - every stock class the sources shadow (and its nested classes) must have
+  the fingerprint recorded in `jar/shadows.lock`. The fingerprint is symbolic (superclass,
+  interfaces, fields with their constant values, each method's code with constant-pool references
+  resolved to names), so it follows what the class is and does, not how the converter laid the
+  file out. A difference names the members that differ.
+- **after compiling** - every shadow must offer what its stock class offers to the rest of the HMI:
+  same superclass, its interfaces, every non-private field / method / constructor, same constant
+  values. (This found a stock method missing from the `TurnToInfo` shadow and the zeros in the
+  `Constants` stub.)
+
+A failed check stops the build. `ALLOW_SHADOW_MISMATCH=1 ./build.sh ...` builds anyway, for
+experiments on another firmware; the result is unverified. After the shadows have really been
+brought in line with another firmware's classes, record it:
+`python3 tools/check_shadows.py update jar/lib/MIBHMI.jar jar/src jar/shadows.lock`.
+
+What the check cannot tell: whether a shadow that matches still BEHAVES right on a unit - only a
+car shows that. `shadows.lock` was taken from the MIBHMI.jar of the development unit
+(MST2_EU_SK_ZR_P0480T).
