@@ -212,7 +212,9 @@ Everything runs in Docker: it converts the `.jxe` to a jar, builds the toolchain
 after the first run), compiles both artifacts inside the container with the repo bind-mounted, and
 drops the two deployables in `dist/`.
 
-On Windows, start Docker Desktop with Linux containers and double-click `build.bat`. It asks for
+On Windows, double-click `build.bat`. It needs Docker Desktop with Linux containers: when Docker
+Desktop is missing, it offers to install it with winget (administrator rights, possibly a reboot),
+and when its engine is not running, it starts Docker Desktop and waits for it. It asks for
 `MIBHMI.jxe` and the stock `libext.google.gal.receiver.so` in two Open dialogs, builds, and opens
 the `dist` folder with the results. From PowerShell it takes the same arguments as `build.sh`:
 ```powershell

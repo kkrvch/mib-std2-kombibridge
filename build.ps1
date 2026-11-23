@@ -1,5 +1,7 @@
 # build.ps1 - Windows launcher with the same pipeline, arguments and outputs as build.sh.
-# Docker Desktop must be running with Linux containers. Started through build.bat:
+# Needs Docker Desktop with Linux containers: when it is missing, it offers to install it with
+# winget (after asking); when its engine is not running, it starts Docker Desktop and waits.
+# Started through build.bat:
 #
 #   .\build.bat <MIBHMI.jxe> <stock libext.google.gal.receiver.so> [outdir=dist]
 #   .\build.bat <MIBHMI.jxe> - [outdir]      jar only (keep the libgal already on the unit)
@@ -78,6 +80,49 @@ function Copy-Output([string]$from, [string]$to) {
     Copy-Item -LiteralPath $from -Destination (Join-Path $out $to) -Force
 }
 
+# Where the machine-wide Docker Desktop of the winget package (Docker.DockerDesktop) lives.
+$dockerBin = Join-Path $env:ProgramFiles 'Docker\Docker\resources\bin'
+$dockerDesktop = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
+
+# Is docker.exe there? One installed after this console was opened is not on its PATH yet.
+function Find-Docker {
+    if (Get-Command docker -ErrorAction SilentlyContinue) { return $true }
+    if (Test-Path -LiteralPath (Join-Path $dockerBin 'docker.exe')) {
+        $env:Path += ";$dockerBin"
+        return $true
+    }
+    return $false
+}
+
+# The engine's OS type ('linux' with Linux containers), empty when no engine answers.
+function Get-DockerOsType {
+    $ErrorActionPreference = 'Continue'
+    $os = & docker info --format '{{.OSType}}' 2>$null
+    $exit = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($exit -ne 0) { return '' }
+    return "$os".Trim()
+}
+
+# Start Docker Desktop and wait for its engine; the first start after an install takes a while.
+function Wait-DockerEngine([int]$seconds) {
+    if (Test-Path -LiteralPath $dockerDesktop) {
+        Write-Host '    starting Docker Desktop and waiting for its engine'
+        Start-Process -FilePath $dockerDesktop
+    } else {
+        Write-Host '    waiting for the Docker engine'
+    }
+    $deadline = (Get-Date).AddSeconds($seconds)
+    while ((Get-Date) -lt $deadline) {
+        $os = Get-DockerOsType
+        if ($os) { Write-Host ''; return $os }
+        Write-Host -NoNewline '.'
+        Start-Sleep -Seconds 5
+    }
+    Write-Host ''
+    return ''
+}
+
 try {
     $jxe, $gal, $out = $args
     $interactive = $args.Count -eq 0
@@ -101,15 +146,33 @@ try {
     New-Item -ItemType Directory -Path $out -Force | Out-Null
     $out = (Resolve-Path -LiteralPath $out).Path
 
-    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-        throw 'Docker is required. Install and start Docker Desktop, then try again.'
+    if (-not (Find-Docker)) {
+        Write-Host 'Docker is not installed: the build runs in the Linux containers of Docker Desktop.'
+        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            throw 'Docker is required. Install Docker Desktop (https://docs.docker.com/desktop/), then try again.'
+        }
+        Write-Host ' Docker Desktop can be installed now with winget (package Docker.DockerDesktop). This asks'
+        Write-Host ' for administrator rights, accepts the Docker Subscription Service Agreement (free for'
+        Write-Host ' personal use and small businesses) and enables WSL 2, which may need a reboot.'
+        $answer = Read-Host ' Install Docker Desktop now? [y/N]'
+        if ($answer -notmatch '^(y|yes)$') {
+            throw 'Docker is required. Install Docker Desktop, then try again.'
+        }
+        $exit = Invoke-Native { winget install --id Docker.DockerDesktop --exact `
+            --accept-package-agreements --accept-source-agreements }
+        if (-not (Find-Docker)) {
+            throw "winget did not install Docker Desktop (exit code $exit). Install it by hand, then try again."
+        }
+        Write-Host 'Docker Desktop is installed.'
     }
-    $ErrorActionPreference = 'Continue'
-    $osType = & docker info --format '{{.OSType}}' 2>$null
-    $dockerExit = $LASTEXITCODE
-    $ErrorActionPreference = 'Stop'
-    if ($dockerExit -ne 0) {
-        throw 'Docker is not accessible. Start Docker Desktop, wait until it is ready, then try again.'
+    $osType = Get-DockerOsType
+    if (-not $osType) {
+        Write-Host 'The Docker engine is not running.'
+        $osType = Wait-DockerEngine 300
+    }
+    if (-not $osType) {
+        throw ('Docker is not accessible. Start Docker Desktop (right after an install: reboot first ' +
+            'if Windows asks to), wait until it is ready, then try again.')
     }
     if ($osType -ne 'linux') {
         throw 'Switch Docker Desktop to Linux containers, then try again.'
