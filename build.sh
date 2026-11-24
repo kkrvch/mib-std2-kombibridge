@@ -44,9 +44,16 @@ if [ -f jar/lib/MIBHMI.jar ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$JXE_ID" ]; t
 else
   WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
   cp "$JXE" "$WORK/MIBHMI.jxe"
+  cp tools/fix-jxe-crc.py "$WORK/fix-jxe-crc.py"
   echo "==> [1/4] jxe2jar: MIBHMI.jxe -> MIBHMI.jar  ($JXE2JAR_IMAGE)  [emulated, one-time per firmware]"
+  # A unit whose HMI was patched in place hands us a rom.classes with a stale zip CRC, which jxe2jar
+  # refuses to read. fix-jxe-crc.py corrects it in the copy and says so; STRICT_JXE=1 makes that an
+  # error instead. It runs in the jxe2jar image (Python 2) so the host still needs nothing but Docker.
   docker run --rm --platform linux/amd64 -v "$WORK":/data "$JXE2JAR_IMAGE" \
-    bash -c "python2 JXE2JAR.py /data/MIBHMI.jxe /data/MIBHMI.jar && chown $(id -u):$(id -g) /data/MIBHMI.jar"
+    bash -c "python2 /data/fix-jxe-crc.py /data/MIBHMI.jxe ${STRICT_JXE:+--strict} \
+             && python2 JXE2JAR.py /data/MIBHMI.jxe /data/MIBHMI.jar \
+             && chown $(id -u):$(id -g) /data/MIBHMI.jar" \
+    || { echo "ERROR: could not convert MIBHMI.jxe (see above)"; exit 1; }
   [ -f "$WORK/MIBHMI.jar" ] || { echo "ERROR: jxe2jar produced no MIBHMI.jar"; exit 1; }
   cp -f "$WORK/MIBHMI.jar" jar/lib/MIBHMI.jar
   echo "$JXE_ID" > "$STAMP"

@@ -90,7 +90,16 @@ try {
         New-Item -ItemType Directory -Path $work | Out-Null
         try {
             Copy-Item -LiteralPath $jxe -Destination (Join-Path $work 'MIBHMI.jxe')
+            Copy-Item -LiteralPath 'tools/fix-jxe-crc.py' -Destination (Join-Path $work 'fix-jxe-crc.py')
             Write-Host "==> [1/4] jxe2jar: MIBHMI.jxe -> MIBHMI.jar  ($jxe2jarImage)  [one-time per firmware]"
+            # A unit whose HMI was patched in place hands us a rom.classes with a stale zip CRC, which
+            # jxe2jar refuses to read. fix-jxe-crc.py corrects it in the copy and says so; STRICT_JXE=1
+            # makes that an error instead. Same step as build.sh; it runs in the jxe2jar image (Python 2).
+            $crcArgs = @('/data/fix-jxe-crc.py', '/data/MIBHMI.jxe')
+            if ($env:STRICT_JXE) { $crcArgs += '--strict' }
+            $exit = Invoke-Native { docker run --rm --platform linux/amd64 -v "${work}:/data" $jxe2jarImage `
+                python2 @crcArgs }
+            if ($exit -ne 0) { throw 'MIBHMI.jxe was rejected by fix-jxe-crc.py (see above)' }
             $exit = Invoke-Native { docker run --rm --platform linux/amd64 -v "${work}:/data" $jxe2jarImage `
                 python2 JXE2JAR.py /data/MIBHMI.jxe /data/MIBHMI.jar }
             $jar = Join-Path $work 'MIBHMI.jar'
